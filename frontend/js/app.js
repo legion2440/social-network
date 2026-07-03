@@ -1,0 +1,635 @@
+
+const IC = {
+  home: 'M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1Z',
+  user: 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 10a7 7 0 0 1 14 0',
+  users: 'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 10a7 7 0 0 1 14 0m1-17.5a4 4 0 0 1 0 7.1M17.8 14.6a7 7 0 0 1 4.2 6.4',
+  chat: 'M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-3-.4-4.2-1.1L3 21l2.1-5.3A8.5 8.5 0 1 1 21 11.5Z',
+  bell: 'M18 8.5a6 6 0 1 0-12 0c0 7-2.5 8.5-2.5 8.5h17S18 15.5 18 8.5m-4.3 12a2 2 0 0 1-3.4 0',
+  globe: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm-9-9h18M12 3c2.5 2.5 3.8 5.6 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.6-3.8-9S9.5 5.5 12 3Z',
+  lock: 'M7 10.5V7a5 5 0 0 1 10 0v3.5M6 10.5h12a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1Z',
+  sun: 'M12 16.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9ZM12 2.5v2m0 15v2m-9.5-9.5h2m15 0h2M5.3 5.3l1.4 1.4m10.6 10.6 1.4 1.4m0-13.4-1.4 1.4M6.7 17.3l-1.4 1.4',
+  moon: 'M20.5 13.2A8.5 8.5 0 1 1 10.8 3.5a7 7 0 0 0 9.7 9.7Z',
+  plus: 'M12 5v14M5 12h14',
+  cal: 'M8 2.5v3m8-3v3M3.5 9h17m-15-3.5h13a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z'
+};
+
+const USERS = {
+  me:    { id: 'me', name: 'Alex Morgan', handle: '@alexmorgan', initials: 'AM', color: '#6b62c9', bio: 'Product designer. Building calm interfaces.', email: 'alex@loop.social', dob: 'March 14, 1996', private: false },
+  mei:   { id: 'mei', name: 'Mei Lin', handle: '@meilin', initials: 'ML', color: '#b3813f', bio: 'Design systems at Fluxo. Type nerd.', email: 'mei@fluxo.co', dob: 'June 2, 1994', private: false },
+  david: { id: 'david', name: 'David Okafor', handle: '@dokafor', initials: 'DO', color: '#3f9a85', bio: 'Frontend engineer. Weekend trail runner.', email: 'david@okafor.dev', dob: 'Nov 20, 1991', private: false },
+  nina:  { id: 'nina', name: 'Nina Kov\u00e1cs', handle: '@ninak', initials: 'NK', color: '#c25a83', bio: 'Brand designer. Mostly lurking.', email: 'nina@studio-nk.com', dob: 'Feb 8, 1997', private: true },
+  tom:   { id: 'tom', name: 'Tom\u00e1s Rivera', handle: '@tomriv', initials: 'TR', color: '#4d84c4', bio: 'Photographer. Film only, no exceptions.', email: 'tom@rivera.photo', dob: 'Aug 30, 1993', private: true },
+  sara:  { id: 'sara', name: 'Sara Bishop', handle: '@sarab', initials: 'SB', color: '#8f6cc9', bio: 'Illustrator and printmaker.', email: 'sara@bishop.ink', dob: 'Apr 17, 1995', private: false }
+};
+
+const FOLLOWING_MAP = {
+  mei: ['me', 'david', 'nina'], david: ['me', 'mei'], nina: ['me', 'mei', 'sara'],
+  tom: ['sara'], sara: ['nina', 'tom']
+};
+const FOLLOWERS_MAP = {
+  mei: ['me', 'david', 'nina', 'sara'], david: ['me', 'mei'], nina: ['me', 'mei'],
+  tom: ['sara'], sara: ['nina']
+};
+const REPLIES = ['Totally agree \ud83d\ude04', 'Ha! Send it over', 'Let\u2019s sync tomorrow?', '\ud83d\udc40 looking now', 'Love that \u2728', 'Okay that\u2019s actually great'];
+const EMOJIS = ['\ud83d\ude00', '\ud83d\ude02', '\ud83d\ude0d', '\ud83d\udd25', '\ud83d\udc4d', '\ud83c\udf89', '\ud83d\ude2e', '\ud83d\ude22', '\u2764\ufe0f', '\ud83d\udc40', '\u2728', '\ud83d\ude4c'];
+const GROUP_COLORS = ['#6b62c9', '#b3813f', '#3f9a85', '#c25a83', '#4d84c4', '#8f6cc9'];
+
+function cover(color) {
+  return 'linear-gradient(135deg, color-mix(in oklab, ' + color + ' 55%, var(--surface2)), color-mix(in oklab, ' + color + ' 14%, var(--surface2)))';
+}
+function num(x) { return String(x); }
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    let saved = null;
+    try { saved = localStorage.getItem('loop-theme'); } catch (e) {}
+    this.state = {
+      theme: saved || props.defaultTheme || 'light',
+      screen: 'feed', feedLoading: true,
+      composerText: '', composerImg: false, privacy: 'public', privacyOpen: false,
+      selectedFollowers: { mei: true, nina: true },
+      openComments: { p1: true }, drafts: {},
+      posts: [
+        { id: 'p1', uid: 'mei', time: '2h', privacy: 'public', text: 'Shipped the dark theme for our design system today. Every token audited, every contrast pair re-checked. Feels so good to close this epic \ud83c\udf19', image: 'dashboard \u2014 dark theme', likes: 48, liked: true, comments: [ { uid: 'david', text: 'The elevation shadows look so much better now', time: '1h' }, { uid: 'me', text: 'Congrats! Curious about your token naming', time: '45m' } ] },
+        { id: 'p2', uid: 'david', time: '5h', privacy: 'followers', text: '21k on the greenbelt before work. The bridge section at sunrise never gets old.', image: null, likes: 12, liked: false, comments: [] },
+        { id: 'p3', uid: 'nina', time: '1d', privacy: 'private', text: 'Early peek at the rebrand direction \u2014 only sharing with a few of you for now. Be honest, is the serif too much?', image: 'brand moodboard v2', likes: 7, liked: false, comments: [ { uid: 'me', text: 'The serif is doing a lot of work and I\u2019m here for it', time: '20h' } ] },
+        { id: 'p4', uid: 'me', time: '2d', privacy: 'public', text: 'Finally moved my portfolio over to the new stack. Ask me anything about the process.', image: null, likes: 31, liked: false, comments: [] },
+        { id: 'p5', uid: 'sara', time: '3d', privacy: 'public', text: 'New linocut series in progress. Ink everywhere, no regrets.', image: 'linocut prints \u2014 wip', likes: 64, liked: false, comments: [] }
+      ],
+      follow: { mei: 'following', david: 'following', nina: 'following', tom: 'none', sara: 'none' },
+      myFollowers: ['mei', 'david', 'nina', 'sara'],
+      myPrivacy: 'public',
+      profileId: 'me', profileTab: 'posts',
+      groups: [
+        { id: 'g1', name: 'Design Systems Guild', desc: 'Tokens, components and the people who argue about them.', members: 148, color: '#6b62c9', state: 'joined', owner: 'me', memberIds: ['me', 'mei', 'david', 'nina'],
+          posts: [
+            { id: 'gp1', uid: 'mei', time: '3h', text: 'Poll next week: spacing scale of 4 vs 8. Prepare your arguments.', likes: 9, liked: false, comments: [] },
+            { id: 'gp2', uid: 'david', time: '1d', text: 'Wrote up how we ship tokens to three platforms from one source of truth. Link in comments.', likes: 21, liked: true, comments: [ { uid: 'me', text: 'This saved our team weeks. Great write-up', time: '20h' } ] }
+          ],
+          events: [
+            { id: 'e1', title: 'Tokens naming workshop', day: '12', mon: 'JUL', time: '18:00', desc: 'Hands-on session. Naming things is hard \u2014 we do it together.', rsvp: null, going: ['mei', 'david'] },
+            { id: 'e2', title: 'Figma office hours', day: '19', mon: 'JUL', time: '17:30', desc: 'Bring your messiest file. No judgement.', rsvp: 'going', going: ['me', 'mei', 'nina'] }
+          ],
+          requests: [ { uid: 'sara', status: 'pending' } ] },
+        { id: 'g2', name: 'Film Photography Club', desc: 'Grain is good. Weekly photo walks and darkroom nights.', members: 96, color: '#b3813f', state: 'invited', owner: 'tom', memberIds: ['tom', 'sara'], posts: [], events: [], requests: [] },
+        { id: 'g3', name: 'Trail Runners ATX', desc: 'Early miles, tacos after. All paces welcome.', members: 210, color: '#3f9a85', state: 'none', owner: 'david', memberIds: ['david'], posts: [], events: [], requests: [] },
+        { id: 'g4', name: 'Indie Game Devs', desc: 'Devlogs, playtests and brutally honest feedback.', members: 311, color: '#c25a83', state: 'requested', owner: 'sara', memberIds: ['sara'], posts: [], events: [], requests: [] }
+      ],
+      groupId: null, groupTab: 'posts', gComposer: '', inviteOpen: false, invited: {},
+      newEventOpen: false, evTitle: '', evDate: '', evTime: '', evDesc: '',
+      createOpen: false, ngName: '', ngDesc: '',
+      convos: [
+        { id: 'c1', kind: 'dm', uid: 'nina', unread: 2, typing: false, online: true, messages: [
+          { from: 'nina', text: 'Did you see the moodboard I posted? \ud83d\udc40', time: '09:12' },
+          { from: 'me', text: 'Yes! The serif direction is bold. I like it', time: '09:14' },
+          { from: 'nina', text: 'Okay good. I was 50/50 on it \ud83d\ude05', time: '09:15' },
+          { from: 'nina', text: 'Coffee this week? I want your take on the type scale', time: '09:15' } ] },
+        { id: 'c2', kind: 'dm', uid: 'david', unread: 0, typing: false, online: false, messages: [
+          { from: 'me', text: 'That tokens write-up is gold \ud83d\udd25', time: 'Tue' },
+          { from: 'david', text: 'Ha, thanks! Took forever to edit down', time: 'Tue' } ] },
+        { id: 'c3', kind: 'group', gid: 'g1', unread: 0, typing: false, online: false, messages: [
+          { from: 'mei', text: 'Reminder: workshop is on the 12th \ud83c\udf89', time: 'Mon' },
+          { from: 'david', text: 'I\u2019ll bring the contrast checker demo', time: 'Mon' },
+          { from: 'me', text: 'Adding it to the agenda \ud83d\udc4d', time: 'Mon' } ] }
+      ],
+      convoId: 'c1', chatDraft: '', emojiOpen: false,
+      notifs: [
+        { id: 'n1', type: 'follow', uid: 'tom', time: '2h', read: false, status: 'pending' },
+        { id: 'n2', type: 'invite', uid: 'tom', gid: 'g2', time: '6h', read: false, status: 'pending' },
+        { id: 'n3', type: 'request', uid: 'sara', gid: 'g1', time: '1d', read: false, status: 'pending' },
+        { id: 'n4', type: 'event', uid: 'mei', gid: 'g1', time: '2d', read: true, status: 'info', extra: 'Tokens naming workshop' }
+      ],
+      authMode: 'login'
+    };
+    this.msgEl = null;
+  }
+
+  componentDidMount() {
+    document.documentElement.dataset.theme = this.state.theme;
+    this.applyTokens();
+    setTimeout(() => this.setState({ feedLoading: false }), 900);
+  }
+  componentDidUpdate() {
+    this.applyTokens();
+    if (this.msgEl) this.msgEl.scrollTop = this.msgEl.scrollHeight;
+  }
+  applyTokens() {
+    const el = document.documentElement;
+    el.style.setProperty('--accent', this.props.accent || '#5661d8');
+    el.style.setProperty('--r', (this.props.radius != null ? this.props.radius : 18) + 'px');
+  }
+
+  go = (screen) => this.setState({ screen, privacyOpen: false, emojiOpen: false });
+  openProfile = (uid) => this.setState({ screen: 'profile', profileId: uid, profileTab: 'posts' });
+
+  toggleTheme = (e) => {
+    const el = document.documentElement;
+    if (e && e.clientX != null) {
+      el.style.setProperty('--vt-x', e.clientX + 'px');
+      el.style.setProperty('--vt-y', e.clientY + 'px');
+    }
+    const next = this.state.theme === 'light' ? 'dark' : 'light';
+    const apply = () => {
+      el.dataset.theme = next;
+      this.setState({ theme: next });
+      try { localStorage.setItem('loop-theme', next); } catch (err) {}
+    };
+    if (document.startViewTransition) {
+      const vt = document.startViewTransition(apply);
+      if (vt && vt.ready) vt.ready.catch(() => {});
+      if (vt && vt.finished) vt.finished.catch(() => {});
+    } else apply();
+  };
+
+  toggleFollow = (uid) => {
+    const cur = this.state.follow[uid] || 'none';
+    const u = USERS[uid];
+    let next;
+    if (cur === 'following' || cur === 'requested') next = 'none';
+    else next = u.private ? 'requested' : 'following';
+    this.setState({ follow: Object.assign({}, this.state.follow, { [uid]: next }) });
+  };
+
+  likePost = (pid) => {
+    this.setState({ posts: this.state.posts.map(p => p.id === pid ? Object.assign({}, p, { liked: !p.liked, likes: p.likes + (p.liked ? -1 : 1) }) : p) });
+  };
+  addComment = (pid) => {
+    const text = (this.state.drafts[pid] || '').trim();
+    if (!text) return;
+    this.setState({
+      posts: this.state.posts.map(p => p.id === pid ? Object.assign({}, p, { comments: p.comments.concat([{ uid: 'me', text, time: 'now' }]) }) : p),
+      drafts: Object.assign({}, this.state.drafts, { [pid]: '' })
+    });
+  };
+  sendPost = () => {
+    const text = this.state.composerText.trim();
+    if (!text) return;
+    const p = { id: 'p' + Date.now(), uid: 'me', time: 'now', privacy: this.state.privacy, text, image: this.state.composerImg ? 'attached image' : null, likes: 0, liked: false, comments: [] };
+    this.setState({ posts: [p].concat(this.state.posts), composerText: '', composerImg: false, privacyOpen: false });
+  };
+
+  likeGroupPost = (gid, pid) => {
+    this.setState({ groups: this.state.groups.map(g => g.id !== gid ? g : Object.assign({}, g, { posts: g.posts.map(p => p.id === pid ? Object.assign({}, p, { liked: !p.liked, likes: p.likes + (p.liked ? -1 : 1) }) : p) })) });
+  };
+  addGroupComment = (gid, pid) => {
+    const key = gid + ':' + pid;
+    const text = (this.state.drafts[key] || '').trim();
+    if (!text) return;
+    this.setState({
+      groups: this.state.groups.map(g => g.id !== gid ? g : Object.assign({}, g, { posts: g.posts.map(p => p.id === pid ? Object.assign({}, p, { comments: p.comments.concat([{ uid: 'me', text, time: 'now' }]) }) : p) })),
+      drafts: Object.assign({}, this.state.drafts, { [key]: '' })
+    });
+  };
+
+  patchGroup(gid, patch) {
+    this.setState({ groups: this.state.groups.map(g => g.id === gid ? Object.assign({}, g, typeof patch === 'function' ? patch(g) : patch) : g) });
+  }
+  joinGroup = (gid) => {
+    const g = this.state.groups.find(x => x.id === gid);
+    this.patchGroup(gid, { state: g.state === 'requested' ? 'none' : 'requested' });
+  };
+  acceptInvite = (gid) => {
+    this.patchGroup(gid, (g) => ({ state: 'joined', members: g.members + 1, memberIds: g.memberIds.concat(['me']) }));
+  };
+  declineInvite = (gid) => this.patchGroup(gid, { state: 'none' });
+  rsvp = (gid, eid, val) => {
+    this.patchGroup(gid, (g) => ({
+      events: g.events.map(ev => {
+        if (ev.id !== eid) return ev;
+        const going = ev.going.filter(x => x !== 'me');
+        return Object.assign({}, ev, { rsvp: val, going: val === 'going' ? going.concat(['me']) : going });
+      })
+    }));
+  };
+  createEvent = () => {
+    const t = this.state.evTitle.trim();
+    if (!t) return;
+    const dateParts = (this.state.evDate.trim() || 'Jul 30').split(' ');
+    const mon = (dateParts[0] || 'JUL').toUpperCase().slice(0, 3);
+    const day = dateParts[1] || '30';
+    this.patchGroup(this.state.groupId, (g) => ({
+      events: [{ id: 'e' + Date.now(), title: t, day, mon, time: this.state.evTime.trim() || '18:00', desc: this.state.evDesc.trim() || 'Created just now.', rsvp: 'going', going: ['me'] }].concat(g.events)
+    }));
+    this.setState({ newEventOpen: false, evTitle: '', evDate: '', evTime: '', evDesc: '' });
+  };
+  createGroup = () => {
+    const name = this.state.ngName.trim();
+    if (!name) return;
+    const g = { id: 'g' + Date.now(), name, desc: this.state.ngDesc.trim() || 'A brand new group.', members: 1, color: GROUP_COLORS[this.state.groups.length % GROUP_COLORS.length], state: 'joined', owner: 'me', memberIds: ['me'], posts: [], events: [], requests: [] };
+    this.setState({ groups: [g].concat(this.state.groups), createOpen: false, ngName: '', ngDesc: '' });
+  };
+  postToGroup = () => {
+    const text = this.state.gComposer.trim();
+    if (!text) return;
+    this.patchGroup(this.state.groupId, (g) => ({ posts: [{ id: 'gp' + Date.now(), uid: 'me', time: 'now', text, likes: 0, liked: false, comments: [] }].concat(g.posts) }));
+    this.setState({ gComposer: '' });
+  };
+  handleRequest = (gid, uid, accept) => {
+    this.patchGroup(gid, (g) => ({
+      requests: g.requests.map(r => r.uid === uid ? Object.assign({}, r, { status: accept ? 'accepted' : 'declined' }) : r),
+      members: accept ? g.members + 1 : g.members,
+      memberIds: accept ? g.memberIds.concat([uid]) : g.memberIds
+    }));
+  };
+
+  openConvo = (id) => {
+    this.setState({ convoId: id, emojiOpen: false, convos: this.state.convos.map(c => c.id === id ? Object.assign({}, c, { unread: 0 }) : c) });
+  };
+  sendMsg = () => {
+    const text = this.state.chatDraft.trim();
+    if (!text) return;
+    const id = this.state.convoId;
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+    this.setState({
+      chatDraft: '', emojiOpen: false,
+      convos: this.state.convos.map(c => c.id === id ? Object.assign({}, c, { messages: c.messages.concat([{ from: 'me', text, time: hh }]) }) : c)
+    });
+    const convo = this.state.convos.find(c => c.id === id);
+    if (convo && convo.kind === 'dm') {
+      setTimeout(() => this.setState({ convos: this.state.convos.map(c => c.id === id ? Object.assign({}, c, { typing: true }) : c) }), 700);
+      setTimeout(() => {
+        const reply = REPLIES[Math.floor(Math.random() * REPLIES.length)];
+        this.setState({ convos: this.state.convos.map(c => c.id === id ? Object.assign({}, c, { typing: false, messages: c.messages.concat([{ from: convo.uid, text: reply, time: hh }]) }) : c) });
+      }, 2200);
+    }
+  };
+
+  acceptNotif = (nid) => {
+    const n = this.state.notifs.find(x => x.id === nid);
+    if (!n) return;
+    if (n.type === 'follow') this.setState({ myFollowers: this.state.myFollowers.indexOf(n.uid) < 0 ? this.state.myFollowers.concat([n.uid]) : this.state.myFollowers });
+    if (n.type === 'invite') this.acceptInvite(n.gid);
+    if (n.type === 'request') this.handleRequest(n.gid, n.uid, true);
+    this.setState({ notifs: this.state.notifs.map(x => x.id === nid ? Object.assign({}, x, { status: 'accepted', read: true }) : x) });
+  };
+  declineNotif = (nid) => {
+    const n = this.state.notifs.find(x => x.id === nid);
+    if (!n) return;
+    if (n.type === 'invite') this.declineInvite(n.gid);
+    if (n.type === 'request') this.handleRequest(n.gid, n.uid, false);
+    this.setState({ notifs: this.state.notifs.map(x => x.id === nid ? Object.assign({}, x, { status: 'declined', read: true }) : x) });
+  };
+
+  followBtn(uid) {
+    const st = this.state.follow[uid] || 'none';
+    if (st === 'following') return { label: 'Following', bg: 'var(--surface2)', color: 'var(--text2)', bd: 'transparent' };
+    if (st === 'requested') return { label: 'Requested', bg: 'var(--soft)', color: 'var(--accent)', bd: 'transparent' };
+    return { label: USERS[uid].private ? 'Request' : 'Follow', bg: 'var(--accent)', color: '#fff', bd: 'transparent' };
+  }
+
+  mapPost(p, inGroup) {
+    const s = this.state;
+    const key = inGroup ? s.groupId + ':' + p.id : p.id;
+    const privacyMeta = { public: { icon: IC.globe, label: 'Public' }, followers: { icon: IC.users, label: 'Followers' }, private: { icon: IC.lock, label: 'Selected' } };
+    const pm = privacyMeta[p.privacy] || privacyMeta.public;
+    return Object.assign({}, p, {
+      user: USERS[p.uid],
+      privacyIcon: pm.icon, privacyLabel: pm.label,
+      hasImage: !!p.image,
+      notLiked: !p.liked,
+      likeColor: p.liked ? 'var(--danger)' : 'var(--text2)',
+      commentCount: num(p.comments.length),
+      likes: num(p.likes),
+      showComments: !!s.openComments[key],
+      comments: p.comments.map(c => Object.assign({}, c, { user: USERS[c.uid] })),
+      draft: s.drafts[key] || '',
+      onLike: () => inGroup ? this.likeGroupPost(s.groupId, p.id) : this.likePost(p.id),
+      onToggleComments: () => this.setState({ openComments: Object.assign({}, s.openComments, { [key]: !s.openComments[key] }) }),
+      onDraft: (e) => this.setState({ drafts: Object.assign({}, this.state.drafts, { [key]: e.target.value }) }),
+      onKey: (e) => { if (e.key === 'Enter') { inGroup ? this.addGroupComment(s.groupId, p.id) : this.addComment(p.id); } },
+      onSendComment: () => inGroup ? this.addGroupComment(s.groupId, p.id) : this.addComment(p.id),
+      goProfile: () => this.openProfile(p.uid)
+    });
+  }
+
+  renderVals() {
+    const s = this.state;
+    const me = USERS.me;
+    const notifUnread = s.notifs.filter(n => !n.read).length;
+    const chatUnread = s.convos.reduce((a, c) => a + c.unread, 0);
+
+    const navDefs = [
+      { k: 'feed', label: 'Home', icon: IC.home, badge: 0 },
+      { k: 'profile', label: 'Profile', icon: IC.user, badge: 0 },
+      { k: 'groups', label: 'Groups', icon: IC.users, badge: 0 },
+      { k: 'chat', label: 'Messages', icon: IC.chat, badge: chatUnread },
+      { k: 'notifications', label: 'Notifications', icon: IC.bell, badge: notifUnread }
+    ];
+    const activeKey = s.screen === 'group' ? 'groups' : (s.screen === 'profile' && s.profileId !== 'me' ? '' : s.screen);
+    const navItems = navDefs.map(n => {
+      const on = n.k === activeKey && !(n.k === 'profile' && s.profileId !== 'me');
+      return {
+        icon: n.icon, label: n.label,
+        bg: on ? 'var(--soft)' : 'transparent',
+        color: on ? 'var(--accent)' : 'var(--text2)',
+        w: on ? '800' : '600',
+        hasBadge: n.badge > 0, badge: num(n.badge),
+        go: () => { if (n.k === 'profile') this.openProfile('me'); else this.go(n.k); }
+      };
+    });
+
+    // feed
+    const feedPosts = s.posts.filter(p => p.uid === 'me' || s.follow[p.uid] === 'following').map((p, i) => Object.assign(this.mapPost(p, false), { delay: (i * 0.06).toFixed(2) + 's' }));
+    const privacyMeta = { public: { icon: IC.globe, label: 'Public' }, followers: { icon: IC.users, label: 'Followers' }, private: { icon: IC.lock, label: 'Selected' } };
+    const privacyOptions = [
+      { k: 'public', label: 'Public', desc: 'Anyone on loop can see this', icon: IC.globe },
+      { k: 'followers', label: 'Followers only', desc: 'People who follow you', icon: IC.users },
+      { k: 'private', label: 'Selected followers', desc: 'Choose exactly who sees it', icon: IC.lock }
+    ].map(o => ({
+      label: o.label, desc: o.desc, icon: o.icon,
+      isOn: s.privacy === o.k,
+      bg: s.privacy === o.k ? 'var(--soft)' : 'transparent',
+      pick: () => this.setState({ privacy: o.k, privacyOpen: false })
+    }));
+    const followerChips = s.myFollowers.map(uid => {
+      const u = USERS[uid];
+      const on = !!s.selectedFollowers[uid];
+      return {
+        name: u.name.split(' ')[0], initials: u.initials, color: u.color,
+        bg: on ? 'var(--soft)' : 'transparent',
+        bd: on ? 'var(--accent)' : 'var(--border)',
+        tc: on ? 'var(--accent)' : 'var(--text2)',
+        toggle: () => this.setState({ selectedFollowers: Object.assign({}, s.selectedFollowers, { [uid]: !on }) })
+      };
+    });
+
+    // profile
+    const pUser = USERS[s.profileId];
+    const pIsMe = s.profileId === 'me';
+    const followSt = s.follow[s.profileId] || 'none';
+    const pCanView = pIsMe || !pUser.private || followSt === 'following';
+    const pPostsRaw = s.posts.filter(p => p.uid === s.profileId);
+    const followerIds = pIsMe ? s.myFollowers : (FOLLOWERS_MAP[s.profileId] || []);
+    const followingIds = pIsMe ? Object.keys(s.follow).filter(k => s.follow[k] === 'following') : (FOLLOWING_MAP[s.profileId] || []);
+    const mkUserRow = (uid) => {
+      const u = USERS[uid];
+      const b = this.followBtn(uid);
+      return {
+        user: u, showBtn: uid !== 'me',
+        btnLabel: b.label, btnBg: b.bg, btnColor: b.color, btnBd: b.bd,
+        onBtn: () => this.toggleFollow(uid),
+        goProfile: () => this.openProfile(uid)
+      };
+    };
+    const pTabs = [
+      { k: 'posts', label: 'Posts' },
+      { k: 'followers', label: 'Followers · ' + followerIds.length },
+      { k: 'following', label: 'Following · ' + followingIds.length }
+    ].map(t => ({
+      label: t.label,
+      color: s.profileTab === t.k ? 'var(--text)' : 'var(--text3)',
+      bd: s.profileTab === t.k ? 'var(--accent)' : 'transparent',
+      pick: () => this.setState({ profileTab: t.k })
+    }));
+    const fb = this.followBtn(s.profileId);
+    const privacySeg = [
+      { k: 'public', label: 'Public', icon: IC.globe },
+      { k: 'private', label: 'Private', icon: IC.lock }
+    ].map(o => ({
+      label: o.label, icon: o.icon,
+      bg: s.myPrivacy === o.k ? 'var(--surface)' : 'transparent',
+      color: s.myPrivacy === o.k ? 'var(--text)' : 'var(--text3)',
+      pick: () => this.setState({ myPrivacy: o.k })
+    }));
+
+    // groups
+    const groupCards = s.groups.map((g, i) => ({
+      name: g.name, desc: g.desc, membersLabel: num(g.members), cover: cover(g.color),
+      delay: (i * 0.05).toFixed(2) + 's',
+      isJoined: g.state === 'joined', isNone: g.state === 'none', isRequested: g.state === 'requested', isInvited: g.state === 'invited',
+      open: () => { if (g.state === 'joined') this.setState({ screen: 'group', groupId: g.id, groupTab: 'posts', inviteOpen: false }); },
+      join: () => this.joinGroup(g.id),
+      acceptInvite: () => this.acceptInvite(g.id),
+      declineInvite: () => this.declineInvite(g.id)
+    }));
+
+    const g = s.groups.find(x => x.id === s.groupId) || s.groups[0];
+    const gIsOwner = g.owner === 'me';
+    const gTabs = [
+      { k: 'posts', label: 'Posts' },
+      { k: 'events', label: 'Events · ' + g.events.length },
+      { k: 'members', label: 'Members' }
+    ].map(t => ({
+      label: t.label,
+      color: s.groupTab === t.k ? 'var(--text)' : 'var(--text3)',
+      bd: s.groupTab === t.k ? 'var(--accent)' : 'transparent',
+      pick: () => this.setState({ groupTab: t.k })
+    }));
+    const gPosts = g.posts.map(p => this.mapPost(p, true));
+    const gEvents = g.events.map(ev => ({
+      title: ev.title, dateDay: ev.day, dateMon: ev.mon,
+      timeLabel: ev.mon + ' ' + ev.day + ' · ' + ev.time, desc: ev.desc,
+      goingLabel: num(ev.going.length),
+      goingAvatars: ev.going.slice(0, 3).map(uid => ({ initials: USERS[uid].initials, color: USERS[uid].color })),
+      goBg: ev.rsvp === 'going' ? 'var(--accent)' : 'transparent',
+      goColor: ev.rsvp === 'going' ? '#fff' : 'var(--text2)',
+      goBd: ev.rsvp === 'going' ? 'transparent' : 'var(--border)',
+      noBg: ev.rsvp === 'not' ? 'var(--surface2)' : 'transparent',
+      noColor: ev.rsvp === 'not' ? 'var(--text)' : 'var(--text2)',
+      noBd: ev.rsvp === 'not' ? 'var(--text3)' : 'var(--border)',
+      setGoing: () => this.rsvp(g.id, ev.id, 'going'),
+      setNot: () => this.rsvp(g.id, ev.id, 'not')
+    }));
+    const gMembers = g.memberIds.map(uid => ({ user: USERS[uid], isOwner: uid === g.owner, goProfile: () => this.openProfile(uid) }));
+    const gRequests = (gIsOwner ? g.requests : []).map(r => ({
+      user: USERS[r.uid],
+      pending: r.status === 'pending', done: r.status !== 'pending',
+      doneLabel: r.status === 'accepted' ? 'Accepted' : 'Declined',
+      accept: () => this.handleRequest(g.id, r.uid, true),
+      decline: () => this.handleRequest(g.id, r.uid, false)
+    }));
+    const inviteChips = Object.keys(s.follow).filter(uid => s.follow[uid] === 'following' && g.memberIds.indexOf(uid) < 0).map(uid => {
+      const u = USERS[uid];
+      const on = !!s.invited[g.id + ':' + uid];
+      return {
+        label: on ? u.name.split(' ')[0] + ' · invited ✓' : u.name.split(' ')[0],
+        initials: u.initials, color: u.color,
+        bg: on ? 'var(--soft)' : 'transparent',
+        bd: on ? 'var(--accent)' : 'var(--border)',
+        tc: on ? 'var(--accent)' : 'var(--text2)',
+        toggle: () => this.setState({ invited: Object.assign({}, s.invited, { [g.id + ':' + uid]: !on }) })
+      };
+    });
+
+    // chat
+    const convoMeta = (c) => {
+      if (c.kind === 'dm') { const u = USERS[c.uid]; return { title: u.name, initials: u.initials, color: u.color, sub: c.online ? 'Online now' : 'Active recently' }; }
+      const gr = s.groups.find(x => x.id === c.gid);
+      return { title: gr.name, initials: gr.name.split(' ').map(w => w[0]).slice(0, 2).join(''), color: gr.color, sub: gr.members + ' members · group chat' };
+    };
+    const convos = s.convos.map(c => {
+      const m = convoMeta(c);
+      const last = c.messages[c.messages.length - 1];
+      return {
+        title: m.title, initials: m.initials, color: m.color,
+        preview: (last.from === 'me' ? 'You: ' : '') + last.text,
+        previewColor: c.unread > 0 ? 'var(--text)' : 'var(--text3)',
+        previewW: c.unread > 0 ? '700' : '500',
+        time: last.time,
+        online: !!c.online,
+        hasUnread: c.unread > 0, unread: num(c.unread),
+        bg: c.id === s.convoId ? 'var(--soft)' : 'transparent',
+        open: () => this.openConvo(c.id)
+      };
+    });
+    const active = s.convos.find(c => c.id === s.convoId) || s.convos[0];
+    const am = convoMeta(active);
+    const messages = active.messages.map((msg, i) => {
+      const prev = active.messages[i - 1];
+      return {
+        text: msg.text, time: msg.time,
+        mine: msg.from === 'me', theirs: msg.from !== 'me',
+        user: USERS[msg.from] || USERS.me,
+        showName: active.kind === 'group' && msg.from !== 'me' && (!prev || prev.from !== msg.from)
+      };
+    });
+    const emojis = EMOJIS.map(ch => ({ ch, add: () => this.setState({ chatDraft: s.chatDraft + ch }) }));
+
+    // notifications
+    const gName = (gid) => { const gr = s.groups.find(x => x.id === gid); return gr ? gr.name : ''; };
+    const notifItems = s.notifs.map((n, i) => {
+      const meta = {
+        follow: { icon: IC.user, text: 'requested to follow you', accepted: 'Follow request accepted', declined: 'Request declined' },
+        invite: { icon: IC.users, text: 'invited you to join ' + gName(n.gid), accepted: 'Joined ' + gName(n.gid), declined: 'Invite declined' },
+        request: { icon: IC.plus, text: 'asked to join your group ' + gName(n.gid), accepted: 'Added to the group', declined: 'Request declined' },
+        event: { icon: IC.cal, text: 'created the event \u201c' + (n.extra || '') + '\u201d in ' + gName(n.gid), accepted: '', declined: '' }
+      }[n.type];
+      return {
+        user: USERS[n.uid], icon: meta.icon, text: meta.text, time: n.time + ' ago',
+        delay: (i * 0.06).toFixed(2) + 's',
+        bg: n.read ? 'var(--surface)' : 'color-mix(in oklab, var(--accent) 5%, var(--surface))',
+        unreadDot: !n.read,
+        pending: n.status === 'pending',
+        done: n.status === 'accepted' || n.status === 'declined',
+        doneLabel: n.status === 'accepted' ? meta.accepted : meta.declined,
+        accept: () => this.acceptNotif(n.id),
+        decline: () => this.declineNotif(n.id),
+        goProfile: () => this.openProfile(n.uid)
+      };
+    });
+
+    // right rail
+    const suggestions = Object.keys(USERS).filter(uid => uid !== 'me' && s.follow[uid] !== 'following').map(uid => {
+      const u = USERS[uid];
+      const b = this.followBtn(uid);
+      return { user: u, isPrivate: u.private, btnLabel: b.label, btnBg: b.bg, btnColor: b.color, btnBd: b.bd, onBtn: () => this.toggleFollow(uid), goProfile: () => this.openProfile(uid) };
+    });
+    const railEvents = [];
+    s.groups.forEach(gr => { if (gr.state === 'joined') gr.events.forEach(ev => railEvents.push({ title: ev.title, day: ev.day, mon: ev.mon, group: gr.name, open: () => this.setState({ screen: 'group', groupId: gr.id, groupTab: 'events' }) })); });
+
+    const authTabs = [
+      { k: 'login', label: 'Sign in' },
+      { k: 'register', label: 'Create account' }
+    ].map(t => ({
+      label: t.label,
+      bg: s.authMode === t.k ? 'var(--surface)' : 'transparent',
+      color: s.authMode === t.k ? 'var(--text)' : 'var(--text3)',
+      sh: s.authMode === t.k ? 'var(--shadow)' : 'none',
+      pick: () => this.setState({ authMode: t.k })
+    }));
+
+    return {
+      // shell
+      isAuth: s.screen === 'auth', isApp: s.screen !== 'auth',
+      isFeed: s.screen === 'feed', isProfile: s.screen === 'profile', isGroups: s.screen === 'groups',
+      isGroup: s.screen === 'group', isChat: s.screen === 'chat', isNotifs: s.screen === 'notifications',
+      rightRail: ['feed', 'profile', 'groups', 'notifications'].indexOf(s.screen) >= 0,
+      navItems, me,
+      themeIcon: s.theme === 'light' ? IC.moon : IC.sun,
+      themeLabel: s.theme === 'light' ? 'Dark mode' : 'Light mode',
+      toggleTheme: this.toggleTheme,
+      goHome: () => this.go('feed'),
+      goMyProfile: () => this.openProfile('me'),
+      goLogout: () => this.go('auth'),
+      // auth
+      authTabs, authIsLogin: s.authMode === 'login', authIsReg: s.authMode === 'register',
+      authCta: s.authMode === 'login' ? 'Sign in' : 'Create account',
+      submitAuth: () => this.go('feed'),
+      // feed
+      feedLoading: s.feedLoading, feedReady: !s.feedLoading,
+      posts: feedPosts,
+      composerText: s.composerText,
+      onComposer: (e) => this.setState({ composerText: e.target.value }),
+      composerImg: s.composerImg,
+      toggleComposerImg: () => this.setState({ composerImg: !s.composerImg }),
+      removeComposerImg: () => this.setState({ composerImg: false }),
+      privacyOpen: s.privacyOpen,
+      togglePrivacy: () => this.setState({ privacyOpen: !s.privacyOpen }),
+      privacyIcon: privacyMeta[s.privacy].icon,
+      privacyLabel: privacyMeta[s.privacy].label,
+      privacyOptions,
+      privacyIsPrivate: s.privacy === 'private',
+      followerChips,
+      postBtnOp: s.composerText.trim() ? '1' : '0.45',
+      sendPost: this.sendPost,
+      // profile
+      pUser, pIsMe, pOther: !pIsMe,
+      pCover: cover(pUser.color),
+      pShowLock: pUser.private || (pIsMe && s.myPrivacy === 'private'),
+      pCanView, pLocked: !pCanView,
+      pStatPosts: num(pPostsRaw.length), pStatFollowers: num(followerIds.length), pStatFollowing: num(followingIds.length),
+      pTabs,
+      pTabPosts: s.profileTab === 'posts', pTabFollowers: s.profileTab === 'followers', pTabFollowing: s.profileTab === 'following',
+      pPosts: pPostsRaw.map(p => this.mapPost(p, false)),
+      pNoPosts: pPostsRaw.length === 0,
+      pFollowers: followerIds.map(mkUserRow), pFollowing: followingIds.map(mkUserRow),
+      followLabel: fb.label, followBg: fb.bg, followColor: fb.color, followBd: fb.bd,
+      onFollow: () => this.toggleFollow(s.profileId),
+      msgProfile: () => {
+        const existing = s.convos.find(c => c.kind === 'dm' && c.uid === s.profileId);
+        if (existing) { this.setState({ screen: 'chat', convoId: existing.id }); }
+        else {
+          const c = { id: 'c' + Date.now(), kind: 'dm', uid: s.profileId, unread: 0, typing: false, online: false, messages: [] };
+          this.setState({ convos: s.convos.concat([c]), screen: 'chat', convoId: c.id });
+        }
+      },
+      privacySeg,
+      // groups
+      createOpen: s.createOpen,
+      toggleCreate: () => this.setState({ createOpen: !s.createOpen }),
+      ngName: s.ngName, onNgName: (e) => this.setState({ ngName: e.target.value }),
+      ngDesc: s.ngDesc, onNgDesc: (e) => this.setState({ ngDesc: e.target.value }),
+      createGroup: this.createGroup,
+      groupCards,
+      // group detail
+      gName: g.name, gDesc: g.desc, gMembersLabel: num(g.members), gCover: cover(g.color), gIsOwner,
+      gBack: () => this.go('groups'),
+      gTabs, gTabPosts: s.groupTab === 'posts', gTabEvents: s.groupTab === 'events', gTabMembers: s.groupTab === 'members',
+      gPosts, gEvents, gMembers, gRequests,
+      gHasRequests: gRequests.length > 0,
+      gComposer: s.gComposer,
+      onGComposer: (e) => this.setState({ gComposer: e.target.value }),
+      onGComposerKey: (e) => { if (e.key === 'Enter') this.postToGroup(); },
+      gPost: this.postToGroup,
+      inviteOpen: s.inviteOpen,
+      toggleInvite: () => this.setState({ inviteOpen: !s.inviteOpen }),
+      inviteChips,
+      newEventOpen: s.newEventOpen,
+      toggleNewEvent: () => this.setState({ newEventOpen: !s.newEventOpen }),
+      evTitle: s.evTitle, onEvTitle: (e) => this.setState({ evTitle: e.target.value }),
+      evDate: s.evDate, onEvDate: (e) => this.setState({ evDate: e.target.value }),
+      evTime: s.evTime, onEvTime: (e) => this.setState({ evTime: e.target.value }),
+      evDesc: s.evDesc, onEvDesc: (e) => this.setState({ evDesc: e.target.value }),
+      createEvent: this.createEvent,
+      // chat
+      convos, messages,
+      activeTitle: am.title, activeSub: am.sub, activeInitials: am.initials, activeColor: am.color,
+      typing: active.typing,
+      chatDraft: s.chatDraft,
+      onChatDraft: (e) => this.setState({ chatDraft: e.target.value }),
+      onChatKey: (e) => { if (e.key === 'Enter') this.sendMsg(); },
+      sendMsg: this.sendMsg,
+      emojiOpen: s.emojiOpen,
+      toggleEmoji: () => this.setState({ emojiOpen: !s.emojiOpen }),
+      emojis,
+      msgRef: (el) => { this.msgEl = el; },
+      // notifications
+      notifItems,
+      markAllRead: () => this.setState({ notifs: s.notifs.map(n => Object.assign({}, n, { read: true })) }),
+      // rail
+      suggestions, railEvents
+    };
+  }
+}

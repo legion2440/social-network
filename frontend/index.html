@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html><head>
+  <script src="js/resources.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<script src="js/vendor/react.production.min.js"></script>
+<script src="js/vendor/react-dom.production.min.js"></script>
+<script src="js/vendor/babel.min.js"></script>
+<script src="js/runtime.js"></script>
+
+</head>
+<body>
+<x-dc>
+<helmet>
+
+<link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="css/styles-2.css">
+</helmet>
+
+<sc-if value="{{isAuth}}" hint-placeholder-val="{{false}}">
+<div data-screen-label="Auth" style="min-height:100vh;display:grid;place-items:center;padding:32px 16px;animation:screenIn .35s ease both">
+  <div style="width:430px;max-width:100%;background:var(--surface);border:1px solid var(--border);border-radius:24px;box-shadow:var(--shadow);padding:34px 34px 30px">
+    <div style="display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:6px">
+      <svg width="34" height="34" viewBox="0 0 28 28"><circle cx="11" cy="14" r="8.5" fill="var(--accent)" opacity="0.9"></circle><circle cx="17.5" cy="14" r="8.5" fill="var(--accent)" opacity="0.4"></circle></svg>
+      <span style="font:800 26px 'Manrope',sans-serif;letter-spacing:-0.5px">loop</span>
+    </div>
+    <p style="margin:0 0 22px;text-align:center;font:500 14px 'Manrope',sans-serif;color:var(--text2)">Your people, without the noise.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--surface2);padding:5px;border-radius:14px;margin-bottom:22px">
+      <sc-for list="{{authTabs}}" as="t" hint-placeholder-count="2">
+        <button onclick="{{t.pick}}" style="border:none;padding:9px 0;border-radius:10px;cursor:pointer;font:700 13.5px 'Manrope',sans-serif;background:{{t.bg}};color:{{t.color}};box-shadow:{{t.sh}};transition:all .2s">{{t.label}}</button>
+      </sc-for>
+    </div>
+    <sc-if value="{{authIsLogin}}" hint-placeholder-val="{{false}}">
+      <div style="display:flex;flex-direction:column;gap:12px;animation:fadeUp .3s ease both">
+        <input type="email" placeholder="Email" style="padding:13px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+        <input type="password" placeholder="Password" style="padding:13px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+      </div>
+    </sc-if>
+    <sc-if value="{{authIsReg}}" hint-placeholder-val="{{false}}">
+      <div style="display:flex;flex-direction:column;gap:12px;animation:fadeUp .3s ease both">
+        <div style="display:grid;place-items:center;padding:4px 0 2px">
+          <button style="width:76px;height:76px;border-radius:50%;border:1.5px dashed var(--text3);background:var(--surface2);color:var(--text3);cursor:pointer;display:grid;place-items:center;gap:2px;font:600 10px 'Manrope',sans-serif" title="Optional avatar">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Zm8 9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path></svg>
+            avatar
+          </button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <input placeholder="First name" style="padding:13px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+          <input placeholder="Last name" style="padding:13px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+        </div>
+        <input type="email" placeholder="Email" style="padding:13px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+        <input type="password" placeholder="Password" style="padding:13px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+        <label style="font:600 12px 'Manrope',sans-serif;color:var(--text3);margin:2px 2px -8px">Date of birth</label>
+        <input type="date" style="padding:12px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+        <input placeholder="Nickname (optional)" style="padding:13px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+        <textarea placeholder="About me (optional)" rows="2" style="padding:13px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)"></textarea>
+      </div>
+    </sc-if>
+    <button onclick="{{submitAuth}}" style="width:100%;margin-top:20px;padding:13px 0;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 15px 'Manrope',sans-serif;cursor:pointer;transition:transform .15s" style-hover="transform:translateY(-1px);filter:brightness(1.05)" style-active="transform:scale(.98)">{{authCta}}</button>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{isApp}}" hint-placeholder-val="{{true}}">
+<div style="max-width:1300px;margin:0 auto;display:flex;gap:20px;padding:0 20px;align-items:flex-start">
+
+  <nav style="width:240px;flex:none;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;padding:22px 10px 18px;gap:2px">
+    <div onclick="{{goHome}}" style="display:flex;align-items:center;gap:10px;padding:6px 14px 20px;cursor:pointer">
+      <svg width="30" height="30" viewBox="0 0 28 28"><circle cx="11" cy="14" r="8.5" fill="var(--accent)" opacity="0.9"></circle><circle cx="17.5" cy="14" r="8.5" fill="var(--accent)" opacity="0.4"></circle></svg>
+      <span style="font:800 22px 'Manrope',sans-serif;letter-spacing:-0.5px">loop</span>
+    </div>
+    <sc-for list="{{navItems}}" as="n" hint-placeholder-count="5">
+      <button onclick="{{n.go}}" style="display:flex;align-items:center;gap:14px;padding:11px 14px;border:none;border-radius:14px;background:{{n.bg}};color:{{n.color}};font-size:15px;font-weight:{{n.w}};cursor:pointer;text-align:left;width:100%;transition:background .2s,color .2s">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{n.icon}}"></path></svg>
+        <span style="flex:1">{{n.label}}</span>
+        <sc-if value="{{n.hasBadge}}" hint-placeholder-val="{{false}}"><span style="background:var(--accent);color:#fff;font:700 11px 'Manrope',sans-serif;min-width:19px;height:19px;border-radius:10px;display:grid;place-items:center;padding:0 5px;animation:ping 1.6s 2">{{n.badge}}</span></sc-if>
+      </button>
+    </sc-for>
+    <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">
+      <button onclick="{{toggleTheme}}" style="display:flex;align-items:center;gap:14px;padding:11px 14px;border:none;border-radius:14px;background:transparent;color:var(--text2);font:600 15px 'Manrope',sans-serif;cursor:pointer;text-align:left;transition:background .2s" style-hover="background:var(--surface2)">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{themeIcon}}"></path></svg>
+        <span>{{themeLabel}}</span>
+      </button>
+      <div style="display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:16px;background:var(--surface);border:1px solid var(--border)">
+        <div onclick="{{goMyProfile}}" style="width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{me.color}}">{{me.initials}}</div>
+        <div onclick="{{goMyProfile}}" style="flex:1;min-width:0;cursor:pointer">
+          <div style="font:700 13.5px 'Manrope',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{me.name}}</div>
+          <div style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">{{me.handle}}</div>
+        </div>
+        <button onclick="{{goLogout}}" title="Log out" style="width:32px;height:32px;border-radius:10px;border:none;background:transparent;color:var(--text3);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--surface2);color:var(--text)">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9"></path></svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <main style="flex:1;min-width:0;padding:22px 0 60px">
+
+    <sc-if value="{{isFeed}}" hint-placeholder-val="{{true}}">
+    <div data-screen-label="Feed" style="max-width:640px;margin:0 auto;animation:screenIn .3s ease both">
+      <h1 style="font:800 22px 'Manrope',sans-serif;margin:6px 4px 16px">Home</h1>
+
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:16px 18px;margin-bottom:18px">
+        <div style="display:flex;gap:12px">
+          <div style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;background:{{me.color}}">{{me.initials}}</div>
+          <textarea rows="2" placeholder="What's on your mind?" value="{{composerText}}" onchange="{{onComposer}}" style="flex:1;border:none;background:transparent;color:var(--text);font-size:15px;line-height:1.5;outline:none;padding-top:8px"></textarea>
+        </div>
+        <sc-if value="{{composerImg}}" hint-placeholder-val="{{false}}">
+          <div style="margin:10px 0 2px 52px;position:relative;height:130px;border-radius:14px;border:1.5px dashed var(--border);background:repeating-linear-gradient(45deg,transparent 0 12px,var(--surface2) 12px 24px);display:grid;place-items:center">
+            <span style="font:600 11px ui-monospace,monospace;color:var(--text3);letter-spacing:.08em;text-transform:uppercase">attached image</span>
+            <button onclick="{{removeComposerImg}}" style="position:absolute;top:8px;right:8px;width:26px;height:26px;border-radius:50%;border:none;background:var(--surface);color:var(--text2);cursor:pointer;display:grid;place-items:center;box-shadow:var(--shadow)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M17.5 6.5l-11 11m0-11 11 11"></path></svg>
+            </button>
+          </div>
+        </sc-if>
+        <sc-if value="{{privacyIsPrivate}}" hint-placeholder-val="{{false}}">
+          <div style="margin:10px 0 2px 52px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;animation:drop .25s ease both">
+            <span style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">Visible to:</span>
+            <sc-for list="{{followerChips}}" as="fc" hint-placeholder-count="3">
+              <button onclick="{{fc.toggle}}" style="display:flex;align-items:center;gap:7px;padding:5px 12px 5px 6px;border-radius:999px;cursor:pointer;font:700 12px 'Manrope',sans-serif;border:1.5px solid {{fc.bd}};background:{{fc.bg}};color:{{fc.tc}};transition:all .15s">
+                <span style="width:20px;height:20px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 9px 'Manrope',sans-serif;background:{{fc.color}}">{{fc.initials}}</span>
+                {{fc.name}}
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:12px;padding-left:52px;position:relative">
+          <button onclick="{{toggleComposerImg}}" title="Add image or GIF" style="width:36px;height:36px;border-radius:12px;border:none;background:transparent;color:var(--text2);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--surface2)">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm4.5 6a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM21 15.5 16 10 5 20"></path></svg>
+          </button>
+          <button onclick="{{togglePrivacy}}" style="display:flex;align-items:center;gap:7px;padding:8px 13px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text2);font:700 12.5px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{privacyIcon}}"></path></svg>
+            {{privacyLabel}}
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9.5l6 6 6-6"></path></svg>
+          </button>
+          <sc-if value="{{privacyOpen}}" hint-placeholder-val="{{false}}">
+            <div style="position:absolute;top:44px;left:96px;z-index:20;width:280px;background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);padding:6px;animation:drop .2s ease both">
+              <sc-for list="{{privacyOptions}}" as="po" hint-placeholder-count="3">
+                <button onclick="{{po.pick}}" style="display:flex;gap:12px;align-items:center;width:100%;text-align:left;padding:10px 12px;border:none;border-radius:11px;cursor:pointer;background:{{po.bg}};color:var(--text)" style-hover="background:var(--surface2)">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text2);flex:none"><path d="{{po.icon}}"></path></svg>
+                  <span style="flex:1"><span style="display:block;font:700 13.5px 'Manrope',sans-serif">{{po.label}}</span><span style="display:block;font:500 12px 'Manrope',sans-serif;color:var(--text3)">{{po.desc}}</span></span>
+                  <sc-if value="{{po.isOn}}" hint-placeholder-val="{{false}}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6.5 9.5 17 4 11.5"></path></svg></sc-if>
+                </button>
+              </sc-for>
+            </div>
+          </sc-if>
+          <button onclick="{{sendPost}}" style="margin-left:auto;padding:9px 22px;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 13.5px 'Manrope',sans-serif;cursor:pointer;opacity:{{postBtnOp}};transition:opacity .2s,transform .15s" style-hover="transform:translateY(-1px)" style-active="transform:scale(.97)">Post</button>
+        </div>
+      </div>
+
+      <sc-if value="{{feedLoading}}" hint-placeholder-val="{{true}}">
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px">
+            <div style="display:flex;gap:12px;align-items:center"><div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(90deg,var(--surface2) 25%,var(--bg) 50%,var(--surface2) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite"></div><div style="flex:1"><div style="height:12px;width:38%;border-radius:6px;background:linear-gradient(90deg,var(--surface2) 25%,var(--bg) 50%,var(--surface2) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite"></div><div style="height:10px;width:22%;margin-top:7px;border-radius:6px;background:linear-gradient(90deg,var(--surface2) 25%,var(--bg) 50%,var(--surface2) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite"></div></div></div>
+            <div style="height:12px;width:92%;margin-top:16px;border-radius:6px;background:linear-gradient(90deg,var(--surface2) 25%,var(--bg) 50%,var(--surface2) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite"></div>
+            <div style="height:12px;width:70%;margin-top:9px;border-radius:6px;background:linear-gradient(90deg,var(--surface2) 25%,var(--bg) 50%,var(--surface2) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite"></div>
+            <div style="height:150px;margin-top:14px;border-radius:14px;background:linear-gradient(90deg,var(--surface2) 25%,var(--bg) 50%,var(--surface2) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite"></div>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px">
+            <div style="display:flex;gap:12px;align-items:center"><div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(90deg,var(--surface2) 25%,var(--bg) 50%,var(--surface2) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite"></div><div style="flex:1"><div style="height:12px;width:45%;border-radius:6px;background:linear-gradient(90deg,var(--surface2) 25%,var(--bg) 50%,var(--surface2) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite"></div><div style="height:10px;width:25%;margin-top:7px;border-radius:6px;background:linear-gradient(90deg,var(--surface2) 25%,var(--bg) 50%,var(--surface2) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite"></div></div></div>
+            <div style="height:12px;width:85%;margin-top:16px;border-radius:6px;background:linear-gradient(90deg,var(--surface2) 25%,var(--bg) 50%,var(--surface2) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite"></div>
+            <div style="height:12px;width:55%;margin-top:9px;border-radius:6px;background:linear-gradient(90deg,var(--surface2) 25%,var(--bg) 50%,var(--surface2) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite"></div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{feedReady}}" hint-placeholder-val="{{false}}">
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <sc-for list="{{posts}}" as="p" hint-placeholder-count="3">
+            <article style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;animation:fadeUp .45s ease both;animation-delay:{{p.delay}}">
+              <div style="display:flex;gap:12px;align-items:center">
+                <div onclick="{{p.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{p.user.color}}">{{p.user.initials}}</div>
+                <div style="flex:1;min-width:0">
+                  <span onclick="{{p.goProfile}}" style="font:700 14.5px 'Manrope',sans-serif;cursor:pointer">{{p.user.name}}</span>
+                  <div style="font:600 12.5px 'Manrope',sans-serif;color:var(--text3)">{{p.user.handle}} · {{p.time}}</div>
+                </div>
+                <span title="Post visibility" style="display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;background:var(--surface2);color:var(--text3);font:700 11px 'Manrope',sans-serif">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{p.privacyIcon}}"></path></svg>
+                  {{p.privacyLabel}}
+                </span>
+              </div>
+              <p style="margin:12px 0 0;font:500 15px/1.55 'Manrope',sans-serif;text-wrap:pretty">{{p.text}}</p>
+              <sc-if value="{{p.hasImage}}" hint-placeholder-val="{{false}}">
+                <div style="margin-top:13px;height:210px;border-radius:14px;border:1.5px dashed var(--border);background:repeating-linear-gradient(45deg,transparent 0 12px,var(--surface2) 12px 24px);display:grid;place-items:center">
+                  <span style="font:600 11px ui-monospace,monospace;color:var(--text3);letter-spacing:.08em;text-transform:uppercase">{{p.image}}</span>
+                </div>
+              </sc-if>
+              <div style="display:flex;gap:6px;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+                <button onclick="{{p.onLike}}" style="display:flex;align-items:center;gap:7px;padding:7px 13px;border:none;border-radius:999px;background:transparent;color:{{p.likeColor}};font:700 13px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
+                  <sc-if value="{{p.liked}}" hint-placeholder-val="{{false}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="var(--danger)" stroke="var(--danger)" stroke-width="1.8" stroke-linejoin="round" style="animation:pop .4s ease both"><path d="M20.8 4.9a5.4 5.4 0 0 0-7.7 0l-1.1 1-1-1a5.4 5.4 0 1 0-7.7 7.7l8.7 8.7 8.8-8.7a5.4 5.4 0 0 0 0-7.7Z"></path></svg></sc-if>
+                  <sc-if value="{{p.notLiked}}" hint-placeholder-val="{{true}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M20.8 4.9a5.4 5.4 0 0 0-7.7 0l-1.1 1-1-1a5.4 5.4 0 1 0-7.7 7.7l8.7 8.7 8.8-8.7a5.4 5.4 0 0 0 0-7.7Z"></path></svg></sc-if>
+                  {{p.likes}}
+                </button>
+                <button onclick="{{p.onToggleComments}}" style="display:flex;align-items:center;gap:7px;padding:7px 13px;border:none;border-radius:999px;background:transparent;color:var(--text2);font:700 13px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>
+                  {{p.commentCount}}
+                </button>
+              </div>
+              <sc-if value="{{p.showComments}}" hint-placeholder-val="{{false}}">
+                <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px;animation:drop .25s ease both">
+                  <sc-for list="{{p.comments}}" as="c" hint-placeholder-count="1">
+                    <div style="display:flex;gap:10px">
+                      <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{c.user.color}}">{{c.user.initials}}</div>
+                      <div style="flex:1;background:var(--surface2);border-radius:4px 14px 14px 14px;padding:9px 13px">
+                        <span style="font:700 12.5px 'Manrope',sans-serif">{{c.user.name}}</span>
+                        <span style="font:600 11px 'Manrope',sans-serif;color:var(--text3)"> · {{c.time}}</span>
+                        <p style="margin:3px 0 0;font:500 13.5px/1.5 'Manrope',sans-serif">{{c.text}}</p>
+                      </div>
+                    </div>
+                  </sc-for>
+                  <div style="display:flex;gap:10px;align-items:center">
+                    <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{me.color}}">{{me.initials}}</div>
+                    <input placeholder="Write a comment…" value="{{p.draft}}" onchange="{{p.onDraft}}" onkeydown="{{p.onKey}}" style="flex:1;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13.5px;outline-color:var(--accent)">
+                    <button onclick="{{p.onSendComment}}" style="width:36px;height:36px;border-radius:50%;border:none;background:var(--soft);color:var(--accent);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--soft2)">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2.5 10.8 13.2m10.7-10.7-6.8 19-3.9-8.3-8.3-3.9Z"></path></svg>
+                    </button>
+                  </div>
+                </div>
+              </sc-if>
+            </article>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{isProfile}}" hint-placeholder-val="{{false}}">
+    <div data-screen-label="Profile" style="max-width:640px;margin:0 auto;animation:screenIn .3s ease both">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;margin-bottom:18px">
+        <div style="height:110px;background:{{pCover}}"></div>
+        <div style="padding:0 22px 20px">
+          <div style="display:flex;align-items:flex-end;gap:16px;margin-top:-34px;flex-wrap:wrap">
+            <div style="width:84px;height:84px;flex:none;border-radius:50%;display:grid;place-items:center;color:#fff;font:800 26px 'Manrope',sans-serif;border:4px solid var(--surface);background:{{pUser.color}}">{{pUser.initials}}</div>
+            <div style="margin-left:auto;padding-bottom:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <sc-if value="{{pIsMe}}" hint-placeholder-val="{{false}}">
+                <span style="font:600 12px 'Manrope',sans-serif;color:var(--text3);margin-right:2px">Profile:</span>
+                <div style="display:flex;background:var(--surface2);border-radius:999px;padding:4px;gap:3px">
+                  <sc-for list="{{privacySeg}}" as="sg" hint-placeholder-count="2">
+                    <button onclick="{{sg.pick}}" style="display:flex;align-items:center;gap:6px;border:none;padding:6px 14px;border-radius:999px;cursor:pointer;font:700 12px 'Manrope',sans-serif;background:{{sg.bg}};color:{{sg.color}};transition:all .2s">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="{{sg.icon}}"></path></svg>
+                      {{sg.label}}
+                    </button>
+                  </sc-for>
+                </div>
+              </sc-if>
+              <sc-if value="{{pOther}}" hint-placeholder-val="{{false}}">
+                <button onclick="{{onFollow}}" style="padding:9px 22px;border-radius:999px;cursor:pointer;font:800 13.5px 'Manrope',sans-serif;border:1.5px solid {{followBd}};background:{{followBg}};color:{{followColor}};transition:all .2s" style-active="transform:scale(.97)">{{followLabel}}</button>
+                <button onclick="{{msgProfile}}" title="Message" style="width:38px;height:38px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--surface2)">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-3-.4-4.2-1.1L3 21l2.1-5.3A8.5 8.5 0 1 1 21 11.5Z"></path></svg>
+                </button>
+              </sc-if>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:12px">
+            <h1 style="font:800 21px 'Manrope',sans-serif;margin:0">{{pUser.name}}</h1>
+            <sc-if value="{{pShowLock}}" hint-placeholder-val="{{false}}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10.5V7a5 5 0 0 1 10 0v3.5M6 10.5h12a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1Z"></path></svg></sc-if>
+          </div>
+          <div style="font:600 13px 'Manrope',sans-serif;color:var(--text3);margin-top:2px">{{pUser.handle}}</div>
+          <p style="margin:10px 0 0;font:500 14.5px/1.55 'Manrope',sans-serif;color:var(--text2)">{{pUser.bio}}</p>
+          <sc-if value="{{pCanView}}" hint-placeholder-val="{{true}}">
+            <div style="display:flex;gap:22px;margin-top:14px;font:600 13px 'Manrope',sans-serif;color:var(--text3)">
+              <span><b style="color:var(--text);font-weight:800">{{pStatPosts}}</b> posts</span>
+              <span><b style="color:var(--text);font-weight:800">{{pStatFollowers}}</b> followers</span>
+              <span><b style="color:var(--text);font-weight:800">{{pStatFollowing}}</b> following</span>
+            </div>
+            <div style="display:flex;gap:18px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font:600 12.5px 'Manrope',sans-serif;color:var(--text3);flex-wrap:wrap">
+              <span style="display:flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6.5h17v12h-17zM3.5 7l8.5 6 8.5-6"></path></svg>{{pUser.email}}</span>
+              <span style="display:flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v3m8-3v3M3.5 9h17m-15-3.5h13a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z"></path></svg>Born {{pUser.dob}}</span>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+
+      <sc-if value="{{pLocked}}" hint-placeholder-val="{{false}}">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:44px 24px;text-align:center;animation:fadeUp .35s ease both">
+          <div style="width:56px;height:56px;border-radius:50%;background:var(--surface2);display:grid;place-items:center;margin:0 auto 14px">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10.5V7a5 5 0 0 1 10 0v3.5M6 10.5h12a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1Z"></path></svg>
+          </div>
+          <div style="font:800 16px 'Manrope',sans-serif">This account is private</div>
+          <p style="margin:6px auto 0;max-width:320px;font:500 13.5px/1.5 'Manrope',sans-serif;color:var(--text3)">Follow {{pUser.name}} to see their posts, followers and full profile.</p>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{pCanView}}" hint-placeholder-val="{{true}}">
+        <div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding:0 4px">
+          <sc-for list="{{pTabs}}" as="pt" hint-placeholder-count="3">
+            <button onclick="{{pt.pick}}" style="padding:11px 16px;border:none;background:transparent;cursor:pointer;font:800 13.5px 'Manrope',sans-serif;color:{{pt.color}};border-bottom:2.5px solid {{pt.bd}};margin-bottom:-1px;transition:color .2s">{{pt.label}}</button>
+          </sc-for>
+        </div>
+        <sc-if value="{{pTabPosts}}" hint-placeholder-val="{{true}}">
+          <div style="display:flex;flex-direction:column;gap:18px">
+            <sc-for list="{{pPosts}}" as="p" hint-placeholder-count="2">
+              <article style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;animation:fadeUp .4s ease both">
+                <div style="display:flex;gap:12px;align-items:center">
+                  <div style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;background:{{p.user.color}}">{{p.user.initials}}</div>
+                  <div style="flex:1"><span style="font:700 14.5px 'Manrope',sans-serif">{{p.user.name}}</span><div style="font:600 12.5px 'Manrope',sans-serif;color:var(--text3)">{{p.time}}</div></div>
+                  <span style="display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;background:var(--surface2);color:var(--text3);font:700 11px 'Manrope',sans-serif">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{p.privacyIcon}}"></path></svg>
+                    {{p.privacyLabel}}
+                  </span>
+                </div>
+                <p style="margin:12px 0 0;font:500 15px/1.55 'Manrope',sans-serif;text-wrap:pretty">{{p.text}}</p>
+                <sc-if value="{{p.hasImage}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:13px;height:190px;border-radius:14px;border:1.5px dashed var(--border);background:repeating-linear-gradient(45deg,transparent 0 12px,var(--surface2) 12px 24px);display:grid;place-items:center">
+                    <span style="font:600 11px ui-monospace,monospace;color:var(--text3);letter-spacing:.08em;text-transform:uppercase">{{p.image}}</span>
+                  </div>
+                </sc-if>
+                <div style="display:flex;gap:16px;margin-top:12px;border-top:1px solid var(--border);padding-top:10px;font:700 13px 'Manrope',sans-serif;color:var(--text3)">
+                  <span style="display:flex;align-items:center;gap:6px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M20.8 4.9a5.4 5.4 0 0 0-7.7 0l-1.1 1-1-1a5.4 5.4 0 1 0-7.7 7.7l8.7 8.7 8.8-8.7a5.4 5.4 0 0 0 0-7.7Z"></path></svg>{{p.likes}}</span>
+                  <span style="display:flex;align-items:center;gap:6px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>{{p.commentCount}}</span>
+                </div>
+              </article>
+            </sc-for>
+            <sc-if value="{{pNoPosts}}" hint-placeholder-val="{{false}}">
+              <div style="padding:36px;text-align:center;font:600 13.5px 'Manrope',sans-serif;color:var(--text3)">No posts yet.</div>
+            </sc-if>
+          </div>
+        </sc-if>
+        <sc-if value="{{pTabFollowers}}" hint-placeholder-val="{{false}}">
+          <div style="display:flex;flex-direction:column;gap:10px;animation:fadeUp .3s ease both">
+            <sc-for list="{{pFollowers}}" as="f" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px 16px">
+                <div onclick="{{f.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{f.user.color}}">{{f.user.initials}}</div>
+                <div onclick="{{f.goProfile}}" style="flex:1;min-width:0;cursor:pointer">
+                  <div style="font:700 14px 'Manrope',sans-serif">{{f.user.name}}</div>
+                  <div style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">{{f.user.handle}}</div>
+                </div>
+                <sc-if value="{{f.showBtn}}" hint-placeholder-val="{{false}}">
+                  <button onclick="{{f.onBtn}}" style="padding:8px 18px;border-radius:999px;cursor:pointer;font:800 12.5px 'Manrope',sans-serif;border:1.5px solid {{f.btnBd}};background:{{f.btnBg}};color:{{f.btnColor}};transition:all .2s">{{f.btnLabel}}</button>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{pTabFollowing}}" hint-placeholder-val="{{false}}">
+          <div style="display:flex;flex-direction:column;gap:10px;animation:fadeUp .3s ease both">
+            <sc-for list="{{pFollowing}}" as="f" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px 16px">
+                <div onclick="{{f.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{f.user.color}}">{{f.user.initials}}</div>
+                <div onclick="{{f.goProfile}}" style="flex:1;min-width:0;cursor:pointer">
+                  <div style="font:700 14px 'Manrope',sans-serif">{{f.user.name}}</div>
+                  <div style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">{{f.user.handle}}</div>
+                </div>
+                <sc-if value="{{f.showBtn}}" hint-placeholder-val="{{false}}">
+                  <button onclick="{{f.onBtn}}" style="padding:8px 18px;border-radius:999px;cursor:pointer;font:800 12.5px 'Manrope',sans-serif;border:1.5px solid {{f.btnBd}};background:{{f.btnBg}};color:{{f.btnColor}};transition:all .2s">{{f.btnLabel}}</button>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </sc-if>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{isGroups}}" hint-placeholder-val="{{false}}">
+    <div data-screen-label="Groups" style="max-width:760px;margin:0 auto;animation:screenIn .3s ease both">
+      <div style="display:flex;align-items:center;margin:6px 4px 16px">
+        <h1 style="font:800 22px 'Manrope',sans-serif;margin:0">Groups</h1>
+        <button onclick="{{toggleCreate}}" style="margin-left:auto;display:flex;align-items:center;gap:7px;padding:9px 18px;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 13px 'Manrope',sans-serif;cursor:pointer" style-hover="transform:translateY(-1px)" style-active="transform:scale(.97)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+          New group
+        </button>
+      </div>
+      <sc-if value="{{createOpen}}" hint-placeholder-val="{{false}}">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;margin-bottom:18px;display:flex;flex-direction:column;gap:12px;animation:drop .25s ease both">
+          <input placeholder="Group name" value="{{ngName}}" onchange="{{onNgName}}" style="padding:12px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+          <input placeholder="What is this group about?" value="{{ngDesc}}" onchange="{{onNgDesc}}" style="padding:12px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button onclick="{{toggleCreate}}" style="padding:9px 18px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text2);font:700 13px 'Manrope',sans-serif;cursor:pointer">Cancel</button>
+            <button onclick="{{createGroup}}" style="padding:9px 20px;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 13px 'Manrope',sans-serif;cursor:pointer">Create</button>
+          </div>
+        </div>
+      </sc-if>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <sc-for list="{{groupCards}}" as="g" hint-placeholder-count="4">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;animation:fadeUp .4s ease both;animation-delay:{{g.delay}};display:flex;flex-direction:column">
+            <div onclick="{{g.open}}" style="height:74px;cursor:pointer;background:{{g.cover}}"></div>
+            <div style="padding:14px 16px 16px;display:flex;flex-direction:column;gap:6px;flex:1">
+              <div onclick="{{g.open}}" style="font:800 15.5px 'Manrope',sans-serif;cursor:pointer">{{g.name}}</div>
+              <div style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">{{g.membersLabel}} members</div>
+              <p style="margin:2px 0 10px;font:500 13px/1.5 'Manrope',sans-serif;color:var(--text2);flex:1">{{g.desc}}</p>
+              <sc-if value="{{g.isJoined}}" hint-placeholder-val="{{false}}">
+                <button onclick="{{g.open}}" style="padding:9px 0;border-radius:999px;border:none;background:var(--soft);color:var(--accent);font:800 13px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--soft2)">Open group</button>
+              </sc-if>
+              <sc-if value="{{g.isNone}}" hint-placeholder-val="{{false}}">
+                <button onclick="{{g.join}}" style="padding:9px 0;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 13px 'Manrope',sans-serif;cursor:pointer" style-active="transform:scale(.97)">Request to join</button>
+              </sc-if>
+              <sc-if value="{{g.isRequested}}" hint-placeholder-val="{{false}}">
+                <button onclick="{{g.join}}" style="padding:9px 0;border-radius:999px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font:800 13px 'Manrope',sans-serif;cursor:pointer" title="Click to cancel request">Requested ✓</button>
+              </sc-if>
+              <sc-if value="{{g.isInvited}}" hint-placeholder-val="{{false}}">
+                <div style="display:flex;gap:8px">
+                  <button onclick="{{g.acceptInvite}}" style="flex:1;padding:9px 0;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 13px 'Manrope',sans-serif;cursor:pointer">Accept invite</button>
+                  <button onclick="{{g.declineInvite}}" style="flex:1;padding:9px 0;border-radius:999px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font:800 13px 'Manrope',sans-serif;cursor:pointer">Decline</button>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{isGroup}}" hint-placeholder-val="{{false}}">
+    <div data-screen-label="Group detail" style="max-width:680px;margin:0 auto;animation:screenIn .3s ease both">
+      <button onclick="{{gBack}}" style="display:flex;align-items:center;gap:7px;border:none;background:transparent;color:var(--text2);font:700 13px 'Manrope',sans-serif;cursor:pointer;padding:8px 10px;border-radius:10px;margin-bottom:8px" style-hover="background:var(--surface2)">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg>
+        All groups
+      </button>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px">
+        <div style="height:96px;background:{{gCover}}"></div>
+        <div style="padding:16px 22px 14px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <h1 style="font:800 20px 'Manrope',sans-serif;margin:0">{{gName}}</h1>
+            <sc-if value="{{gIsOwner}}" hint-placeholder-val="{{false}}"><span style="padding:3px 10px;border-radius:999px;background:var(--soft);color:var(--accent);font:800 10.5px 'Manrope',sans-serif;letter-spacing:.04em">OWNER</span></sc-if>
+            <button onclick="{{toggleInvite}}" style="margin-left:auto;display:flex;align-items:center;gap:7px;padding:8px 16px;border-radius:999px;border:1.5px solid var(--border);background:transparent;color:var(--text);font:800 12.5px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Invite
+            </button>
+          </div>
+          <div style="font:600 12.5px 'Manrope',sans-serif;color:var(--text3);margin-top:4px">{{gMembersLabel}} members · {{gDesc}}</div>
+          <sc-if value="{{inviteOpen}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:12px;padding:12px;border-radius:14px;background:var(--bg);border:1px solid var(--border);animation:drop .2s ease both">
+              <div style="font:700 12px 'Manrope',sans-serif;color:var(--text3);margin-bottom:8px">INVITE PEOPLE YOU FOLLOW</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <sc-for list="{{inviteChips}}" as="iv" hint-placeholder-count="2">
+                  <button onclick="{{iv.toggle}}" style="display:flex;align-items:center;gap:7px;padding:5px 12px 5px 6px;border-radius:999px;cursor:pointer;font:700 12px 'Manrope',sans-serif;border:1.5px solid {{iv.bd}};background:{{iv.bg}};color:{{iv.tc}};transition:all .15s">
+                    <span style="width:20px;height:20px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 9px 'Manrope',sans-serif;background:{{iv.color}}">{{iv.initials}}</span>
+                    {{iv.label}}
+                  </button>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+        <div style="display:flex;gap:2px;padding:0 14px;border-top:1px solid var(--border)">
+          <sc-for list="{{gTabs}}" as="gt" hint-placeholder-count="3">
+            <button onclick="{{gt.pick}}" style="padding:12px 16px;border:none;background:transparent;cursor:pointer;font:800 13.5px 'Manrope',sans-serif;color:{{gt.color}};border-bottom:2.5px solid {{gt.bd}};transition:color .2s">{{gt.label}}</button>
+          </sc-for>
+        </div>
+      </div>
+
+      <sc-if value="{{gTabPosts}}" hint-placeholder-val="{{true}}">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;display:flex;gap:10px;align-items:center">
+            <div style="width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 11px 'Manrope',sans-serif;flex:none;background:{{me.color}}">{{me.initials}}</div>
+            <input placeholder="Share something with the group…" value="{{gComposer}}" onchange="{{onGComposer}}" onkeydown="{{onGComposerKey}}" style="flex:1;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+            <button onclick="{{gPost}}" style="width:38px;height:38px;border-radius:50%;border:none;background:var(--accent);color:#fff;cursor:pointer;display:grid;place-items:center" style-active="transform:scale(.94)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2.5 10.8 13.2m10.7-10.7-6.8 19-3.9-8.3-8.3-3.9Z"></path></svg>
+            </button>
+          </div>
+          <sc-for list="{{gPosts}}" as="p" hint-placeholder-count="2">
+            <article style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;animation:fadeUp .4s ease both">
+              <div style="display:flex;gap:12px;align-items:center">
+                <div onclick="{{p.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{p.user.color}}">{{p.user.initials}}</div>
+                <div style="flex:1"><span onclick="{{p.goProfile}}" style="font:700 14.5px 'Manrope',sans-serif;cursor:pointer">{{p.user.name}}</span><div style="font:600 12.5px 'Manrope',sans-serif;color:var(--text3)">{{p.time}}</div></div>
+              </div>
+              <p style="margin:12px 0 0;font:500 15px/1.55 'Manrope',sans-serif;text-wrap:pretty">{{p.text}}</p>
+              <div style="display:flex;gap:6px;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+                <button onclick="{{p.onLike}}" style="display:flex;align-items:center;gap:7px;padding:7px 13px;border:none;border-radius:999px;background:transparent;color:{{p.likeColor}};font:700 13px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
+                  <sc-if value="{{p.liked}}" hint-placeholder-val="{{false}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="var(--danger)" stroke="var(--danger)" stroke-width="1.8" stroke-linejoin="round" style="animation:pop .4s ease both"><path d="M20.8 4.9a5.4 5.4 0 0 0-7.7 0l-1.1 1-1-1a5.4 5.4 0 1 0-7.7 7.7l8.7 8.7 8.8-8.7a5.4 5.4 0 0 0 0-7.7Z"></path></svg></sc-if>
+                  <sc-if value="{{p.notLiked}}" hint-placeholder-val="{{true}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M20.8 4.9a5.4 5.4 0 0 0-7.7 0l-1.1 1-1-1a5.4 5.4 0 1 0-7.7 7.7l8.7 8.7 8.8-8.7a5.4 5.4 0 0 0 0-7.7Z"></path></svg></sc-if>
+                  {{p.likes}}
+                </button>
+                <button onclick="{{p.onToggleComments}}" style="display:flex;align-items:center;gap:7px;padding:7px 13px;border:none;border-radius:999px;background:transparent;color:var(--text2);font:700 13px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>
+                  {{p.commentCount}}
+                </button>
+              </div>
+              <sc-if value="{{p.showComments}}" hint-placeholder-val="{{false}}">
+                <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px;animation:drop .25s ease both">
+                  <sc-for list="{{p.comments}}" as="c" hint-placeholder-count="1">
+                    <div style="display:flex;gap:10px">
+                      <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{c.user.color}}">{{c.user.initials}}</div>
+                      <div style="flex:1;background:var(--surface2);border-radius:4px 14px 14px 14px;padding:9px 13px">
+                        <span style="font:700 12.5px 'Manrope',sans-serif">{{c.user.name}}</span>
+                        <span style="font:600 11px 'Manrope',sans-serif;color:var(--text3)"> · {{c.time}}</span>
+                        <p style="margin:3px 0 0;font:500 13.5px/1.5 'Manrope',sans-serif">{{c.text}}</p>
+                      </div>
+                    </div>
+                  </sc-for>
+                  <div style="display:flex;gap:10px;align-items:center">
+                    <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{me.color}}">{{me.initials}}</div>
+                    <input placeholder="Write a comment…" value="{{p.draft}}" onchange="{{p.onDraft}}" onkeydown="{{p.onKey}}" style="flex:1;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13.5px;outline-color:var(--accent)">
+                    <button onclick="{{p.onSendComment}}" style="width:36px;height:36px;border-radius:50%;border:none;background:var(--soft);color:var(--accent);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--soft2)">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2.5 10.8 13.2m10.7-10.7-6.8 19-3.9-8.3-8.3-3.9Z"></path></svg>
+                    </button>
+                  </div>
+                </div>
+              </sc-if>
+            </article>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{gTabEvents}}" hint-placeholder-val="{{false}}">
+        <div style="display:flex;flex-direction:column;gap:16px;animation:fadeUp .3s ease both">
+          <button onclick="{{toggleNewEvent}}" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px 0;border-radius:var(--r);border:1.5px dashed var(--border);background:transparent;color:var(--text2);font:800 13.5px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+            Create an event
+          </button>
+          <sc-if value="{{newEventOpen}}" hint-placeholder-val="{{false}}">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;display:flex;flex-direction:column;gap:12px;animation:drop .25s ease both">
+              <input placeholder="Event title" value="{{evTitle}}" onchange="{{onEvTitle}}" style="padding:12px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <input placeholder="Date · e.g. Jul 24" value="{{evDate}}" onchange="{{onEvDate}}" style="padding:12px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+                <input placeholder="Time · e.g. 18:00" value="{{evTime}}" onchange="{{onEvTime}}" style="padding:12px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+              </div>
+              <input placeholder="Description" value="{{evDesc}}" onchange="{{onEvDesc}}" style="padding:12px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+              <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button onclick="{{toggleNewEvent}}" style="padding:9px 18px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text2);font:700 13px 'Manrope',sans-serif;cursor:pointer">Cancel</button>
+                <button onclick="{{createEvent}}" style="padding:9px 20px;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 13px 'Manrope',sans-serif;cursor:pointer">Create event</button>
+              </div>
+            </div>
+          </sc-if>
+          <sc-for list="{{gEvents}}" as="ev" hint-placeholder-count="2">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;display:flex;gap:16px;animation:fadeUp .35s ease both">
+              <div style="width:60px;height:64px;flex:none;border-radius:14px;background:var(--soft);color:var(--accent);display:flex;flex-direction:column;align-items:center;justify-content:center">
+                <span style="font:800 18px 'Manrope',sans-serif">{{ev.dateDay}}</span>
+                <span style="font:800 10.5px 'Manrope',sans-serif;letter-spacing:.08em">{{ev.dateMon}}</span>
+              </div>
+              <div style="flex:1;min-width:0">
+                <div style="font:800 15.5px 'Manrope',sans-serif">{{ev.title}}</div>
+                <div style="font:600 12.5px 'Manrope',sans-serif;color:var(--text3);margin-top:2px">{{ev.timeLabel}}</div>
+                <p style="margin:7px 0 0;font:500 13.5px/1.5 'Manrope',sans-serif;color:var(--text2)">{{ev.desc}}</p>
+                <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
+                  <button onclick="{{ev.setGoing}}" style="display:flex;align-items:center;gap:6px;padding:8px 16px;border-radius:999px;cursor:pointer;font:800 12.5px 'Manrope',sans-serif;border:1.5px solid {{ev.goBd}};background:{{ev.goBg}};color:{{ev.goColor}};transition:all .2s" style-active="transform:scale(.96)">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6.5 9.5 17 4 11.5"></path></svg>
+                    Going
+                  </button>
+                  <button onclick="{{ev.setNot}}" style="display:flex;align-items:center;gap:6px;padding:8px 16px;border-radius:999px;cursor:pointer;font:800 12.5px 'Manrope',sans-serif;border:1.5px solid {{ev.noBd}};background:{{ev.noBg}};color:{{ev.noColor}};transition:all .2s" style-active="transform:scale(.96)">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M17.5 6.5l-11 11m0-11 11 11"></path></svg>
+                    Can't go
+                  </button>
+                  <div style="display:flex;align-items:center;margin-left:auto">
+                    <sc-for list="{{ev.goingAvatars}}" as="ga" hint-placeholder-count="2">
+                      <span style="width:24px;height:24px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 8.5px 'Manrope',sans-serif;border:2px solid var(--surface);margin-left:-6px;background:{{ga.color}}">{{ga.initials}}</span>
+                    </sc-for>
+                    <span style="font:700 12px 'Manrope',sans-serif;color:var(--text3);margin-left:8px">{{ev.goingLabel}} going</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{gTabMembers}}" hint-placeholder-val="{{false}}">
+        <div style="display:flex;flex-direction:column;gap:10px;animation:fadeUp .3s ease both">
+          <sc-if value="{{gHasRequests}}" hint-placeholder-val="{{false}}">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px">
+              <div style="font:800 11.5px 'Manrope',sans-serif;color:var(--text3);letter-spacing:.06em;margin-bottom:10px">PENDING JOIN REQUESTS</div>
+              <sc-for list="{{gRequests}}" as="rq" hint-placeholder-count="1">
+                <div style="display:flex;align-items:center;gap:12px">
+                  <div style="width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 12px 'Manrope',sans-serif;background:{{rq.user.color}}">{{rq.user.initials}}</div>
+                  <div style="flex:1;min-width:0">
+                    <div style="font:700 13.5px 'Manrope',sans-serif">{{rq.user.name}}</div>
+                    <div style="font:600 11.5px 'Manrope',sans-serif;color:var(--text3)">{{rq.user.handle}}</div>
+                  </div>
+                  <sc-if value="{{rq.pending}}" hint-placeholder-val="{{true}}">
+                    <button onclick="{{rq.accept}}" style="padding:8px 16px;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 12px 'Manrope',sans-serif;cursor:pointer">Accept</button>
+                    <button onclick="{{rq.decline}}" style="padding:8px 16px;border-radius:999px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font:800 12px 'Manrope',sans-serif;cursor:pointer">Decline</button>
+                  </sc-if>
+                  <sc-if value="{{rq.done}}" hint-placeholder-val="{{false}}">
+                    <span style="font:700 12.5px 'Manrope',sans-serif;color:var(--text3)">{{rq.doneLabel}}</span>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <sc-for list="{{gMembers}}" as="m" hint-placeholder-count="4">
+            <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px 16px">
+              <div onclick="{{m.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{m.user.color}}">{{m.user.initials}}</div>
+              <div onclick="{{m.goProfile}}" style="flex:1;min-width:0;cursor:pointer">
+                <div style="font:700 14px 'Manrope',sans-serif">{{m.user.name}}</div>
+                <div style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">{{m.user.handle}}</div>
+              </div>
+              <sc-if value="{{m.isOwner}}" hint-placeholder-val="{{false}}"><span style="padding:4px 11px;border-radius:999px;background:var(--soft);color:var(--accent);font:800 10.5px 'Manrope',sans-serif;letter-spacing:.04em">OWNER</span></sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{isChat}}" hint-placeholder-val="{{false}}">
+    <div data-screen-label="Messages" style="animation:screenIn .3s ease both">
+      <h1 style="font:800 22px 'Manrope',sans-serif;margin:6px 4px 16px">Messages</h1>
+      <div style="display:flex;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;height:calc(100vh - 130px);min-height:480px">
+        <div style="width:290px;flex:none;border-right:1px solid var(--border);overflow-y:auto;padding:10px">
+          <sc-for list="{{convos}}" as="cv" hint-placeholder-count="3">
+            <div onclick="{{cv.open}}" style="display:flex;gap:11px;align-items:center;padding:11px 12px;border-radius:14px;cursor:pointer;background:{{cv.bg}};transition:background .15s">
+              <div style="position:relative;flex:none">
+                <div style="width:44px;height:44px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;background:{{cv.color}}">{{cv.initials}}</div>
+                <sc-if value="{{cv.online}}" hint-placeholder-val="{{false}}"><span style="position:absolute;bottom:1px;right:1px;width:11px;height:11px;border-radius:50%;background:#3fa66c;border:2px solid var(--surface)"></span></sc-if>
+              </div>
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;align-items:baseline;gap:6px">
+                  <span style="font:700 13.5px 'Manrope',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{cv.title}}</span>
+                  <span style="font:600 10.5px 'Manrope',sans-serif;color:var(--text3);margin-left:auto;flex:none">{{cv.time}}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:2px">
+                  <span style="font:500 12.5px 'Manrope',sans-serif;color:{{cv.previewColor}};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:{{cv.previewW}}">{{cv.preview}}</span>
+                  <sc-if value="{{cv.hasUnread}}" hint-placeholder-val="{{false}}"><span style="margin-left:auto;flex:none;background:var(--accent);color:#fff;font:700 10px 'Manrope',sans-serif;min-width:17px;height:17px;border-radius:9px;display:grid;place-items:center;padding:0 4px">{{cv.unread}}</span></sc-if>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:11px;padding:13px 18px;border-bottom:1px solid var(--border)">
+            <div style="width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 12px 'Manrope',sans-serif;background:{{activeColor}}">{{activeInitials}}</div>
+            <div>
+              <div style="font:800 14.5px 'Manrope',sans-serif">{{activeTitle}}</div>
+              <div style="font:600 11.5px 'Manrope',sans-serif;color:var(--text3)">{{activeSub}}</div>
+            </div>
+          </div>
+          <div ref="{{msgRef}}" style="flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:4px">
+            <sc-for list="{{messages}}" as="msg" hint-placeholder-count="4">
+              <sc-if value="{{msg.mine}}" hint-placeholder-val="{{false}}">
+                <div style="align-self:flex-end;max-width:70%;margin-top:8px;animation:fadeUp .25s ease both">
+                  <div style="background:var(--accent);color:#fff;padding:10px 15px;border-radius:18px 18px 5px 18px;font:500 14px/1.5 'Manrope',sans-serif">{{msg.text}}</div>
+                  <div style="text-align:right;font:600 10.5px 'Manrope',sans-serif;color:var(--text3);margin-top:3px">{{msg.time}}</div>
+                </div>
+              </sc-if>
+              <sc-if value="{{msg.theirs}}" hint-placeholder-val="{{true}}">
+                <div style="align-self:flex-start;display:flex;gap:9px;max-width:75%;margin-top:8px;animation:fadeUp .25s ease both">
+                  <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;align-self:flex-end;background:{{msg.user.color}}">{{msg.user.initials}}</div>
+                  <div>
+                    <sc-if value="{{msg.showName}}" hint-placeholder-val="{{false}}"><div style="font:700 11.5px 'Manrope',sans-serif;color:var(--text3);margin:0 0 3px 5px">{{msg.user.name}}</div></sc-if>
+                    <div style="background:var(--surface2);padding:10px 15px;border-radius:18px 18px 18px 5px;font:500 14px/1.5 'Manrope',sans-serif">{{msg.text}}</div>
+                    <div style="font:600 10.5px 'Manrope',sans-serif;color:var(--text3);margin:3px 0 0 5px">{{msg.time}}</div>
+                  </div>
+                </div>
+              </sc-if>
+            </sc-for>
+            <sc-if value="{{typing}}" hint-placeholder-val="{{false}}">
+              <div style="align-self:flex-start;display:flex;gap:9px;margin-top:8px;animation:fadeUp .25s ease both">
+                <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{activeColor}}">{{activeInitials}}</div>
+                <div style="background:var(--surface2);padding:14px 16px;border-radius:18px 18px 18px 5px;display:flex;gap:5px;align-items:center">
+                  <span style="width:6px;height:6px;border-radius:50%;background:var(--text3);animation:blink 1.2s infinite"></span>
+                  <span style="width:6px;height:6px;border-radius:50%;background:var(--text3);animation:blink 1.2s .2s infinite"></span>
+                  <span style="width:6px;height:6px;border-radius:50%;background:var(--text3);animation:blink 1.2s .4s infinite"></span>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+          <div style="position:relative;display:flex;gap:9px;align-items:center;padding:13px 16px;border-top:1px solid var(--border)">
+            <sc-if value="{{emojiOpen}}" hint-placeholder-val="{{false}}">
+              <div style="position:absolute;bottom:64px;left:14px;z-index:20;background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);padding:10px;display:grid;grid-template-columns:repeat(6,1fr);gap:4px;animation:drop .2s ease both">
+                <sc-for list="{{emojis}}" as="e" hint-placeholder-count="6">
+                  <button onclick="{{e.add}}" style="width:36px;height:36px;border:none;background:transparent;border-radius:10px;cursor:pointer;font-size:19px;display:grid;place-items:center;transition:background .15s,transform .15s" style-hover="background:var(--surface2);transform:scale(1.15)">{{e.ch}}</button>
+                </sc-for>
+              </div>
+            </sc-if>
+            <button onclick="{{toggleEmoji}}" title="Emoji" style="width:38px;height:38px;flex:none;border-radius:12px;border:none;background:transparent;color:var(--text2);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--surface2)">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM8.5 14s1.3 1.8 3.5 1.8 3.5-1.8 3.5-1.8M9.2 9.5h.01m5.6 0h.01"></path></svg>
+            </button>
+            <input placeholder="Message…" value="{{chatDraft}}" onchange="{{onChatDraft}}" onkeydown="{{onChatKey}}" style="flex:1;padding:11px 16px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+            <button onclick="{{sendMsg}}" style="width:40px;height:40px;flex:none;border-radius:50%;border:none;background:var(--accent);color:#fff;cursor:pointer;display:grid;place-items:center;transition:transform .15s" style-hover="transform:translateY(-1px)" style-active="transform:scale(.92)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2.5 10.8 13.2m10.7-10.7-6.8 19-3.9-8.3-8.3-3.9Z"></path></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{isNotifs}}" hint-placeholder-val="{{false}}">
+    <div data-screen-label="Notifications" style="max-width:640px;margin:0 auto;animation:screenIn .3s ease both">
+      <div style="display:flex;align-items:center;margin:6px 4px 16px">
+        <h1 style="font:800 22px 'Manrope',sans-serif;margin:0">Notifications</h1>
+        <button onclick="{{markAllRead}}" style="margin-left:auto;padding:8px 16px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text2);font:700 12.5px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">Mark all as read</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <sc-for list="{{notifItems}}" as="nt" hint-placeholder-count="4">
+          <div style="display:flex;gap:13px;align-items:flex-start;border:1px solid var(--border);border-radius:var(--r);padding:15px 17px;background:{{nt.bg}};animation:fadeUp .4s ease both;animation-delay:{{nt.delay}};transition:background .3s">
+            <div style="position:relative;flex:none">
+              <div onclick="{{nt.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{nt.user.color}}">{{nt.user.initials}}</div>
+              <span style="position:absolute;bottom:-3px;right:-3px;width:20px;height:20px;border-radius:50%;background:var(--surface);border:1px solid var(--border);display:grid;place-items:center">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="{{nt.icon}}"></path></svg>
+              </span>
+            </div>
+            <div style="flex:1;min-width:0">
+              <p style="margin:0;font:500 14px/1.5 'Manrope',sans-serif"><b style="font-weight:800;cursor:pointer" onclick="{{nt.goProfile}}">{{nt.user.name}}</b> {{nt.text}}</p>
+              <div style="font:600 11.5px 'Manrope',sans-serif;color:var(--text3);margin-top:3px">{{nt.time}}</div>
+              <sc-if value="{{nt.pending}}" hint-placeholder-val="{{false}}">
+                <div style="display:flex;gap:8px;margin-top:11px">
+                  <button onclick="{{nt.accept}}" style="padding:8px 20px;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 12.5px 'Manrope',sans-serif;cursor:pointer" style-active="transform:scale(.96)">Accept</button>
+                  <button onclick="{{nt.decline}}" style="padding:8px 20px;border-radius:999px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font:800 12.5px 'Manrope',sans-serif;cursor:pointer" style-active="transform:scale(.96)">Decline</button>
+                </div>
+              </sc-if>
+              <sc-if value="{{nt.done}}" hint-placeholder-val="{{false}}">
+                <div style="display:inline-flex;align-items:center;gap:6px;margin-top:9px;padding:5px 13px;border-radius:999px;background:var(--surface2);color:var(--text2);font:700 12px 'Manrope',sans-serif;animation:pop .35s ease both">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6.5 9.5 17 4 11.5"></path></svg>
+                  {{nt.doneLabel}}
+                </div>
+              </sc-if>
+            </div>
+            <sc-if value="{{nt.unreadDot}}" hint-placeholder-val="{{false}}"><span style="width:9px;height:9px;border-radius:50%;background:var(--accent);flex:none;margin-top:6px"></span></sc-if>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+    </sc-if>
+
+  </main>
+
+  <sc-if value="{{rightRail}}" hint-placeholder-val="{{true}}">
+  <aside style="width:300px;flex:none;position:sticky;top:0;height:100vh;overflow-y:auto;padding:24px 4px 24px 0;display:flex;flex-direction:column;gap:16px">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 18px 12px">
+      <div style="font:800 14px 'Manrope',sans-serif;margin-bottom:14px">Suggested for you</div>
+      <sc-for list="{{suggestions}}" as="sg" hint-placeholder-count="2">
+        <div style="display:flex;align-items:center;gap:11px;padding:7px 0 13px">
+          <div onclick="{{sg.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{sg.user.color}}">{{sg.user.initials}}</div>
+          <div onclick="{{sg.goProfile}}" style="flex:1;min-width:0;cursor:pointer">
+            <div style="display:flex;align-items:center;gap:5px"><span style="font:700 13.5px 'Manrope',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{sg.user.name}}</span>
+              <sc-if value="{{sg.isPrivate}}" hint-placeholder-val="{{false}}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M7 10.5V7a5 5 0 0 1 10 0v3.5M6 10.5h12a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1Z"></path></svg></sc-if>
+            </div>
+            <div style="font:600 11.5px 'Manrope',sans-serif;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{sg.user.bio}}</div>
+          </div>
+          <button onclick="{{sg.onBtn}}" style="padding:7px 15px;border-radius:999px;cursor:pointer;font:800 12px 'Manrope',sans-serif;border:1.5px solid {{sg.btnBd}};background:{{sg.btnBg}};color:{{sg.btnColor}};transition:all .2s;flex:none" style-active="transform:scale(.96)">{{sg.btnLabel}}</button>
+        </div>
+      </sc-for>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px">
+      <div style="font:800 14px 'Manrope',sans-serif;margin-bottom:14px">Upcoming events</div>
+      <div style="display:flex;flex-direction:column;gap:13px">
+        <sc-for list="{{railEvents}}" as="re" hint-placeholder-count="2">
+          <div onclick="{{re.open}}" style="display:flex;gap:12px;align-items:center;cursor:pointer">
+            <div style="width:44px;height:46px;flex:none;border-radius:12px;background:var(--soft);color:var(--accent);display:flex;flex-direction:column;align-items:center;justify-content:center">
+              <span style="font:800 15px 'Manrope',sans-serif">{{re.day}}</span>
+              <span style="font:800 9px 'Manrope',sans-serif;letter-spacing:.08em">{{re.mon}}</span>
+            </div>
+            <div style="min-width:0">
+              <div style="font:700 13px 'Manrope',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{re.title}}</div>
+              <div style="font:600 11.5px 'Manrope',sans-serif;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{re.group}}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+    <div style="padding:0 6px;font:600 11px 'Manrope',sans-serif;color:var(--text3)">loop · a quiet corner of the internet</div>
+  </aside>
+  </sc-if>
+
+</div>
+</sc-if>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;accent&quot;: {&quot;editor&quot;: &quot;color&quot;, &quot;default&quot;: &quot;#5661d8&quot;, &quot;options&quot;: [&quot;#5661d8&quot;, &quot;#0e8577&quot;, &quot;#c14f70&quot;, &quot;#a06b23&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Theme&quot;}, &quot;radius&quot;: {&quot;editor&quot;: &quot;range&quot;, &quot;default&quot;: 18, &quot;min&quot;: 6, &quot;max&quot;: 26, &quot;step&quot;: 2, &quot;unit&quot;: &quot;px&quot;, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Theme&quot;}, &quot;defaultTheme&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;light&quot;, &quot;dark&quot;], &quot;default&quot;: &quot;light&quot;, &quot;tsType&quot;: &quot;'light' | 'dark'&quot;, &quot;section&quot;: &quot;Theme&quot;}}" data-src="js/app.js"></script>
+<script src="js/app-loader.js"></script>
+
+
+</body></html>
