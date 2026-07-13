@@ -10,6 +10,7 @@ import (
 type UserRepo interface {
 	Create(ctx context.Context, user *domain.User) (int64, error)
 	GetByID(ctx context.Context, id int64) (*domain.User, error)
+	GetByEmail(ctx context.Context, email string) (*domain.User, error)
 }
 
 type SessionRepo interface {

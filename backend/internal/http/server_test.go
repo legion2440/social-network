@@ -83,7 +83,11 @@ func (e *testEnvironment) createUserAndSession(t *testing.T, email string) (int6
 	userID, err := e.users.Create(context.Background(), &domain.User{
 		Email:        email,
 		PasswordHash: "test-password-hash",
+		FirstName:    "Test",
+		LastName:     "User",
+		DateOfBirth:  time.Date(1990, time.January, 2, 0, 0, 0, 0, time.UTC),
 		CreatedAt:    testNow,
+		UpdatedAt:    testNow,
 	})
 	if err != nil {
 		t.Fatalf("create user: %v", err)
