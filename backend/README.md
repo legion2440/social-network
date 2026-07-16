@@ -46,14 +46,15 @@ bootstrap, delete it once before starting this version; the migrations will
 create a fresh database. Runtime database and upload files remain ignored by
 Git.
 
-All persisted dates and timestamps use UTC Unix seconds in SQLite, including
-`date_of_birth`, user audit timestamps, session timestamps, and media
-timestamps. A date of birth is represented as UTC midnight for its calendar
-date, keeping storage consistent without mixing timestamp formats.
+`date_of_birth` is stored as SQLite `TEXT` and exposed in JSON strictly as
+`DD-MM-YYYY`. It must be a real calendar date, so values such as `31-02-1992`
+are rejected. User audit timestamps, session timestamps, and media timestamps
+continue to use UTC Unix seconds in SQLite.
 
 The prepared user model contains email, password hash, first and last name,
 date of birth, optional `male`/`female` gender, optional nickname/about text,
 an optional custom avatar media reference, and created/updated timestamps.
+Gender accepts only `NULL`, `male`, or `female`; every other value is an error.
 Deleting a user cascades to owned media metadata and sessions; deleting avatar
 media sets the user's optional avatar reference to `NULL`.
 

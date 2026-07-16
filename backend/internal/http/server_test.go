@@ -85,7 +85,7 @@ func (e *testEnvironment) createUserAndSession(t *testing.T, email string) (int6
 		PasswordHash: "test-password-hash",
 		FirstName:    "Test",
 		LastName:     "User",
-		DateOfBirth:  time.Date(1990, time.January, 2, 0, 0, 0, 0, time.UTC),
+		DateOfBirth:  "02-01-1990",
 		CreatedAt:    testNow,
 		UpdatedAt:    testNow,
 	})

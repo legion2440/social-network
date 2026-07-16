@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -126,11 +127,14 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 			t.Fatalf("users.%s must be nullable", column)
 		}
 	}
+	dateOfBirth := columns["date_of_birth"]
+	if dateOfBirth.columnType != "TEXT" {
+		t.Fatalf("users.date_of_birth must store DD-MM-YYYY as TEXT, got %s", dateOfBirth.columnType)
+	}
 	for _, tableAndColumn := range []struct {
 		table  string
 		column string
 	}{
-		{table: "users", column: "date_of_birth"},
 		{table: "users", column: "created_at"},
 		{table: "users", column: "updated_at"},
 		{table: "media", column: "created_at"},
@@ -173,6 +177,44 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "media", "owner_user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "users", "avatar_media_id", "media", "id", "SET NULL")
 	assertForeignKey(t, db, "sessions", "user_id", "users", "id", "CASCADE")
+}
+
+func TestUsersDateOfBirthConstraintAcceptsOnlyRealDDMMYYYYDates(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "social-network.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	insert := func(email, dateOfBirth string) error {
+		_, err := db.Exec(`
+			INSERT INTO users (
+				email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at
+			) VALUES (?, 'hash', 'Test', 'User', ?, 1, 1)
+		`, email, dateOfBirth)
+		return err
+	}
+
+	for index, value := range []string{"14-03-1992", "29-02-2000"} {
+		if err := insert(fmt.Sprintf("valid-%d@example.com", index), value); err != nil {
+			t.Fatalf("expected valid date_of_birth %q: %v", value, err)
+		}
+	}
+	for index, value := range []string{
+		"31-02-1992",
+		"29-02-1900",
+		"1992-03-14",
+		"14/03/1992",
+		"1-03-1992",
+		"14-3-1992",
+		"00-01-1992",
+		"14-00-1992",
+		"14-03-0000",
+	} {
+		if err := insert(fmt.Sprintf("invalid-%d@example.com", index), value); err == nil {
+			t.Fatalf("expected SQLite to reject date_of_birth %q", value)
+		}
+	}
 }
 
 func assertMigrationVersion(t *testing.T, db *sql.DB, wantVersion int, wantDirty bool) {

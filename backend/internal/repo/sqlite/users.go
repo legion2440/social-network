@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 
 	"social-network/backend/internal/domain"
@@ -18,6 +19,14 @@ func NewUserRepo(db *sql.DB) *UserRepo {
 }
 
 func (r *UserRepo) Create(ctx context.Context, user *domain.User) (int64, error) {
+	if !domain.ValidDateOfBirth(user.DateOfBirth) {
+		return 0, fmt.Errorf("%w: %q", domain.ErrInvalidDateOfBirth, user.DateOfBirth)
+	}
+	gender, err := nullableGender(user.Gender)
+	if err != nil {
+		return 0, err
+	}
+
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO users (
 			email,
@@ -38,8 +47,8 @@ func (r *UserRepo) Create(ctx context.Context, user *domain.User) (int64, error)
 		user.PasswordHash,
 		strings.TrimSpace(user.FirstName),
 		strings.TrimSpace(user.LastName),
-		timeToUnix(user.DateOfBirth),
-		nullableGender(user.Gender),
+		user.DateOfBirth,
+		gender,
 		nullableTrimmedText(user.Nickname),
 		nullableTrimmedText(user.AboutMe),
 		nullableInt64(user.AvatarMediaID),
@@ -101,10 +110,10 @@ type rowScanner interface {
 
 func scanUser(row rowScanner) (*domain.User, error) {
 	var (
-		user                              domain.User
-		dateOfBirth, createdAt, updatedAt int64
-		gender, nickname, aboutMe         sql.NullString
-		avatarMediaID                     sql.NullInt64
+		user                      domain.User
+		createdAt, updatedAt      int64
+		gender, nickname, aboutMe sql.NullString
+		avatarMediaID             sql.NullInt64
 	)
 	if err := row.Scan(
 		&user.ID,
@@ -112,7 +121,7 @@ func scanUser(row rowScanner) (*domain.User, error) {
 		&user.PasswordHash,
 		&user.FirstName,
 		&user.LastName,
-		&dateOfBirth,
+		&user.DateOfBirth,
 		&gender,
 		&nickname,
 		&aboutMe,
@@ -128,8 +137,14 @@ func scanUser(row rowScanner) (*domain.User, error) {
 
 	user.FirstName = strings.TrimSpace(user.FirstName)
 	user.LastName = strings.TrimSpace(user.LastName)
-	user.DateOfBirth = unixToTime(dateOfBirth)
-	user.Gender = genderFromNullString(gender)
+	if !domain.ValidDateOfBirth(user.DateOfBirth) {
+		return nil, fmt.Errorf("%w: %q", domain.ErrInvalidDateOfBirth, user.DateOfBirth)
+	}
+	parsedGender, err := genderFromNullString(gender)
+	if err != nil {
+		return nil, err
+	}
+	user.Gender = parsedGender
 	user.Nickname = stringFromNullString(nickname)
 	user.AboutMe = stringFromNullString(aboutMe)
 	if avatarMediaID.Valid {
@@ -141,11 +156,14 @@ func scanUser(row rowScanner) (*domain.User, error) {
 	return &user, nil
 }
 
-func nullableGender(gender *domain.Gender) any {
-	if gender == nil || !gender.Valid() {
-		return nil
+func nullableGender(gender *domain.Gender) (any, error) {
+	if gender == nil {
+		return nil, nil
 	}
-	return string(*gender)
+	if !gender.Valid() {
+		return nil, fmt.Errorf("%w: %q", domain.ErrInvalidGender, *gender)
+	}
+	return string(*gender), nil
 }
 
 func nullableTrimmedText(value *string) any {
@@ -166,15 +184,15 @@ func nullableInt64(value *int64) any {
 	return *value
 }
 
-func genderFromNullString(value sql.NullString) *domain.Gender {
+func genderFromNullString(value sql.NullString) (*domain.Gender, error) {
 	if !value.Valid {
-		return nil
+		return nil, nil
 	}
-	gender := domain.Gender(strings.TrimSpace(value.String))
+	gender := domain.Gender(value.String)
 	if !gender.Valid() {
-		return nil
+		return nil, fmt.Errorf("%w: %q", domain.ErrInvalidGender, value.String)
 	}
-	return &gender
+	return &gender, nil
 }
 
 func stringFromNullString(value sql.NullString) *string {

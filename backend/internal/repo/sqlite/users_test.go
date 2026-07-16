@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ import (
 )
 
 var (
-	testBirthDate = time.Date(1992, time.March, 14, 0, 0, 0, 0, time.UTC)
+	testBirthDate = "14-03-1992"
 	testCreatedAt = time.Date(2026, time.July, 13, 8, 30, 15, 0, time.UTC)
 	testUpdatedAt = time.Date(2026, time.July, 13, 9, 45, 20, 0, time.UTC)
 )
@@ -50,7 +51,7 @@ func TestUserRepoCreatesAndReadsFullUser(t *testing.T) {
 	if got.AvatarMediaID != nil {
 		t.Fatalf("avatar_media_id must default to NULL, got %d", *got.AvatarMediaID)
 	}
-	if !got.DateOfBirth.Equal(testBirthDate) || !got.CreatedAt.Equal(testCreatedAt) || !got.UpdatedAt.Equal(testUpdatedAt) {
+	if got.DateOfBirth != testBirthDate || !got.CreatedAt.Equal(testCreatedAt) || !got.UpdatedAt.Equal(testUpdatedAt) {
 		t.Fatalf("date round trip failed: birth=%v created=%v updated=%v", got.DateOfBirth, got.CreatedAt, got.UpdatedAt)
 	}
 
@@ -77,15 +78,13 @@ func TestUserRepoStoresOptionalFieldsAsNull(t *testing.T) {
 	}
 }
 
-func TestUserRepoStoresSupportedGendersAndNormalizesUnknownToNull(t *testing.T) {
+func TestUserRepoStoresSupportedGenders(t *testing.T) {
 	for _, testCase := range []struct {
 		name string
 		in   domain.Gender
-		want *domain.Gender
 	}{
-		{name: "male", in: domain.GenderMale, want: genderPointer(domain.GenderMale)},
-		{name: "female", in: domain.GenderFemale, want: genderPointer(domain.GenderFemale)},
-		{name: "unknown", in: domain.Gender("unknown"), want: nil},
+		{name: "male", in: domain.GenderMale},
+		{name: "female", in: domain.GenderFemale},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			db := openUserTestDB(t)
@@ -95,15 +94,40 @@ func TestUserRepoStoresSupportedGendersAndNormalizesUnknownToNull(t *testing.T) 
 			if err != nil {
 				t.Fatalf("get user: %v", err)
 			}
-			if testCase.want == nil {
-				if got.Gender != nil {
-					t.Fatalf("expected NULL gender, got %q", *got.Gender)
-				}
-				return
+			if got.Gender == nil || *got.Gender != testCase.in {
+				t.Fatalf("expected gender %q, got %v", testCase.in, got.Gender)
 			}
-			if got.Gender == nil || *got.Gender != *testCase.want {
-				t.Fatalf("expected gender %q, got %v", *testCase.want, got.Gender)
+		})
+	}
+}
+
+func TestUserRepoRejectsInvalidGender(t *testing.T) {
+	for _, value := range []domain.Gender{"", "unknown", " male "} {
+		t.Run(string(value), func(t *testing.T) {
+			db := openUserTestDB(t)
+			repository := NewUserRepo(db)
+			user := newTestUser("invalid-gender@example.com", &value)
+
+			if _, err := repository.Create(context.Background(), user); !errors.Is(err, domain.ErrInvalidGender) {
+				t.Fatalf("expected invalid gender error for %q, got %v", value, err)
 			}
+			assertRowCount(t, db, "users", 0)
+		})
+	}
+}
+
+func TestUserRepoRejectsInvalidDateOfBirth(t *testing.T) {
+	for _, value := range []string{"", "1992-03-14", "14/03/1992", "31-02-1992"} {
+		t.Run(value, func(t *testing.T) {
+			db := openUserTestDB(t)
+			repository := NewUserRepo(db)
+			user := newTestUser("invalid-date@example.com", nil)
+			user.DateOfBirth = value
+
+			if _, err := repository.Create(context.Background(), user); !errors.Is(err, domain.ErrInvalidDateOfBirth) {
+				t.Fatalf("expected invalid date_of_birth error for %q, got %v", value, err)
+			}
+			assertRowCount(t, db, "users", 0)
 		})
 	}
 }
@@ -244,8 +268,4 @@ func assertRowCount(t *testing.T, db *sql.DB, table string, want int) {
 	if count != want {
 		t.Fatalf("expected %d rows in %s, got %d", want, table, count)
 	}
-}
-
-func genderPointer(value domain.Gender) *domain.Gender {
-	return &value
 }
