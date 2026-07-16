@@ -88,13 +88,35 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 
 	appClock := clock.RealClock{}
 	ids := id.UUIDGenerator{}
+	users := sqlite.NewUserRepo(db)
 	sessions := service.NewSessionService(sqlite.NewSessionRepo(db), appClock, ids, cfg.SessionTTL)
 	media, err := service.NewMediaService(sqlite.NewMediaRepo(db), appClock, ids, cfg.UploadDir)
 	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("media init: %w", err)
 	}
-	handler := httpserver.NewHandler(db, sessions, media, cfg.CookieSecure, log.Default())
+	avatarStager, err := service.NewMediaStager(ids, cfg.UploadDir, service.MaxAvatarBytes)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("avatar storage init: %w", err)
+	}
+	auth := service.NewAuthService(
+		users,
+		sqlite.NewTransactionManager(db),
+		sessions,
+		service.BcryptHasher{},
+		appClock,
+		avatarStager,
+	)
+	handler := httpserver.NewHandler(
+		db,
+		sessions,
+		media,
+		auth,
+		httpserver.NewCookieSessionTokenExtractor(config.SessionCookieName),
+		cfg.CookieSecure,
+		log.Default(),
+	)
 
 	return &runtime{
 		db: db,

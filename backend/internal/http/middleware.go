@@ -11,9 +11,9 @@ import (
 
 func (h *Handler) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie(config.SessionCookieName)
-		if err == nil && cookie.Value != "" && h.sessions != nil {
-			session, sessionErr := h.sessions.Get(r.Context(), cookie.Value)
+		token, ok := h.sessionToken.Extract(r)
+		if ok && h.sessions != nil {
+			session, sessionErr := h.sessions.Get(r.Context(), token)
 			switch {
 			case sessionErr == nil:
 				r = r.WithContext(withCurrentUser(r.Context(), CurrentUser{

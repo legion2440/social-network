@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 
+	"social-network/backend/internal/config"
 	"social-network/backend/internal/service"
 )
 
@@ -13,18 +14,33 @@ type Handler struct {
 	db           *sql.DB
 	sessions     *service.SessionService
 	media        *service.MediaService
+	auth         *service.AuthService
+	sessionToken SessionTokenExtractor
 	cookieSecure bool
 	logger       *log.Logger
 }
 
-func NewHandler(db *sql.DB, sessions *service.SessionService, media *service.MediaService, cookieSecure bool, logger *log.Logger) *Handler {
+func NewHandler(
+	db *sql.DB,
+	sessions *service.SessionService,
+	media *service.MediaService,
+	auth *service.AuthService,
+	sessionToken SessionTokenExtractor,
+	cookieSecure bool,
+	logger *log.Logger,
+) *Handler {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
+	}
+	if sessionToken == nil {
+		sessionToken = NewCookieSessionTokenExtractor(config.SessionCookieName)
 	}
 	return &Handler{
 		db:           db,
 		sessions:     sessions,
 		media:        media,
+		auth:         auth,
+		sessionToken: sessionToken,
 		cookieSecure: cookieSecure,
 		logger:       logger,
 	}
@@ -33,9 +49,14 @@ func NewHandler(db *sql.DB, sessions *service.SessionService, media *service.Med
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", h.handleHealth)
+	mux.HandleFunc("/api/auth/register", h.handleRegister)
+	mux.HandleFunc("/api/auth/login", h.handleLogin)
+	mux.HandleFunc("/api/auth/logout", h.handleLogout)
+	mux.HandleFunc("/api/auth/me", h.requireAuth(h.handleMe))
 	mux.HandleFunc("/ws", h.requireAuth(h.handleWS))
 	mux.HandleFunc("/api/media", h.requireAuth(h.handleMediaUpload))
 	mux.HandleFunc("/uploads/", h.requireAuth(h.handleMediaDownload))
+	mux.Handle("/static/avatars/", http.FileServer(http.FS(avatarPlaceholderFiles)))
 
 	for _, group := range []string{
 		"/api/auth",

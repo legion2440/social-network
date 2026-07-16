@@ -11,6 +11,7 @@ type UserRepo interface {
 	Create(ctx context.Context, user *domain.User) (int64, error)
 	GetByID(ctx context.Context, id int64) (*domain.User, error)
 	GetByEmail(ctx context.Context, email string) (*domain.User, error)
+	SetAvatarMediaID(ctx context.Context, userID, mediaID int64) error
 }
 
 type SessionRepo interface {
@@ -22,4 +23,14 @@ type SessionRepo interface {
 type MediaRepo interface {
 	Create(ctx context.Context, ownerUserID int64, mime string, size int64, storageKey, originalName string, createdAt time.Time) (int64, error)
 	GetByID(ctx context.Context, id int64) (*domain.Media, error)
+}
+
+type TransactionRepositories interface {
+	Users() UserRepo
+	Sessions() SessionRepo
+	Media() MediaRepo
+}
+
+type TransactionManager interface {
+	WithinTransaction(ctx context.Context, fn func(TransactionRepositories) error) error
 }

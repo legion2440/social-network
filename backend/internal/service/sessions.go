@@ -29,7 +29,21 @@ func NewSessionService(sessions repo.SessionRepo, appClock clock.Clock, ids id.G
 }
 
 func (s *SessionService) Create(ctx context.Context, userID int64) (*domain.Session, error) {
-	if userID <= 0 || s == nil || s.sessions == nil || s.clock == nil || s.ids == nil || s.ttl <= 0 {
+	if s == nil || s.sessions == nil {
+		return nil, ErrInvalidInput
+	}
+	session, err := s.New(userID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.sessions.Create(ctx, session); err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+func (s *SessionService) New(userID int64) (*domain.Session, error) {
+	if userID <= 0 || s == nil || s.clock == nil || s.ids == nil || s.ttl <= 0 {
 		return nil, ErrInvalidInput
 	}
 
@@ -43,9 +57,6 @@ func (s *SessionService) Create(ctx context.Context, userID int64) (*domain.Sess
 		UserID:    userID,
 		ExpiresAt: now.Add(s.ttl),
 		CreatedAt: now,
-	}
-	if err := s.sessions.Create(ctx, session); err != nil {
-		return nil, err
 	}
 	return session, nil
 }

@@ -11,7 +11,7 @@ import (
 )
 
 type MediaRepo struct {
-	db *sql.DB
+	db sqlExecutor
 }
 
 func NewMediaRepo(db *sql.DB) *MediaRepo {

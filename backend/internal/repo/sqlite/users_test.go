@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"social-network/backend/internal/domain"
+	"social-network/backend/internal/repo"
 )
 
 var (
@@ -138,8 +139,8 @@ func TestUserRepoRejectsDuplicateEmailIgnoringCase(t *testing.T) {
 	createTestUser(t, repository, "duplicate@example.com", nil)
 
 	duplicate := newTestUser("DUPLICATE@EXAMPLE.COM", nil)
-	if _, err := repository.Create(context.Background(), duplicate); err == nil {
-		t.Fatal("expected case-insensitive duplicate email error")
+	if _, err := repository.Create(context.Background(), duplicate); !errors.Is(err, repo.ErrConflict) {
+		t.Fatalf("expected case-insensitive conflict error, got %v", err)
 	}
 }
 
@@ -162,7 +163,7 @@ func TestUserMediaAvatarRelationAndUserDeleteCascades(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create media: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE users SET avatar_media_id = ? WHERE id = ?`, mediaID, userID); err != nil {
+	if err := users.SetAvatarMediaID(context.Background(), userID, mediaID); err != nil {
 		t.Fatalf("link avatar media: %v", err)
 	}
 	got, err := users.GetByID(context.Background(), userID)
@@ -195,7 +196,7 @@ func TestUserMediaAvatarRelationAndUserDeleteCascades(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create second media: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE users SET avatar_media_id = ? WHERE id = ?`, mediaID, userID); err != nil {
+	if err := users.SetAvatarMediaID(context.Background(), userID, mediaID); err != nil {
 		t.Fatalf("link second avatar media: %v", err)
 	}
 

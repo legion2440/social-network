@@ -162,7 +162,7 @@ func (h *Handler) handleMediaServiceError(w http.ResponseWriter, err error) bool
 	case errors.Is(err, service.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, "invalid input")
 	case errors.Is(err, service.ErrInvalidMediaType):
-		writeError(w, http.StatusBadRequest, "only JPEG, PNG and GIF are allowed")
+		writeError(w, http.StatusBadRequest, "only JPEG, PNG, GIF and WebP are allowed")
 	case errors.Is(err, service.ErrMediaTooBig), isMultipartTooLarge(err):
 		writeError(w, http.StatusRequestEntityTooLarge, "media is too big (max 20MB)")
 	case errors.Is(err, service.ErrNotFound):

@@ -3,15 +3,18 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
 	"social-network/backend/internal/domain"
 	"social-network/backend/internal/repo"
+
+	githubsqlite "github.com/mattn/go-sqlite3"
 )
 
 type UserRepo struct {
-	db *sql.DB
+	db sqlExecutor
 }
 
 func NewUserRepo(db *sql.DB) *UserRepo {
@@ -56,9 +59,35 @@ func (r *UserRepo) Create(ctx context.Context, user *domain.User) (int64, error)
 		timeToUnix(user.UpdatedAt),
 	)
 	if err != nil {
+		var sqliteErr githubsqlite.Error
+		if errors.As(err, &sqliteErr) && sqliteErr.ExtendedCode == githubsqlite.ErrConstraintUnique {
+			return 0, fmt.Errorf("%w: email", repo.ErrConflict)
+		}
 		return 0, err
 	}
 	return result.LastInsertId()
+}
+
+func (r *UserRepo) SetAvatarMediaID(ctx context.Context, userID, mediaID int64) error {
+	if userID <= 0 || mediaID <= 0 {
+		return fmt.Errorf("invalid avatar relation")
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE users
+		SET avatar_media_id = ?
+		WHERE id = ?
+	`, mediaID, userID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected != 1 {
+		return repo.ErrNotFound
+	}
+	return nil
 }
 
 func (r *UserRepo) GetByID(ctx context.Context, id int64) (*domain.User, error) {

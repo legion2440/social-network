@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -30,6 +31,19 @@ var testNow = time.Unix(1_700_000_000, 0).UTC()
 type fixedClock struct{}
 
 func (fixedClock) Now() time.Time { return testNow }
+
+type testPasswordHasher struct{}
+
+func (testPasswordHasher) Hash(password string) (string, error) {
+	return "test-hash:" + password, nil
+}
+
+func (testPasswordHasher) Compare(hash, password string) error {
+	if hash != "test-hash:"+password {
+		return fmt.Errorf("password mismatch")
+	}
+	return nil
+}
 
 type sequenceID struct {
 	mu sync.Mutex
@@ -68,11 +82,24 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 	if err != nil {
 		t.Fatalf("new media service: %v", err)
 	}
+	avatarStager, err := service.NewMediaStager(ids, uploadDir, service.MaxAvatarBytes)
+	if err != nil {
+		t.Fatalf("new avatar stager: %v", err)
+	}
+	users := sqlite.NewUserRepo(db)
+	auth := service.NewAuthService(
+		users,
+		sqlite.NewTransactionManager(db),
+		sessions,
+		testPasswordHasher{},
+		fixedClock{},
+		avatarStager,
+	)
 
 	return &testEnvironment{
 		db:        db,
-		handler:   NewHandler(db, sessions, media, false, nil).Routes(),
-		users:     sqlite.NewUserRepo(db),
+		handler:   NewHandler(db, sessions, media, auth, NewCookieSessionTokenExtractor(config.SessionCookieName), false, nil).Routes(),
+		users:     users,
 		sessions:  sessions,
 		uploadDir: uploadDir,
 	}
@@ -101,6 +128,64 @@ func (e *testEnvironment) createUserAndSession(t *testing.T, email string) (int6
 
 func addSessionCookie(req *http.Request, token string) {
 	req.AddCookie(&http.Cookie{Name: config.SessionCookieName, Value: token, Path: "/"})
+}
+
+func defaultRegisterFields(email string) map[string]string {
+	return map[string]string{
+		"email":         email,
+		"password":      "correct horse battery staple",
+		"first_name":    "Test",
+		"last_name":     "User",
+		"date_of_birth": "14-03-1992",
+	}
+}
+
+func newRegisterRequest(t *testing.T, fields map[string]string, avatarName string, avatar []byte) *http.Request {
+	t.Helper()
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	for name, value := range fields {
+		if err := writer.WriteField(name, value); err != nil {
+			t.Fatalf("write register field %s: %v", name, err)
+		}
+	}
+	if avatarName != "" {
+		part, err := writer.CreateFormFile("avatar", avatarName)
+		if err != nil {
+			t.Fatalf("create avatar form file: %v", err)
+		}
+		if _, err := part.Write(avatar); err != nil {
+			t.Fatalf("write avatar form file: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close register multipart: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
+}
+
+func sessionCookieFromResponse(t *testing.T, rec *httptest.ResponseRecorder) *http.Cookie {
+	t.Helper()
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == config.SessionCookieName && cookie.Value != "" {
+			return cookie
+		}
+	}
+	t.Fatalf("response did not set session cookie: %+v", rec.Result().Cookies())
+	return nil
+}
+
+func assertDBRowCount(t *testing.T, db *sql.DB, table string, want int) {
+	t.Helper()
+	var got int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&got); err != nil {
+		t.Fatalf("count %s: %v", table, err)
+	}
+	if got != want {
+		t.Fatalf("expected %d rows in %s, got %d", want, table, got)
+	}
 }
 
 func TestHealthIsPublicAndChecksDatabase(t *testing.T) {
@@ -141,6 +226,260 @@ func TestReservedAPIGroupsReturnJSONNotImplemented(t *testing.T) {
 		if rec.Header().Get("Content-Type") != "application/json" || rec.Body.String() != "{\"error\":\"not implemented\"}\n" {
 			t.Fatalf("%s: unexpected response %q", path, rec.Body.String())
 		}
+	}
+}
+
+func TestRegisterWithoutAvatarCreatesUserSessionAndNeutralPlaceholder(t *testing.T) {
+	env := newTestEnvironment(t)
+	req := newRegisterRequest(t, defaultRegisterFields("neutral@example.com"), "", nil)
+	rec := httptest.NewRecorder()
+	env.handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	responseBody := append([]byte(nil), rec.Body.Bytes()...)
+	var response authUserResponse
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		t.Fatalf("decode register response: %v", err)
+	}
+	if !bytes.Contains(responseBody, []byte(`"gender":null`)) {
+		t.Fatalf("missing nullable gender in response: %s", responseBody)
+	}
+	if response.Email != "neutral@example.com" || response.Gender != nil || response.AvatarURL != domain.NeutralAvatarPlaceholderURL {
+		t.Fatalf("unexpected register response: %+v", response)
+	}
+	if !response.CreatedAt.Equal(testNow) || !response.UpdatedAt.Equal(testNow) {
+		t.Fatalf("unexpected user timestamps: %+v", response)
+	}
+	cookie := sessionCookieFromResponse(t, rec)
+	if !cookie.HttpOnly || cookie.Secure || cookie.SameSite != http.SameSiteLaxMode || !cookie.Expires.Equal(testNow.Add(24*time.Hour)) {
+		t.Fatalf("unexpected session cookie: %+v", cookie)
+	}
+	assertDBRowCount(t, env.db, "users", 1)
+	assertDBRowCount(t, env.db, "media", 0)
+	assertDBRowCount(t, env.db, "sessions", 1)
+
+	stored, err := env.users.GetByEmail(context.Background(), "neutral@example.com")
+	if err != nil {
+		t.Fatalf("get registered user: %v", err)
+	}
+	if stored.PasswordHash != "test-hash:correct horse battery staple" {
+		t.Fatalf("password was not hashed: %q", stored.PasswordHash)
+	}
+
+	meReq := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	addSessionCookie(meReq, cookie.Value)
+	meRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(meRec, meReq)
+	if meRec.Code != http.StatusOK {
+		t.Fatalf("me: expected 200, got %d body=%q", meRec.Code, meRec.Body.String())
+	}
+
+	for _, placeholderURL := range []string{
+		domain.MaleAvatarPlaceholderURL,
+		domain.FemaleAvatarPlaceholderURL,
+		domain.NeutralAvatarPlaceholderURL,
+	} {
+		placeholderRec := httptest.NewRecorder()
+		env.handler.ServeHTTP(placeholderRec, httptest.NewRequest(http.MethodGet, placeholderURL, nil))
+		if placeholderRec.Code != http.StatusOK || placeholderRec.Header().Get("Content-Type") != "image/svg+xml" {
+			t.Fatalf("placeholder %s: status=%d content-type=%q", placeholderURL, placeholderRec.Code, placeholderRec.Header().Get("Content-Type"))
+		}
+	}
+}
+
+func TestRegisterWithWebPAvatarPersistsMediaInRegistration(t *testing.T) {
+	env := newTestEnvironment(t)
+	fields := defaultRegisterFields("avatar@example.com")
+	fields["gender"] = "female"
+	webp := []byte("RIFF\x10\x00\x00\x00WEBPVP8 avatar-data")
+	req := newRegisterRequest(t, fields, "avatar.webp", webp)
+	rec := httptest.NewRecorder()
+	env.handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	var response authUserResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode register response: %v", err)
+	}
+	if response.Gender == nil || *response.Gender != domain.GenderFemale || !strings.HasPrefix(response.AvatarURL, "/uploads/") {
+		t.Fatalf("unexpected avatar response: %+v", response)
+	}
+	assertDBRowCount(t, env.db, "users", 1)
+	assertDBRowCount(t, env.db, "media", 1)
+	assertDBRowCount(t, env.db, "sessions", 1)
+
+	var storageKey, mime string
+	var size int64
+	if err := env.db.QueryRow(`SELECT storage_key, mime, size FROM media LIMIT 1`).Scan(&storageKey, &mime, &size); err != nil {
+		t.Fatalf("query avatar media: %v", err)
+	}
+	if mime != "image/webp" || size != int64(len(webp)) || filepath.Ext(storageKey) != ".webp" {
+		t.Fatalf("unexpected avatar metadata: key=%q mime=%q size=%d", storageKey, mime, size)
+	}
+	stored, err := os.ReadFile(filepath.Join(env.uploadDir, storageKey))
+	if err != nil {
+		t.Fatalf("read stored avatar: %v", err)
+	}
+	if !bytes.Equal(stored, webp) {
+		t.Fatalf("stored avatar changed: %q", stored)
+	}
+
+	cookie := sessionCookieFromResponse(t, rec)
+	avatarReq := httptest.NewRequest(http.MethodGet, response.AvatarURL, nil)
+	addSessionCookie(avatarReq, cookie.Value)
+	avatarRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(avatarRec, avatarReq)
+	if avatarRec.Code != http.StatusOK || avatarRec.Header().Get("Content-Type") != "image/webp" || !bytes.Equal(avatarRec.Body.Bytes(), webp) {
+		t.Fatalf("avatar delivery failed: status=%d type=%q body=%q", avatarRec.Code, avatarRec.Header().Get("Content-Type"), avatarRec.Body.Bytes())
+	}
+}
+
+func TestRegisterRejectsInvalidGenderWithoutWritingRows(t *testing.T) {
+	for _, gender := range []string{"", "unknown", " male "} {
+		t.Run(fmt.Sprintf("%q", gender), func(t *testing.T) {
+			env := newTestEnvironment(t)
+			fields := defaultRegisterFields("invalid-gender@example.com")
+			fields["gender"] = gender
+			rec := httptest.NewRecorder()
+			env.handler.ServeHTTP(rec, newRegisterRequest(t, fields, "", nil))
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d body=%q", rec.Code, rec.Body.String())
+			}
+			if len(rec.Result().Cookies()) != 0 {
+				t.Fatalf("invalid registration set a cookie: %+v", rec.Result().Cookies())
+			}
+			assertDBRowCount(t, env.db, "users", 0)
+			assertDBRowCount(t, env.db, "sessions", 0)
+		})
+	}
+}
+
+func TestRegisterRejectsInvalidDateAndAvatarType(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		mutate     func(map[string]string)
+		avatarName string
+		avatar     []byte
+	}{
+		{name: "impossible date", mutate: func(fields map[string]string) { fields["date_of_birth"] = "31-02-1992" }},
+		{name: "invalid avatar", mutate: func(map[string]string) {}, avatarName: "avatar.txt", avatar: []byte("not an image")},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := newTestEnvironment(t)
+			fields := defaultRegisterFields("invalid@example.com")
+			testCase.mutate(fields)
+			rec := httptest.NewRecorder()
+			env.handler.ServeHTTP(rec, newRegisterRequest(t, fields, testCase.avatarName, testCase.avatar))
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d body=%q", rec.Code, rec.Body.String())
+			}
+			assertDBRowCount(t, env.db, "users", 0)
+			assertDBRowCount(t, env.db, "media", 0)
+			assertDBRowCount(t, env.db, "sessions", 0)
+		})
+	}
+}
+
+func TestDuplicateRegisterRollsBackAvatarAndDoesNotSetCookie(t *testing.T) {
+	env := newTestEnvironment(t)
+	firstRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(firstRec, newRegisterRequest(t, defaultRegisterFields("duplicate@example.com"), "", nil))
+	if firstRec.Code != http.StatusCreated {
+		t.Fatalf("first register: status=%d body=%q", firstRec.Code, firstRec.Body.String())
+	}
+
+	fields := defaultRegisterFields("DUPLICATE@EXAMPLE.COM")
+	webp := []byte("RIFF\x10\x00\x00\x00WEBPVP8 duplicate")
+	duplicateRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(duplicateRec, newRegisterRequest(t, fields, "duplicate.webp", webp))
+	if duplicateRec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d body=%q", duplicateRec.Code, duplicateRec.Body.String())
+	}
+	if len(duplicateRec.Result().Cookies()) != 0 {
+		t.Fatalf("duplicate registration set a cookie: %+v", duplicateRec.Result().Cookies())
+	}
+	assertDBRowCount(t, env.db, "users", 1)
+	assertDBRowCount(t, env.db, "media", 0)
+	assertDBRowCount(t, env.db, "sessions", 1)
+	files, err := os.ReadDir(env.uploadDir)
+	if err != nil {
+		t.Fatalf("read upload directory: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("duplicate registration left files behind: %+v", files)
+	}
+}
+
+func TestLoginMeAndIdempotentCurrentSessionLogout(t *testing.T) {
+	env := newTestEnvironment(t)
+	registerRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(registerRec, newRegisterRequest(t, defaultRegisterFields("auth@example.com"), "", nil))
+	if registerRec.Code != http.StatusCreated {
+		t.Fatalf("register: status=%d body=%q", registerRec.Code, registerRec.Body.String())
+	}
+	registerCookie := sessionCookieFromResponse(t, registerRec)
+
+	loginBody := strings.NewReader(`{"email":"auth@example.com","password":"correct horse battery staple"}`)
+	loginRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(loginRec, httptest.NewRequest(http.MethodPost, "/api/auth/login", loginBody))
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login: expected 200, got %d body=%q", loginRec.Code, loginRec.Body.String())
+	}
+	loginCookie := sessionCookieFromResponse(t, loginRec)
+	if loginCookie.Value == registerCookie.Value {
+		t.Fatal("login reused the registration session")
+	}
+	assertDBRowCount(t, env.db, "sessions", 2)
+
+	wrongRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(wrongRec, httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"auth@example.com","password":"wrong"}`)))
+	if wrongRec.Code != http.StatusUnauthorized || len(wrongRec.Result().Cookies()) != 0 {
+		t.Fatalf("wrong password: status=%d cookies=%+v body=%q", wrongRec.Code, wrongRec.Result().Cookies(), wrongRec.Body.String())
+	}
+	assertDBRowCount(t, env.db, "sessions", 2)
+
+	meReq := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	addSessionCookie(meReq, loginCookie.Value)
+	meRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(meRec, meReq)
+	if meRec.Code != http.StatusOK {
+		t.Fatalf("me: expected 200, got %d body=%q", meRec.Code, meRec.Body.String())
+	}
+
+	logoutReq := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	addSessionCookie(logoutReq, loginCookie.Value)
+	logoutRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(logoutRec, logoutReq)
+	if logoutRec.Code != http.StatusNoContent {
+		t.Fatalf("logout: expected 204, got %d body=%q", logoutRec.Code, logoutRec.Body.String())
+	}
+	assertDBRowCount(t, env.db, "sessions", 1)
+	var registrationSession int
+	if err := env.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE token = ?`, registerCookie.Value).Scan(&registrationSession); err != nil {
+		t.Fatalf("query registration session: %v", err)
+	}
+	if registrationSession != 1 {
+		t.Fatal("logout deleted a different device session")
+	}
+
+	repeatReq := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	addSessionCookie(repeatReq, loginCookie.Value)
+	repeatRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(repeatRec, repeatReq)
+	if repeatRec.Code != http.StatusNoContent {
+		t.Fatalf("repeated logout: expected 204, got %d", repeatRec.Code)
+	}
+
+	withoutCookieRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(withoutCookieRec, httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil))
+	if withoutCookieRec.Code != http.StatusNoContent {
+		t.Fatalf("logout without cookie: expected 204, got %d", withoutCookieRec.Code)
 	}
 }
 

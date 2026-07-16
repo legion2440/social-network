@@ -7,6 +7,12 @@ import (
 
 const DateOfBirthLayout = "02-01-2006"
 
+const (
+	MaleAvatarPlaceholderURL    = "/static/avatars/male.svg"
+	FemaleAvatarPlaceholderURL  = "/static/avatars/female.svg"
+	NeutralAvatarPlaceholderURL = "/static/avatars/neutral.svg"
+)
+
 var (
 	ErrInvalidDateOfBirth = errors.New("invalid date_of_birth")
 	ErrInvalidGender      = errors.New("invalid gender")
@@ -29,6 +35,26 @@ func ValidDateOfBirth(value string) bool {
 	}
 	date, err := time.Parse(DateOfBirthLayout, value)
 	return err == nil && date.Year() > 0 && date.Format(DateOfBirthLayout) == value
+}
+
+func UserAvatarURL(user *User) string {
+	if user == nil {
+		return NeutralAvatarPlaceholderURL
+	}
+	if user.AvatarMediaID != nil && *user.AvatarMediaID > 0 {
+		return MediaURL(*user.AvatarMediaID)
+	}
+	if user.Gender == nil {
+		return NeutralAvatarPlaceholderURL
+	}
+	switch *user.Gender {
+	case GenderMale:
+		return MaleAvatarPlaceholderURL
+	case GenderFemale:
+		return FemaleAvatarPlaceholderURL
+	default:
+		return NeutralAvatarPlaceholderURL
+	}
 }
 
 type User struct {

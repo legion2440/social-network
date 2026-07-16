@@ -9,7 +9,7 @@ import (
 )
 
 type SessionRepo struct {
-	db *sql.DB
+	db sqlExecutor
 }
 
 func NewSessionRepo(db *sql.DB) *SessionRepo {

@@ -38,3 +38,26 @@ func TestUserJSONUsesDDMMYYYYDateOfBirth(t *testing.T) {
 		t.Fatalf("unexpected user JSON: %s", payload)
 	}
 }
+
+func TestUserAvatarURL(t *testing.T) {
+	male := GenderMale
+	female := GenderFemale
+	mediaID := int64(42)
+	for _, testCase := range []struct {
+		name string
+		user *User
+		want string
+	}{
+		{name: "nil user", user: nil, want: NeutralAvatarPlaceholderURL},
+		{name: "neutral", user: &User{}, want: NeutralAvatarPlaceholderURL},
+		{name: "male", user: &User{Gender: &male}, want: MaleAvatarPlaceholderURL},
+		{name: "female", user: &User{Gender: &female}, want: FemaleAvatarPlaceholderURL},
+		{name: "custom", user: &User{Gender: &female, AvatarMediaID: &mediaID}, want: "/uploads/42"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := UserAvatarURL(testCase.user); got != testCase.want {
+				t.Fatalf("UserAvatarURL() = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
