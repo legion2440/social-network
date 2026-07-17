@@ -72,15 +72,16 @@ func (h *Handler) handleFollowUserList(w http.ResponseWriter, r *http.Request, f
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
+	current, _ := CurrentUserFromContext(r.Context())
 
 	var (
 		users []*domain.User
 		err   error
 	)
 	if followers {
-		users, err = h.follows.ListFollowers(r.Context(), userID)
+		users, err = h.follows.ListFollowers(r.Context(), current.ID, userID)
 	} else {
-		users, err = h.follows.ListFollowing(r.Context(), userID)
+		users, err = h.follows.ListFollowing(r.Context(), current.ID, userID)
 	}
 	if h.handleFollowServiceError(w, err) {
 		return
@@ -177,6 +178,8 @@ func (h *Handler) handleFollowServiceError(w http.ResponseWriter, err error) boo
 		writeError(w, http.StatusBadRequest, "invalid input")
 	case errors.Is(err, service.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
+	case errors.Is(err, service.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden")
 	default:
 		h.logger.Printf("follow request: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
@@ -186,7 +189,7 @@ func (h *Handler) handleFollowServiceError(w http.ResponseWriter, err error) boo
 
 func relationshipStatusResponse(status domain.FollowStatus) service.RelationshipStatus {
 	if status == domain.FollowAccepted {
-		return service.RelationshipFollowing
+		return service.RelationshipAccepted
 	}
 	return service.RelationshipPending
 }

@@ -126,16 +126,18 @@ avatar. After a successful commit, the replaced media file is removed.
 
 All follower endpoints require authentication. `PUT /api/users/{id}/follow`
 creates an accepted relation for a public profile or a pending request for a
-private profile. It returns `{"status":"following"}` or
+private profile. It returns `{"status":"accepted"}` or
 `{"status":"pending"}`. Repeating the operation never demotes an accepted
 relation. `DELETE /api/users/{id}/follow` removes the current relation and is
 idempotent.
 
 `GET /api/users/{id}/follow` returns the current relation as `none`, `pending`,
-or `following`, plus `follows_me` for the accepted reverse relation.
+or `accepted`, plus `follows_me` for the accepted reverse relation.
 `GET /api/users/{id}/followers` and `/following` list accepted relations only.
-Pending requests are available to their target through
-`GET /api/follow-requests`; the owner accepts one with
+Lists for a public profile are available to every authenticated user. Lists for
+a private profile are available only to its owner and accepted followers;
+pending followers and outsiders receive `403`. Pending requests are available
+to their target through `GET /api/follow-requests`; the owner accepts one with
 `POST /api/follow-requests/{id}/accept` or rejects it with
 `DELETE /api/follow-requests/{id}`. Pending relations never count as followers.
 

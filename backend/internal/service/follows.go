@@ -12,9 +12,9 @@ import (
 type RelationshipStatus string
 
 const (
-	RelationshipNone      RelationshipStatus = "none"
-	RelationshipPending   RelationshipStatus = "pending"
-	RelationshipFollowing RelationshipStatus = "following"
+	RelationshipNone     RelationshipStatus = "none"
+	RelationshipPending  RelationshipStatus = "pending"
+	RelationshipAccepted RelationshipStatus = "accepted"
 )
 
 type Relationship struct {
@@ -129,24 +129,12 @@ func (s *FollowService) RejectRequest(ctx context.Context, currentUserID, reques
 	})
 }
 
-func (s *FollowService) ListFollowers(ctx context.Context, userID int64) ([]*domain.User, error) {
-	if s == nil || s.follows == nil || userID <= 0 {
-		return nil, ErrInvalidInput
-	}
-	if _, err := s.userExists(ctx, userID); err != nil {
-		return nil, err
-	}
-	return s.follows.ListFollowers(ctx, userID)
+func (s *FollowService) ListFollowers(ctx context.Context, currentUserID, targetUserID int64) ([]*domain.User, error) {
+	return s.listFollowUsers(ctx, currentUserID, targetUserID, true)
 }
 
-func (s *FollowService) ListFollowing(ctx context.Context, userID int64) ([]*domain.User, error) {
-	if s == nil || s.follows == nil || userID <= 0 {
-		return nil, ErrInvalidInput
-	}
-	if _, err := s.userExists(ctx, userID); err != nil {
-		return nil, err
-	}
-	return s.follows.ListFollowing(ctx, userID)
+func (s *FollowService) ListFollowing(ctx context.Context, currentUserID, targetUserID int64) ([]*domain.User, error) {
+	return s.listFollowUsers(ctx, currentUserID, targetUserID, false)
 }
 
 func (s *FollowService) ListPendingRequests(ctx context.Context, currentUserID int64) ([]*domain.FollowRequest, error) {
@@ -177,12 +165,66 @@ func (s *FollowService) userExists(ctx context.Context, userID int64) (*domain.U
 	return user, err
 }
 
+func (s *FollowService) listFollowUsers(
+	ctx context.Context,
+	currentUserID, targetUserID int64,
+	followers bool,
+) ([]*domain.User, error) {
+	if s == nil || s.transactions == nil || currentUserID <= 0 || targetUserID <= 0 {
+		return nil, ErrInvalidInput
+	}
+
+	var users []*domain.User
+	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+		if err := authorizeFollowLists(ctx, repositories.Users(), repositories.Follows(), currentUserID, targetUserID); err != nil {
+			return err
+		}
+		var err error
+		if followers {
+			users, err = repositories.Follows().ListFollowers(ctx, targetUserID)
+		} else {
+			users, err = repositories.Follows().ListFollowing(ctx, targetUserID)
+		}
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
+func authorizeFollowLists(
+	ctx context.Context,
+	users repo.UserRepo,
+	follows repo.FollowRepo,
+	currentUserID, targetUserID int64,
+) error {
+	target, err := users.GetByID(ctx, targetUserID)
+	if errors.Is(err, repo.ErrNotFound) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if currentUserID == targetUserID || !target.IsPrivate {
+		return nil
+	}
+	accepted, err := follows.IsAccepted(ctx, currentUserID, targetUserID)
+	if err != nil {
+		return err
+	}
+	if !accepted {
+		return ErrForbidden
+	}
+	return nil
+}
+
 func relationshipStatus(status domain.FollowStatus) RelationshipStatus {
 	switch status {
 	case domain.FollowPending:
 		return RelationshipPending
 	case domain.FollowAccepted:
-		return RelationshipFollowing
+		return RelationshipAccepted
 	default:
 		return RelationshipNone
 	}

@@ -692,7 +692,7 @@ func TestFollowRequestsRespectPersistedPrivacyTransitions(t *testing.T) {
 		return response
 	}
 
-	if response := follow(acceptedFollowerToken, ownerID); response.Status != service.RelationshipFollowing {
+	if response := follow(acceptedFollowerToken, ownerID); response.Status != service.RelationshipAccepted {
 		t.Fatalf("public profile follow must be accepted, got %+v", response)
 	}
 	if response := setProfilePrivacy(t, env, ownerToken, true); !response.IsPrivate {
@@ -755,7 +755,7 @@ func TestFollowRequestsRespectPersistedPrivacyTransitions(t *testing.T) {
 	if relationship.Status != service.RelationshipPending {
 		t.Fatalf("privacy change silently accepted pending relation: %+v", relationship)
 	}
-	if response := follow(requesterToken, ownerID); response.Status != service.RelationshipFollowing {
+	if response := follow(requesterToken, ownerID); response.Status != service.RelationshipAccepted {
 		t.Fatalf("explicit repeat follow on public profile must accept pending, got %+v", response)
 	}
 
@@ -782,6 +782,13 @@ func TestFollowRequestsRespectPersistedPrivacyTransitions(t *testing.T) {
 	env.handler.ServeHTTP(acceptRec, authenticatedRequest(http.MethodPost, acceptURL, ownerToken, nil))
 	if acceptRec.Code != http.StatusOK {
 		t.Fatalf("accept old pending: status=%d body=%q", acceptRec.Code, acceptRec.Body.String())
+	}
+	var acceptedResponse followStatusResponse
+	if err := json.NewDecoder(acceptRec.Body).Decode(&acceptedResponse); err != nil {
+		t.Fatalf("decode accepted response: %v", err)
+	}
+	if acceptedResponse.Status != service.RelationshipAccepted {
+		t.Fatalf("accepted request returned unexpected status: %+v", acceptedResponse)
 	}
 	repeatAcceptRec := httptest.NewRecorder()
 	env.handler.ServeHTTP(repeatAcceptRec, authenticatedRequest(http.MethodPost, acceptURL, ownerToken, nil))
@@ -820,6 +827,90 @@ func TestFollowRequestsRespectPersistedPrivacyTransitions(t *testing.T) {
 	if len(following.Users) != 1 || following.Users[0].ID != ownerID {
 		t.Fatalf("unexpected following list: %+v", following.Users)
 	}
+}
+
+func TestFollowListsEnforceTargetProfilePrivacy(t *testing.T) {
+	env := newTestEnvironment(t)
+	ownerID, ownerToken := env.createUserAndSession(t, "list-owner@example.com")
+	acceptedFollowerID, acceptedFollowerToken := env.createUserAndSession(t, "list-accepted@example.com")
+	_, pendingToken := env.createUserAndSession(t, "list-pending@example.com")
+	_, outsiderToken := env.createUserAndSession(t, "list-outsider@example.com")
+	followedUserID, _ := env.createUserAndSession(t, "list-followed@example.com")
+
+	follow := func(token string, targetUserID int64, wantStatus service.RelationshipStatus) {
+		t.Helper()
+		path := "/api/users/" + strconv.FormatInt(targetUserID, 10) + "/follow"
+		rec := httptest.NewRecorder()
+		env.handler.ServeHTTP(rec, authenticatedRequest(http.MethodPut, path, token, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("follow user %d: status=%d body=%q", targetUserID, rec.Code, rec.Body.String())
+		}
+		var response followStatusResponse
+		if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+			t.Fatalf("decode follow response: %v", err)
+		}
+		if response.Status != wantStatus {
+			t.Fatalf("follow user %d: want status %q, got %+v", targetUserID, wantStatus, response)
+		}
+	}
+
+	follow(acceptedFollowerToken, ownerID, service.RelationshipAccepted)
+	follow(ownerToken, followedUserID, service.RelationshipAccepted)
+	relationshipPath := "/api/users/" + strconv.FormatInt(ownerID, 10) + "/follow"
+	relationshipRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(relationshipRec, authenticatedRequest(http.MethodGet, relationshipPath, acceptedFollowerToken, nil))
+	if relationshipRec.Code != http.StatusOK {
+		t.Fatalf("get accepted relationship: status=%d body=%q", relationshipRec.Code, relationshipRec.Body.String())
+	}
+	var relationship relationshipResponse
+	if err := json.NewDecoder(relationshipRec.Body).Decode(&relationship); err != nil {
+		t.Fatalf("decode accepted relationship: %v", err)
+	}
+	if relationship.Status != service.RelationshipAccepted {
+		t.Fatalf("accepted relationship returned unexpected status: %+v", relationship)
+	}
+
+	assertLists := func(label, token string, wantCode int) {
+		t.Helper()
+		for _, endpoint := range []struct {
+			suffix     string
+			wantUserID int64
+		}{
+			{suffix: "followers", wantUserID: acceptedFollowerID},
+			{suffix: "following", wantUserID: followedUserID},
+		} {
+			t.Run(label+"/"+endpoint.suffix, func(t *testing.T) {
+				path := "/api/users/" + strconv.FormatInt(ownerID, 10) + "/" + endpoint.suffix
+				rec := httptest.NewRecorder()
+				env.handler.ServeHTTP(rec, authenticatedRequest(http.MethodGet, path, token, nil))
+				if rec.Code != wantCode {
+					t.Fatalf("want status %d, got %d body=%q", wantCode, rec.Code, rec.Body.String())
+				}
+				if wantCode == http.StatusForbidden {
+					if rec.Body.String() != "{\"error\":\"forbidden\"}\n" {
+						t.Fatalf("unexpected forbidden response: %q", rec.Body.String())
+					}
+					return
+				}
+				var response userListResponse
+				if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+					t.Fatalf("decode user list: %v", err)
+				}
+				if len(response.Users) != 1 || response.Users[0].ID != endpoint.wantUserID {
+					t.Fatalf("unexpected users: %+v", response.Users)
+				}
+			})
+		}
+	}
+
+	assertLists("public-outsider", outsiderToken, http.StatusOK)
+	setProfilePrivacy(t, env, ownerToken, true)
+	follow(pendingToken, ownerID, service.RelationshipPending)
+
+	assertLists("owner", ownerToken, http.StatusOK)
+	assertLists("accepted-follower", acceptedFollowerToken, http.StatusOK)
+	assertLists("pending", pendingToken, http.StatusForbidden)
+	assertLists("outsider", outsiderToken, http.StatusForbidden)
 }
 
 func TestFollowRejectUnfollowAndAuthorization(t *testing.T) {
