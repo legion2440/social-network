@@ -39,10 +39,19 @@ function cover(color) {
 }
 function num(x) { return String(x); }
 
+function emptyRegistrationForm() {
+  return {
+    authEmail: '', authPassword: '',
+    regFirstName: '', regLastName: '', regDateOfBirth: '', regGender: '',
+    regNickname: '', regAboutMe: '', regAvatar: null, regAvatarName: ''
+  };
+}
+
 function decorateUser(user) {
   const safeAvatarURL = user.avatarUrl ? String(user.avatarUrl).replace(/["\\\r\n]/g, '') : '';
-  user.avatarBackground = safeAvatarURL ? 'center / cover no-repeat url("' + safeAvatarURL + '")' : user.color;
-  user.avatarText = safeAvatarURL ? '' : user.initials;
+  user.avatarUrl = safeAvatarURL;
+  user.hasAvatar = !!safeAvatarURL;
+  user.noAvatar = !safeAvatarURL;
   return user;
 }
 
@@ -116,9 +125,7 @@ class Component extends DCLogic {
       ],
       authMode: 'login', authStatus: 'checking', authPending: false, logoutPending: false,
       authError: '', bootstrapError: '', appError: '',
-      authEmail: '', authPassword: '',
-      regFirstName: '', regLastName: '', regDateOfBirth: '', regGender: '',
-      regNickname: '', regAboutMe: '', regAvatar: null, regAvatarName: ''
+      ...emptyRegistrationForm()
     };
     this.msgEl = null;
   }
@@ -209,10 +216,12 @@ class Component extends DCLogic {
       }
 
       this.applyAuthUser(user);
-      this.setState({
+      const authenticatedState = {
         authStatus: 'authenticated', authPending: false, authError: '',
         authPassword: '', screen: 'feed'
-      });
+      };
+      if (s.authMode === 'register') Object.assign(authenticatedState, emptyRegistrationForm());
+      this.setState(authenticatedState);
     } catch (error) {
       this.setState({
         authPending: false,
@@ -226,10 +235,10 @@ class Component extends DCLogic {
     this.setState({ logoutPending: true, appError: '' });
     try {
       await AuthAPI.logout();
-      this.setState({
+      this.setState(Object.assign({
         authStatus: 'anonymous', logoutPending: false, authMode: 'login',
-        authError: '', authPassword: '', screen: 'auth'
-      });
+        authError: '', screen: 'auth'
+      }, emptyRegistrationForm()));
     } catch (error) {
       this.setState({
         logoutPending: false,
@@ -540,10 +549,7 @@ class Component extends DCLogic {
       title: ev.title, dateDay: ev.day, dateMon: ev.mon,
       timeLabel: ev.mon + ' ' + ev.day + ' · ' + ev.time, desc: ev.desc,
       goingLabel: num(ev.going.length),
-      goingAvatars: ev.going.slice(0, 3).map(uid => ({
-        avatarText: USERS[uid].avatarText,
-        avatarBackground: USERS[uid].avatarBackground
-      })),
+      goingAvatars: ev.going.slice(0, 3).map(uid => USERS[uid]),
       goBg: ev.rsvp === 'going' ? 'var(--accent)' : 'transparent',
       goColor: ev.rsvp === 'going' ? '#fff' : 'var(--text2)',
       goBd: ev.rsvp === 'going' ? 'transparent' : 'var(--border)',

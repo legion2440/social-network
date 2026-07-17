@@ -60,14 +60,18 @@ func newFrontendHandler(frontendDir string) http.Handler {
 
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
+	protected := func(handler http.HandlerFunc) http.Handler {
+		return h.authMiddleware(h.requireAuth(handler))
+	}
+
 	mux.HandleFunc("/api/health", h.handleHealth)
 	mux.HandleFunc("/api/auth/register", h.handleRegister)
 	mux.HandleFunc("/api/auth/login", h.handleLogin)
 	mux.HandleFunc("/api/auth/logout", h.handleLogout)
-	mux.HandleFunc("/api/auth/me", h.requireAuth(h.handleMe))
-	mux.HandleFunc("/ws", h.requireAuth(h.handleWS))
-	mux.HandleFunc("/api/media", h.requireAuth(h.handleMediaUpload))
-	mux.HandleFunc("/uploads/", h.requireAuth(h.handleMediaDownload))
+	mux.Handle("/api/auth/me", protected(h.handleMe))
+	mux.Handle("/ws", protected(h.handleWS))
+	mux.Handle("/api/media", protected(h.handleMediaUpload))
+	mux.Handle("/uploads/", protected(h.handleMediaDownload))
 	mux.Handle("/static/avatars/", http.FileServer(http.FS(avatarPlaceholderFiles)))
 
 	for _, group := range []string{
@@ -90,5 +94,5 @@ func (h *Handler) Routes() http.Handler {
 	})
 	mux.Handle("/", h.frontend)
 
-	return h.recoverMiddleware(h.authMiddleware(mux))
+	return h.recoverMiddleware(mux)
 }

@@ -50,6 +50,7 @@ type failingSessionRepo struct {
 	getSession *domain.Session
 	getErr     error
 	deleteErr  error
+	getCalls   int
 }
 
 func (r *failingSessionRepo) Create(context.Context, *domain.Session) error {
@@ -57,6 +58,7 @@ func (r *failingSessionRepo) Create(context.Context, *domain.Session) error {
 }
 
 func (r *failingSessionRepo) GetByToken(context.Context, string) (*domain.Session, error) {
+	r.getCalls++
 	return r.getSession, r.getErr
 }
 
@@ -208,6 +210,10 @@ func assertDBRowCount(t *testing.T, db *sql.DB, table string, want int) {
 }
 
 func newSessionFailureHandler(store *failingSessionRepo) http.Handler {
+	return newSessionFailureHandlerWithFrontend(store, "")
+}
+
+func newSessionFailureHandlerWithFrontend(store *failingSessionRepo, frontendDir string) http.Handler {
 	ids := &sequenceID{}
 	sessions := service.NewSessionService(store, fixedClock{}, ids, 24*time.Hour)
 	auth := service.NewAuthService(nil, nil, sessions, nil, nil, nil)
@@ -218,7 +224,7 @@ func newSessionFailureHandler(store *failingSessionRepo) http.Handler {
 		auth,
 		NewCookieSessionTokenExtractor(config.SessionCookieName),
 		false,
-		"",
+		frontendDir,
 		nil,
 	).Routes()
 }
@@ -228,14 +234,21 @@ func TestFrontendFilesAreServedWithoutShadowingBackendRoutes(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(frontendDir, "js"), 0o755); err != nil {
 		t.Fatalf("create frontend js directory: %v", err)
 	}
+	if err := os.Mkdir(filepath.Join(frontendDir, "css"), 0o755); err != nil {
+		t.Fatalf("create frontend css directory: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(frontendDir, "index.html"), []byte("<h1>loop frontend</h1>\n"), 0o644); err != nil {
 		t.Fatalf("write frontend index: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(frontendDir, "js", "app.js"), []byte("console.log('loop');\n"), 0o644); err != nil {
 		t.Fatalf("write frontend script: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(frontendDir, "css", "app.css"), []byte("body { color: black; }\n"), 0o644); err != nil {
+		t.Fatalf("write frontend stylesheet: %v", err)
+	}
 
-	handler := NewHandler(nil, nil, nil, nil, nil, false, frontendDir, nil).Routes()
+	store := &failingSessionRepo{getErr: errors.New("session database read failed")}
+	handler := newSessionFailureHandlerWithFrontend(store, frontendDir)
 
 	for _, test := range []struct {
 		path        string
@@ -244,9 +257,13 @@ func TestFrontendFilesAreServedWithoutShadowingBackendRoutes(t *testing.T) {
 	}{
 		{path: "/", contentType: "text/html", body: "<h1>loop frontend</h1>"},
 		{path: "/js/app.js", contentType: "text/javascript", body: "console.log('loop');"},
+		{path: "/css/app.css", contentType: "text/css", body: "body { color: black; }"},
+		{path: "/static/avatars/neutral.svg", contentType: "image/svg+xml", body: "<svg"},
 	} {
 		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, test.path, nil))
+		req := httptest.NewRequest(http.MethodGet, test.path, nil)
+		addSessionCookie(req, "session-token")
+		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: expected 200, got %d body=%q", test.path, rec.Code, rec.Body.String())
 		}
@@ -259,7 +276,9 @@ func TestFrontendFilesAreServedWithoutShadowingBackendRoutes(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/unknown", nil))
+	unknownAPIReq := httptest.NewRequest(http.MethodGet, "/api/unknown", nil)
+	addSessionCookie(unknownAPIReq, "session-token")
+	handler.ServeHTTP(rec, unknownAPIReq)
 	if rec.Code != http.StatusNotFound || rec.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("API fallback was shadowed by frontend: status=%d content-type=%q body=%q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
 	}
@@ -270,10 +289,8 @@ func TestFrontendFilesAreServedWithoutShadowingBackendRoutes(t *testing.T) {
 		t.Fatalf("uploads route was shadowed by frontend: status=%d content-type=%q body=%q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
 	}
 
-	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/static/avatars/neutral.svg", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Type"), "image/svg+xml") {
-		t.Fatalf("avatar placeholder route was shadowed by frontend: status=%d content-type=%q", rec.Code, rec.Header().Get("Content-Type"))
+	if store.getCalls != 0 {
+		t.Fatalf("public routes performed %d session lookups", store.getCalls)
 	}
 }
 

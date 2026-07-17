@@ -124,7 +124,10 @@
         <span>{{themeLabel}}</span>
       </button>
       <div style="display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:16px;background:var(--surface);border:1px solid var(--border)">
-        <div onclick="{{goMyProfile}}" style="width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{me.avatarBackground}}">{{me.avatarText}}</div>
+        <div onclick="{{goMyProfile}}" style="width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{me.color}};overflow:hidden">
+          <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{me.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+          <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
+        </div>
         <div onclick="{{goMyProfile}}" style="flex:1;min-width:0;cursor:pointer">
           <div style="font:700 13.5px 'Manrope',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{me.name}}</div>
           <div style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">{{me.handle}}</div>
@@ -144,7 +147,10 @@
 
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:16px 18px;margin-bottom:18px">
         <div style="display:flex;gap:12px">
-          <div style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;background:{{me.avatarBackground}}">{{me.avatarText}}</div>
+          <div style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;background:{{me.color}};overflow:hidden">
+            <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{me.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+            <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
+          </div>
           <textarea rows="2" placeholder="What's on your mind?" value="{{composerText}}" onchange="{{onComposer}}" style="flex:1;border:none;background:transparent;color:var(--text);font-size:15px;line-height:1.5;outline:none;padding-top:8px"></textarea>
         </div>
         <sc-if value="{{composerImg}}" hint-placeholder-val="{{false}}">
@@ -211,7 +217,10 @@
           <sc-for list="{{posts}}" as="p" hint-placeholder-count="3">
             <article style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;animation:fadeUp .45s ease both;animation-delay:{{p.delay}}">
               <div style="display:flex;gap:12px;align-items:center">
-                <div onclick="{{p.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{p.user.avatarBackground}}">{{p.user.avatarText}}</div>
+                <div onclick="{{p.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{p.user.color}};overflow:hidden">
+                  <sc-if value="{{p.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{p.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                  <sc-if value="{{p.user.noAvatar}}" hint-placeholder-val="{{true}}">{{p.user.initials}}</sc-if>
+                </div>
                 <div style="flex:1;min-width:0">
                   <span onclick="{{p.goProfile}}" style="font:700 14.5px 'Manrope',sans-serif;cursor:pointer">{{p.user.name}}</span>
                   <div style="font:600 12.5px 'Manrope',sans-serif;color:var(--text3)">{{p.user.handle}} · {{p.time}}</div>
@@ -242,7 +251,10 @@
                 <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px;animation:drop .25s ease both">
                   <sc-for list="{{p.comments}}" as="c" hint-placeholder-count="1">
                     <div style="display:flex;gap:10px">
-                      <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{c.user.avatarBackground}}">{{c.user.avatarText}}</div>
+                      <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{c.user.color}};overflow:hidden">
+                        <sc-if value="{{c.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{c.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                        <sc-if value="{{c.user.noAvatar}}" hint-placeholder-val="{{true}}">{{c.user.initials}}</sc-if>
+                      </div>
                       <div style="flex:1;background:var(--surface2);border-radius:4px 14px 14px 14px;padding:9px 13px">
                         <span style="font:700 12.5px 'Manrope',sans-serif">{{c.user.name}}</span>
                         <span style="font:600 11px 'Manrope',sans-serif;color:var(--text3)"> · {{c.time}}</span>
@@ -251,7 +263,10 @@
                     </div>
                   </sc-for>
                   <div style="display:flex;gap:10px;align-items:center">
-                    <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{me.avatarBackground}}">{{me.avatarText}}</div>
+                    <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{me.color}};overflow:hidden">
+                      <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{me.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                      <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
+                    </div>
                     <input placeholder="Write a comment…" value="{{p.draft}}" onchange="{{p.onDraft}}" onkeydown="{{p.onKey}}" style="flex:1;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13.5px;outline-color:var(--accent)">
                     <button onclick="{{p.onSendComment}}" style="width:36px;height:36px;border-radius:50%;border:none;background:var(--soft);color:var(--accent);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--soft2)">
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2.5 10.8 13.2m10.7-10.7-6.8 19-3.9-8.3-8.3-3.9Z"></path></svg>
@@ -272,7 +287,10 @@
         <div style="height:110px;background:{{pCover}}"></div>
         <div style="padding:0 22px 20px">
           <div style="display:flex;align-items:flex-end;gap:16px;margin-top:-34px;flex-wrap:wrap">
-            <div style="width:84px;height:84px;flex:none;border-radius:50%;display:grid;place-items:center;color:#fff;font:800 26px 'Manrope',sans-serif;border:4px solid var(--surface);background:{{pUser.avatarBackground}}">{{pUser.avatarText}}</div>
+            <div style="width:84px;height:84px;flex:none;border-radius:50%;display:grid;place-items:center;color:#fff;font:800 26px 'Manrope',sans-serif;border:4px solid var(--surface);background:{{pUser.color}};overflow:hidden">
+              <sc-if value="{{pUser.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{pUser.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+              <sc-if value="{{pUser.noAvatar}}" hint-placeholder-val="{{true}}">{{pUser.initials}}</sc-if>
+            </div>
             <div style="margin-left:auto;padding-bottom:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <sc-if value="{{pIsMe}}" hint-placeholder-val="{{false}}">
                 <span style="font:600 12px 'Manrope',sans-serif;color:var(--text3);margin-right:2px">Profile:</span>
@@ -334,7 +352,10 @@
             <sc-for list="{{pPosts}}" as="p" hint-placeholder-count="2">
               <article style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;animation:fadeUp .4s ease both">
                 <div style="display:flex;gap:12px;align-items:center">
-                  <div style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;background:{{p.user.avatarBackground}}">{{p.user.avatarText}}</div>
+                  <div style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;background:{{p.user.color}};overflow:hidden">
+                    <sc-if value="{{p.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{p.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                    <sc-if value="{{p.user.noAvatar}}" hint-placeholder-val="{{true}}">{{p.user.initials}}</sc-if>
+                  </div>
                   <div style="flex:1"><span style="font:700 14.5px 'Manrope',sans-serif">{{p.user.name}}</span><div style="font:600 12.5px 'Manrope',sans-serif;color:var(--text3)">{{p.time}}</div></div>
                   <span style="display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;background:var(--surface2);color:var(--text3);font:700 11px 'Manrope',sans-serif">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{p.privacyIcon}}"></path></svg>
@@ -362,7 +383,10 @@
           <div style="display:flex;flex-direction:column;gap:10px;animation:fadeUp .3s ease both">
             <sc-for list="{{pFollowers}}" as="f" hint-placeholder-count="3">
               <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px 16px">
-                <div onclick="{{f.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{f.user.avatarBackground}}">{{f.user.avatarText}}</div>
+                <div onclick="{{f.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{f.user.color}};overflow:hidden">
+                  <sc-if value="{{f.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{f.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                  <sc-if value="{{f.user.noAvatar}}" hint-placeholder-val="{{true}}">{{f.user.initials}}</sc-if>
+                </div>
                 <div onclick="{{f.goProfile}}" style="flex:1;min-width:0;cursor:pointer">
                   <div style="font:700 14px 'Manrope',sans-serif">{{f.user.name}}</div>
                   <div style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">{{f.user.handle}}</div>
@@ -378,7 +402,10 @@
           <div style="display:flex;flex-direction:column;gap:10px;animation:fadeUp .3s ease both">
             <sc-for list="{{pFollowing}}" as="f" hint-placeholder-count="3">
               <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px 16px">
-                <div onclick="{{f.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{f.user.avatarBackground}}">{{f.user.avatarText}}</div>
+                <div onclick="{{f.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{f.user.color}};overflow:hidden">
+                  <sc-if value="{{f.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{f.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                  <sc-if value="{{f.user.noAvatar}}" hint-placeholder-val="{{true}}">{{f.user.initials}}</sc-if>
+                </div>
                 <div onclick="{{f.goProfile}}" style="flex:1;min-width:0;cursor:pointer">
                   <div style="font:700 14px 'Manrope',sans-serif">{{f.user.name}}</div>
                   <div style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">{{f.user.handle}}</div>
@@ -485,7 +512,10 @@
       <sc-if value="{{gTabPosts}}" hint-placeholder-val="{{true}}">
         <div style="display:flex;flex-direction:column;gap:16px">
           <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;display:flex;gap:10px;align-items:center">
-            <div style="width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 11px 'Manrope',sans-serif;flex:none;background:{{me.avatarBackground}}">{{me.avatarText}}</div>
+            <div style="width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 11px 'Manrope',sans-serif;flex:none;background:{{me.color}};overflow:hidden">
+              <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{me.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+              <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
+            </div>
             <input placeholder="Share something with the group…" value="{{gComposer}}" onchange="{{onGComposer}}" onkeydown="{{onGComposerKey}}" style="flex:1;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
             <button onclick="{{gPost}}" style="width:38px;height:38px;border-radius:50%;border:none;background:var(--accent);color:#fff;cursor:pointer;display:grid;place-items:center" style-active="transform:scale(.94)">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2.5 10.8 13.2m10.7-10.7-6.8 19-3.9-8.3-8.3-3.9Z"></path></svg>
@@ -494,7 +524,10 @@
           <sc-for list="{{gPosts}}" as="p" hint-placeholder-count="2">
             <article style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;animation:fadeUp .4s ease both">
               <div style="display:flex;gap:12px;align-items:center">
-                <div onclick="{{p.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{p.user.avatarBackground}}">{{p.user.avatarText}}</div>
+                <div onclick="{{p.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{p.user.color}};overflow:hidden">
+                  <sc-if value="{{p.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{p.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                  <sc-if value="{{p.user.noAvatar}}" hint-placeholder-val="{{true}}">{{p.user.initials}}</sc-if>
+                </div>
                 <div style="flex:1"><span onclick="{{p.goProfile}}" style="font:700 14.5px 'Manrope',sans-serif;cursor:pointer">{{p.user.name}}</span><div style="font:600 12.5px 'Manrope',sans-serif;color:var(--text3)">{{p.time}}</div></div>
               </div>
               <p style="margin:12px 0 0;font:500 15px/1.55 'Manrope',sans-serif;text-wrap:pretty">{{p.text}}</p>
@@ -513,7 +546,10 @@
                 <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px;animation:drop .25s ease both">
                   <sc-for list="{{p.comments}}" as="c" hint-placeholder-count="1">
                     <div style="display:flex;gap:10px">
-                      <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{c.user.avatarBackground}}">{{c.user.avatarText}}</div>
+                      <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{c.user.color}};overflow:hidden">
+                        <sc-if value="{{c.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{c.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                        <sc-if value="{{c.user.noAvatar}}" hint-placeholder-val="{{true}}">{{c.user.initials}}</sc-if>
+                      </div>
                       <div style="flex:1;background:var(--surface2);border-radius:4px 14px 14px 14px;padding:9px 13px">
                         <span style="font:700 12.5px 'Manrope',sans-serif">{{c.user.name}}</span>
                         <span style="font:600 11px 'Manrope',sans-serif;color:var(--text3)"> · {{c.time}}</span>
@@ -522,7 +558,10 @@
                     </div>
                   </sc-for>
                   <div style="display:flex;gap:10px;align-items:center">
-                    <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{me.avatarBackground}}">{{me.avatarText}}</div>
+                    <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{me.color}};overflow:hidden">
+                      <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{me.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                      <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
+                    </div>
                     <input placeholder="Write a comment…" value="{{p.draft}}" onchange="{{p.onDraft}}" onkeydown="{{p.onKey}}" style="flex:1;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13.5px;outline-color:var(--accent)">
                     <button onclick="{{p.onSendComment}}" style="width:36px;height:36px;border-radius:50%;border:none;background:var(--soft);color:var(--accent);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--soft2)">
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2.5 10.8 13.2m10.7-10.7-6.8 19-3.9-8.3-8.3-3.9Z"></path></svg>
@@ -576,7 +615,10 @@
                   </button>
                   <div style="display:flex;align-items:center;margin-left:auto">
                     <sc-for list="{{ev.goingAvatars}}" as="ga" hint-placeholder-count="2">
-                      <span style="width:24px;height:24px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 8.5px 'Manrope',sans-serif;border:2px solid var(--surface);margin-left:-6px;background:{{ga.avatarBackground}}">{{ga.avatarText}}</span>
+                      <span style="width:24px;height:24px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 8.5px 'Manrope',sans-serif;border:2px solid var(--surface);margin-left:-6px;background:{{ga.color}};overflow:hidden">
+                        <sc-if value="{{ga.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{ga.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                        <sc-if value="{{ga.noAvatar}}" hint-placeholder-val="{{true}}">{{ga.initials}}</sc-if>
+                      </span>
                     </sc-for>
                     <span style="font:700 12px 'Manrope',sans-serif;color:var(--text3);margin-left:8px">{{ev.goingLabel}} going</span>
                   </div>
@@ -594,7 +636,10 @@
               <div style="font:800 11.5px 'Manrope',sans-serif;color:var(--text3);letter-spacing:.06em;margin-bottom:10px">PENDING JOIN REQUESTS</div>
               <sc-for list="{{gRequests}}" as="rq" hint-placeholder-count="1">
                 <div style="display:flex;align-items:center;gap:12px">
-                  <div style="width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 12px 'Manrope',sans-serif;background:{{rq.user.avatarBackground}}">{{rq.user.avatarText}}</div>
+                  <div style="width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 12px 'Manrope',sans-serif;background:{{rq.user.color}};overflow:hidden">
+                    <sc-if value="{{rq.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{rq.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                    <sc-if value="{{rq.user.noAvatar}}" hint-placeholder-val="{{true}}">{{rq.user.initials}}</sc-if>
+                  </div>
                   <div style="flex:1;min-width:0">
                     <div style="font:700 13.5px 'Manrope',sans-serif">{{rq.user.name}}</div>
                     <div style="font:600 11.5px 'Manrope',sans-serif;color:var(--text3)">{{rq.user.handle}}</div>
@@ -612,7 +657,10 @@
           </sc-if>
           <sc-for list="{{gMembers}}" as="m" hint-placeholder-count="4">
             <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px 16px">
-              <div onclick="{{m.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{m.user.avatarBackground}}">{{m.user.avatarText}}</div>
+              <div onclick="{{m.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{m.user.color}};overflow:hidden">
+                <sc-if value="{{m.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{m.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                <sc-if value="{{m.user.noAvatar}}" hint-placeholder-val="{{true}}">{{m.user.initials}}</sc-if>
+              </div>
               <div onclick="{{m.goProfile}}" style="flex:1;min-width:0;cursor:pointer">
                 <div style="font:700 14px 'Manrope',sans-serif">{{m.user.name}}</div>
                 <div style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">{{m.user.handle}}</div>
@@ -667,7 +715,10 @@
               </sc-if>
               <sc-if value="{{msg.theirs}}" hint-placeholder-val="{{true}}">
                 <div style="align-self:flex-start;display:flex;gap:9px;max-width:75%;margin-top:8px;animation:fadeUp .25s ease both">
-                  <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;align-self:flex-end;background:{{msg.user.avatarBackground}}">{{msg.user.avatarText}}</div>
+                  <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;align-self:flex-end;background:{{msg.user.color}};overflow:hidden">
+                    <sc-if value="{{msg.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{msg.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                    <sc-if value="{{msg.user.noAvatar}}" hint-placeholder-val="{{true}}">{{msg.user.initials}}</sc-if>
+                  </div>
                   <div>
                     <sc-if value="{{msg.showName}}" hint-placeholder-val="{{false}}"><div style="font:700 11.5px 'Manrope',sans-serif;color:var(--text3);margin:0 0 3px 5px">{{msg.user.name}}</div></sc-if>
                     <div style="background:var(--surface2);padding:10px 15px;border-radius:18px 18px 18px 5px;font:500 14px/1.5 'Manrope',sans-serif">{{msg.text}}</div>
@@ -718,7 +769,10 @@
         <sc-for list="{{notifItems}}" as="nt" hint-placeholder-count="4">
           <div style="display:flex;gap:13px;align-items:flex-start;border:1px solid var(--border);border-radius:var(--r);padding:15px 17px;background:{{nt.bg}};animation:fadeUp .4s ease both;animation-delay:{{nt.delay}};transition:background .3s">
             <div style="position:relative;flex:none">
-              <div onclick="{{nt.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{nt.user.avatarBackground}}">{{nt.user.avatarText}}</div>
+              <div onclick="{{nt.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{nt.user.color}};overflow:hidden">
+                <sc-if value="{{nt.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{nt.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                <sc-if value="{{nt.user.noAvatar}}" hint-placeholder-val="{{true}}">{{nt.user.initials}}</sc-if>
+              </div>
               <span style="position:absolute;bottom:-3px;right:-3px;width:20px;height:20px;border-radius:50%;background:var(--surface);border:1px solid var(--border);display:grid;place-items:center">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="{{nt.icon}}"></path></svg>
               </span>
@@ -754,7 +808,10 @@
       <div style="font:800 14px 'Manrope',sans-serif;margin-bottom:14px">Suggested for you</div>
       <sc-for list="{{suggestions}}" as="sg" hint-placeholder-count="2">
         <div style="display:flex;align-items:center;gap:11px;padding:7px 0 13px">
-          <div onclick="{{sg.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{sg.user.avatarBackground}}">{{sg.user.avatarText}}</div>
+          <div onclick="{{sg.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{sg.user.color}};overflow:hidden">
+            <sc-if value="{{sg.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{sg.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+            <sc-if value="{{sg.user.noAvatar}}" hint-placeholder-val="{{true}}">{{sg.user.initials}}</sc-if>
+          </div>
           <div onclick="{{sg.goProfile}}" style="flex:1;min-width:0;cursor:pointer">
             <div style="display:flex;align-items:center;gap:5px"><span style="font:700 13.5px 'Manrope',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{sg.user.name}}</span>
               <sc-if value="{{sg.isPrivate}}" hint-placeholder-val="{{false}}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M7 10.5V7a5 5 0 0 1 10 0v3.5M6 10.5h12a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1Z"></path></svg></sc-if>
