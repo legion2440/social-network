@@ -96,6 +96,27 @@
           method: 'GET',
           expectedStatus: 200
         });
+      },
+      updateProfile: function (profile) {
+        return request('/api/profile', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(profile),
+          expectedStatus: 200
+        });
+      },
+      replaceAvatar: function (formData) {
+        return request('/api/profile/avatar', {
+          method: 'PUT',
+          body: formData,
+          expectedStatus: 200
+        });
+      },
+      deleteAvatar: function () {
+        return request('/api/profile/avatar', {
+          method: 'DELETE',
+          expectedStatus: 200
+        });
       }
     };
   }

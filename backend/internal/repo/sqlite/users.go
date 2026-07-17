@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"social-network/backend/internal/domain"
 	"social-network/backend/internal/repo"
@@ -68,18 +69,60 @@ func (r *UserRepo) Create(ctx context.Context, user *domain.User) (int64, error)
 	return result.LastInsertId()
 }
 
-func (r *UserRepo) SetAvatarMediaID(ctx context.Context, userID, mediaID int64) error {
-	if userID <= 0 || mediaID <= 0 {
+func (r *UserRepo) UpdateProfile(ctx context.Context, user *domain.User) error {
+	if user == nil || user.ID <= 0 || strings.TrimSpace(user.FirstName) == "" || strings.TrimSpace(user.LastName) == "" {
+		return fmt.Errorf("invalid profile update")
+	}
+	if !domain.ValidDateOfBirth(user.DateOfBirth) {
+		return fmt.Errorf("%w: %q", domain.ErrInvalidDateOfBirth, user.DateOfBirth)
+	}
+	gender, err := nullableGender(user.Gender)
+	if err != nil {
+		return err
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE users
+		SET
+			first_name = ?,
+			last_name = ?,
+			date_of_birth = ?,
+			gender = ?,
+			nickname = ?,
+			about_me = ?,
+			updated_at = ?
+		WHERE id = ?
+	`,
+		strings.TrimSpace(user.FirstName),
+		strings.TrimSpace(user.LastName),
+		user.DateOfBirth,
+		gender,
+		nullableTrimmedText(user.Nickname),
+		nullableTrimmedText(user.AboutMe),
+		timeToUnix(user.UpdatedAt),
+		user.ID,
+	)
+	if err != nil {
+		return err
+	}
+	return requireOneRow(result)
+}
+
+func (r *UserRepo) SetAvatarMediaID(ctx context.Context, userID int64, mediaID *int64, updatedAt time.Time) error {
+	if userID <= 0 || mediaID != nil && *mediaID <= 0 {
 		return fmt.Errorf("invalid avatar relation")
 	}
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE users
-		SET avatar_media_id = ?
+		SET avatar_media_id = ?, updated_at = ?
 		WHERE id = ?
-	`, mediaID, userID)
+	`, nullableInt64(mediaID), timeToUnix(updatedAt), userID)
 	if err != nil {
 		return err
 	}
+	return requireOneRow(result)
+}
+
+func requireOneRow(result sql.Result) error {
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return err

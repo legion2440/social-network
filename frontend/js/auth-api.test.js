@@ -110,3 +110,38 @@ test('network failures use the common API error shape', async () => {
     return true;
   });
 });
+
+test('profile update sends JSON to the protected profile endpoint', async () => {
+  let call;
+  const api = createAuthAPI(async (path, options) => {
+    call = { path, options };
+    return jsonResponse(200, { id: 7, first_name: 'Updated' });
+  });
+  const patch = { first_name: 'Updated', gender: null };
+
+  assert.equal((await api.updateProfile(patch)).first_name, 'Updated');
+  assert.equal(call.path, '/api/profile');
+  assert.equal(call.options.method, 'PATCH');
+  assert.equal(call.options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(call.options.body), patch);
+  assert.equal(call.options.credentials, 'same-origin');
+});
+
+test('profile avatar replace keeps FormData intact and delete expects 200', async () => {
+  const calls = [];
+  const formData = { kind: 'avatar-form-data-test-double' };
+  const api = createAuthAPI(async (path, options) => {
+    calls.push({ path, options });
+    return jsonResponse(200, { id: 7, avatar_url: '/static/avatars/neutral.svg' });
+  });
+
+  await api.replaceAvatar(formData);
+  await api.deleteAvatar();
+
+  assert.equal(calls[0].path, '/api/profile/avatar');
+  assert.equal(calls[0].options.method, 'PUT');
+  assert.equal(calls[0].options.body, formData);
+  assert.equal(calls[0].options.headers['Content-Type'], undefined);
+  assert.equal(calls[1].path, '/api/profile/avatar');
+  assert.equal(calls[1].options.method, 'DELETE');
+});

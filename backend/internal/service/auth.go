@@ -130,7 +130,7 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthR
 			if err != nil {
 				return err
 			}
-			if err := repositories.Users().SetAvatarMediaID(ctx, user.ID, mediaID); err != nil {
+			if err := repositories.Users().SetAvatarMediaID(ctx, user.ID, &mediaID, now); err != nil {
 				return err
 			}
 			user.AvatarMediaID = &mediaID

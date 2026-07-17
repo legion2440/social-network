@@ -100,19 +100,22 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("avatar storage init: %w", err)
 	}
+	transactions := sqlite.NewTransactionManager(db)
 	auth := service.NewAuthService(
 		users,
-		sqlite.NewTransactionManager(db),
+		transactions,
 		sessions,
 		service.BcryptHasher{},
 		appClock,
 		avatarStager,
 	)
+	profile := service.NewProfileService(transactions, appClock, avatarStager, log.Default())
 	handler := httpserver.NewHandler(
 		db,
 		sessions,
 		media,
 		auth,
+		profile,
 		httpserver.NewCookieSessionTokenExtractor(config.SessionCookieName),
 		cfg.CookieSecure,
 		cfg.FrontendDir,

@@ -15,6 +15,7 @@ type Handler struct {
 	sessions     *service.SessionService
 	media        *service.MediaService
 	auth         *service.AuthService
+	profile      *service.ProfileService
 	sessionToken SessionTokenExtractor
 	cookieSecure bool
 	frontend     http.Handler
@@ -26,6 +27,7 @@ func NewHandler(
 	sessions *service.SessionService,
 	media *service.MediaService,
 	auth *service.AuthService,
+	profile *service.ProfileService,
 	sessionToken SessionTokenExtractor,
 	cookieSecure bool,
 	frontendDir string,
@@ -42,6 +44,7 @@ func NewHandler(
 		sessions:     sessions,
 		media:        media,
 		auth:         auth,
+		profile:      profile,
 		sessionToken: sessionToken,
 		cookieSecure: cookieSecure,
 		frontend:     newFrontendHandler(frontendDir),
@@ -69,6 +72,9 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("/api/auth/login", h.handleLogin)
 	mux.HandleFunc("/api/auth/logout", h.handleLogout)
 	mux.Handle("/api/auth/me", protected(h.handleMe))
+	mux.Handle("/api/profile", protected(h.handleProfile))
+	mux.Handle("/api/profile/avatar", protected(h.handleProfileAvatar))
+	mux.Handle("/api/profile/", protected(h.handleNotImplemented))
 	mux.Handle("/ws", protected(h.handleWS))
 	mux.Handle("/api/media", protected(h.handleMediaUpload))
 	mux.Handle("/uploads/", protected(h.handleMediaDownload))
@@ -77,7 +83,6 @@ func (h *Handler) Routes() http.Handler {
 	for _, group := range []string{
 		"/api/auth",
 		"/api/users",
-		"/api/profile",
 		"/api/follow",
 		"/api/posts",
 		"/api/groups",

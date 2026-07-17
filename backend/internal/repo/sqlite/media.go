@@ -51,3 +51,21 @@ func (r *MediaRepo) GetByID(ctx context.Context, id int64) (*domain.Media, error
 	media.URL = domain.MediaURL(media.ID)
 	return &media, nil
 }
+
+func (r *MediaRepo) DeleteByID(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return repo.ErrNotFound
+	}
+	result, err := r.db.ExecContext(ctx, `DELETE FROM media WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected != 1 {
+		return repo.ErrNotFound
+	}
+	return nil
+}

@@ -108,18 +108,20 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 		t.Fatalf("new avatar stager: %v", err)
 	}
 	users := sqlite.NewUserRepo(db)
+	transactions := sqlite.NewTransactionManager(db)
 	auth := service.NewAuthService(
 		users,
-		sqlite.NewTransactionManager(db),
+		transactions,
 		sessions,
 		testPasswordHasher{},
 		fixedClock{},
 		avatarStager,
 	)
+	profile := service.NewProfileService(transactions, fixedClock{}, avatarStager, nil)
 
 	return &testEnvironment{
 		db:        db,
-		handler:   NewHandler(db, sessions, media, auth, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
+		handler:   NewHandler(db, sessions, media, auth, profile, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
 		users:     users,
 		sessions:  sessions,
 		uploadDir: uploadDir,
@@ -187,6 +189,25 @@ func newRegisterRequest(t *testing.T, fields map[string]string, avatarName strin
 	return req
 }
 
+func newProfileAvatarRequest(t *testing.T, filename string, avatar []byte) *http.Request {
+	t.Helper()
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("avatar", filename)
+	if err != nil {
+		t.Fatalf("create profile avatar form file: %v", err)
+	}
+	if _, err := part.Write(avatar); err != nil {
+		t.Fatalf("write profile avatar: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close profile avatar multipart: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPut, "/api/profile/avatar", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
+}
+
 func sessionCookieFromResponse(t *testing.T, rec *httptest.ResponseRecorder) *http.Cookie {
 	t.Helper()
 	for _, cookie := range rec.Result().Cookies() {
@@ -222,6 +243,7 @@ func newSessionFailureHandlerWithFrontend(store *failingSessionRepo, frontendDir
 		sessions,
 		nil,
 		auth,
+		nil,
 		NewCookieSessionTokenExtractor(config.SessionCookieName),
 		false,
 		frontendDir,
@@ -519,6 +541,170 @@ func TestDuplicateRegisterRollsBackAvatarAndDoesNotSetCookie(t *testing.T) {
 	}
 	if len(files) != 0 {
 		t.Fatalf("duplicate registration left files behind: %+v", files)
+	}
+}
+
+func TestProfileUpdatePersistsStrictPartialFields(t *testing.T) {
+	env := newTestEnvironment(t)
+	fields := defaultRegisterFields("profile@example.com")
+	fields["gender"] = "male"
+	fields["nickname"] = "old nickname"
+	fields["about_me"] = "old bio"
+	registerRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(registerRec, newRegisterRequest(t, fields, "", nil))
+	if registerRec.Code != http.StatusCreated {
+		t.Fatalf("register: status=%d body=%q", registerRec.Code, registerRec.Body.String())
+	}
+	cookie := sessionCookieFromResponse(t, registerRec)
+
+	patchBody := `{
+		"first_name":"  Updated  ",
+		"last_name":"Profile",
+		"date_of_birth":"29-02-1992",
+		"gender":null,
+		"nickname":"  comet  ",
+		"about_me":"   "
+	}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/profile", strings.NewReader(patchBody))
+	addSessionCookie(req, cookie.Value)
+	rec := httptest.NewRecorder()
+	env.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update profile: expected 200, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	var response authUserResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if response.FirstName != "Updated" || response.LastName != "Profile" || response.DateOfBirth != "29-02-1992" {
+		t.Fatalf("unexpected required profile fields: %+v", response)
+	}
+	if response.Gender != nil || response.Nickname == nil || *response.Nickname != "comet" || response.AboutMe != nil {
+		t.Fatalf("unexpected optional profile fields: %+v", response)
+	}
+	if response.AvatarURL != domain.NeutralAvatarPlaceholderURL {
+		t.Fatalf("expected neutral placeholder after clearing gender, got %q", response.AvatarURL)
+	}
+
+	stored, err := env.users.GetByEmail(context.Background(), "profile@example.com")
+	if err != nil {
+		t.Fatalf("get updated user: %v", err)
+	}
+	if stored.FirstName != response.FirstName || stored.DateOfBirth != response.DateOfBirth || stored.Gender != nil || stored.AboutMe != nil {
+		t.Fatalf("profile update was not persisted: %+v", stored)
+	}
+}
+
+func TestProfileUpdateRejectsInvalidAndUnknownFieldsWithoutChanges(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		body string
+	}{
+		{name: "impossible date", body: `{"date_of_birth":"31-02-1992"}`},
+		{name: "wrong date format", body: `{"date_of_birth":"1992-02-01"}`},
+		{name: "invalid gender", body: `{"gender":"other"}`},
+		{name: "empty gender", body: `{"gender":""}`},
+		{name: "null required field", body: `{"first_name":null}`},
+		{name: "unknown field", body: `{"email":"new@example.com"}`},
+		{name: "empty object", body: `{}`},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := newTestEnvironment(t)
+			_, token := env.createUserAndSession(t, "unchanged@example.com")
+			req := httptest.NewRequest(http.MethodPatch, "/api/profile", strings.NewReader(testCase.body))
+			addSessionCookie(req, token)
+			rec := httptest.NewRecorder()
+			env.handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d body=%q", rec.Code, rec.Body.String())
+			}
+			stored, err := env.users.GetByEmail(context.Background(), "unchanged@example.com")
+			if err != nil {
+				t.Fatalf("get unchanged user: %v", err)
+			}
+			if stored.FirstName != "Test" || stored.DateOfBirth != "02-01-1990" || stored.Gender != nil {
+				t.Fatalf("invalid update changed user: %+v", stored)
+			}
+		})
+	}
+}
+
+func TestProfileAvatarReplaceAndIdempotentDelete(t *testing.T) {
+	env := newTestEnvironment(t)
+	fields := defaultRegisterFields("avatar-edit@example.com")
+	fields["gender"] = "female"
+	oldAvatar := []byte("RIFF\x10\x00\x00\x00WEBPVP8 old-avatar")
+	registerRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(registerRec, newRegisterRequest(t, fields, "old.webp", oldAvatar))
+	if registerRec.Code != http.StatusCreated {
+		t.Fatalf("register: status=%d body=%q", registerRec.Code, registerRec.Body.String())
+	}
+	cookie := sessionCookieFromResponse(t, registerRec)
+	var oldMediaID int64
+	var oldStorageKey string
+	if err := env.db.QueryRow(`SELECT id, storage_key FROM media`).Scan(&oldMediaID, &oldStorageKey); err != nil {
+		t.Fatalf("query old avatar: %v", err)
+	}
+
+	newAvatar := []byte("\x89PNG\r\n\x1a\nnew-avatar")
+	replaceReq := newProfileAvatarRequest(t, "new.png", newAvatar)
+	addSessionCookie(replaceReq, cookie.Value)
+	replaceRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(replaceRec, replaceReq)
+	if replaceRec.Code != http.StatusOK {
+		t.Fatalf("replace avatar: expected 200, got %d body=%q", replaceRec.Code, replaceRec.Body.String())
+	}
+	var replaced authUserResponse
+	if err := json.NewDecoder(replaceRec.Body).Decode(&replaced); err != nil {
+		t.Fatalf("decode replace response: %v", err)
+	}
+	if !strings.HasPrefix(replaced.AvatarURL, "/uploads/") || replaced.AvatarURL == domain.MediaURL(oldMediaID) {
+		t.Fatalf("avatar URL was not replaced: %q", replaced.AvatarURL)
+	}
+	if _, err := os.Stat(filepath.Join(env.uploadDir, oldStorageKey)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old avatar file still exists: %v", err)
+	}
+	var oldRows int
+	if err := env.db.QueryRow(`SELECT COUNT(*) FROM media WHERE id = ?`, oldMediaID).Scan(&oldRows); err != nil {
+		t.Fatalf("query old media row: %v", err)
+	}
+	if oldRows != 0 {
+		t.Fatalf("old media row still exists")
+	}
+	var newStorageKey string
+	if err := env.db.QueryRow(`SELECT storage_key FROM media`).Scan(&newStorageKey); err != nil {
+		t.Fatalf("query new avatar: %v", err)
+	}
+	storedAvatar, err := os.ReadFile(filepath.Join(env.uploadDir, newStorageKey))
+	if err != nil || !bytes.Equal(storedAvatar, newAvatar) {
+		t.Fatalf("new avatar was not stored: contents=%q err=%v", storedAvatar, err)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/profile/avatar", nil)
+	addSessionCookie(deleteReq, cookie.Value)
+	deleteRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("delete avatar: expected 200, got %d body=%q", deleteRec.Code, deleteRec.Body.String())
+	}
+	var deleted authUserResponse
+	if err := json.NewDecoder(deleteRec.Body).Decode(&deleted); err != nil {
+		t.Fatalf("decode delete response: %v", err)
+	}
+	if deleted.AvatarURL != domain.FemaleAvatarPlaceholderURL {
+		t.Fatalf("expected female placeholder, got %q", deleted.AvatarURL)
+	}
+	assertDBRowCount(t, env.db, "media", 0)
+	if _, err := os.Stat(filepath.Join(env.uploadDir, newStorageKey)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deleted avatar file still exists: %v", err)
+	}
+
+	repeatReq := httptest.NewRequest(http.MethodDelete, "/api/profile/avatar", nil)
+	addSessionCookie(repeatReq, cookie.Value)
+	repeatRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(repeatRec, repeatReq)
+	if repeatRec.Code != http.StatusOK {
+		t.Fatalf("repeat delete: expected 200, got %d body=%q", repeatRec.Code, repeatRec.Body.String())
 	}
 }
 

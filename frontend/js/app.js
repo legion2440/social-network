@@ -47,11 +47,20 @@ function emptyRegistrationForm() {
   };
 }
 
+function emptyProfileEditor() {
+  return {
+    profileEditOpen: false, profileEditPending: false, profileAvatarPending: false,
+    profileEditError: '', editFirstName: '', editLastName: '', editDateOfBirth: '',
+    editGender: '', editNickname: '', editAboutMe: '', editAvatar: null, editAvatarName: ''
+  };
+}
+
 function decorateUser(user) {
   const safeAvatarURL = user.avatarUrl ? String(user.avatarUrl).replace(/["\\\r\n]/g, '') : '';
   user.avatarUrl = safeAvatarURL;
   user.hasAvatar = !!safeAvatarURL;
   user.noAvatar = !safeAvatarURL;
+  user.hasCustomAvatar = safeAvatarURL.indexOf('/uploads/') === 0;
   return user;
 }
 
@@ -125,7 +134,8 @@ class Component extends DCLogic {
       ],
       authMode: 'login', authStatus: 'checking', authPending: false, logoutPending: false,
       authError: '', bootstrapError: '', appError: '',
-      ...emptyRegistrationForm()
+      ...emptyRegistrationForm(),
+      ...emptyProfileEditor()
     };
     this.msgEl = null;
   }
@@ -153,10 +163,11 @@ class Component extends DCLogic {
     const initials = ((firstName.charAt(0) || '') + (lastName.charAt(0) || '')).toUpperCase() || '?';
     USERS.me = decorateUser({
       id: 'me', apiId: user.id,
+      firstName, lastName, nickname,
       name: (firstName + ' ' + lastName).trim(),
       handle: nickname ? (nickname.charAt(0) === '@' ? nickname : '@' + nickname) : user.email,
       initials, color: '#6b62c9',
-      bio: user.about_me || '', email: user.email, dob: user.date_of_birth,
+      bio: user.about_me || '', aboutMe: user.about_me || '', email: user.email, dob: user.date_of_birth,
       gender: user.gender, avatarUrl: user.avatar_url, private: false
     });
   }
@@ -221,6 +232,7 @@ class Component extends DCLogic {
         authPassword: '', screen: 'feed'
       };
       if (s.authMode === 'register') Object.assign(authenticatedState, emptyRegistrationForm());
+      Object.assign(authenticatedState, emptyProfileEditor());
       this.setState(authenticatedState);
     } catch (error) {
       this.setState({
@@ -238,7 +250,7 @@ class Component extends DCLogic {
       this.setState(Object.assign({
         authStatus: 'anonymous', logoutPending: false, authMode: 'login',
         authError: '', screen: 'auth'
-      }, emptyRegistrationForm()));
+      }, emptyRegistrationForm(), emptyProfileEditor()));
     } catch (error) {
       this.setState({
         logoutPending: false,
@@ -248,7 +260,95 @@ class Component extends DCLogic {
   };
 
   go = (screen) => this.setState({ screen, privacyOpen: false, emojiOpen: false });
-  openProfile = (uid) => this.setState({ screen: 'profile', profileId: uid, profileTab: 'posts' });
+  openProfile = (uid) => this.setState({
+    screen: 'profile', profileId: uid, profileTab: 'posts',
+    profileEditOpen: uid === 'me' ? this.state.profileEditOpen : false,
+    profileEditError: uid === 'me' ? this.state.profileEditError : ''
+  });
+
+  openProfileEdit = () => {
+    const me = USERS.me;
+    this.setState({
+      profileEditOpen: true, profileEditError: '',
+      editFirstName: me.firstName || '', editLastName: me.lastName || '',
+      editDateOfBirth: me.dob || '', editGender: me.gender || '',
+      editNickname: me.nickname || '', editAboutMe: me.aboutMe || '',
+      editAvatar: null, editAvatarName: ''
+    });
+  };
+
+  cancelProfileEdit = () => this.setState(Object.assign({}, emptyProfileEditor()));
+
+  saveProfile = async (event) => {
+    if (event) event.preventDefault();
+    if (this.state.profileEditPending || this.state.profileAvatarPending) return;
+    const s = this.state;
+    this.setState({ profileEditPending: true, profileEditError: '' });
+    try {
+      const user = await AuthAPI.updateProfile({
+        first_name: s.editFirstName.trim(),
+        last_name: s.editLastName.trim(),
+        date_of_birth: s.editDateOfBirth.trim(),
+        gender: s.editGender || null,
+        nickname: s.editNickname,
+        about_me: s.editAboutMe
+      });
+      this.applyAuthUser(user);
+      this.setState(Object.assign({}, emptyProfileEditor()));
+    } catch (error) {
+      this.setState({
+        profileEditPending: false,
+        profileEditError: requestErrorMessage(error, 'Could not update your profile. Please try again.')
+      });
+    }
+  };
+
+  pickProfileAvatar = () => {
+    const input = document.getElementById('profile-avatar');
+    if (input) input.click();
+  };
+
+  onProfileAvatar = (event) => {
+    const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+    this.setState({ editAvatar: file, editAvatarName: file ? file.name : '', profileEditError: '' });
+  };
+
+  replaceProfileAvatar = async () => {
+    if (this.state.profileAvatarPending || this.state.profileEditPending || !this.state.editAvatar) return;
+    const avatar = this.state.editAvatar;
+    this.setState({ profileAvatarPending: true, profileEditError: '' });
+    try {
+      const form = new FormData();
+      form.append('avatar', avatar, avatar.name);
+      const user = await AuthAPI.replaceAvatar(form);
+      this.applyAuthUser(user);
+      const input = document.getElementById('profile-avatar');
+      if (input) input.value = '';
+      this.setState({ profileAvatarPending: false, editAvatar: null, editAvatarName: '' });
+    } catch (error) {
+      this.setState({
+        profileAvatarPending: false,
+        profileEditError: requestErrorMessage(error, 'Could not replace your avatar. Please try again.')
+      });
+    }
+  };
+
+  deleteProfileAvatar = async () => {
+    if (this.state.profileAvatarPending || this.state.profileEditPending) return;
+    this.setState({ profileAvatarPending: true, profileEditError: '' });
+    try {
+      const user = await AuthAPI.deleteAvatar();
+      this.applyAuthUser(user);
+      const input = document.getElementById('profile-avatar');
+      if (input) input.value = '';
+      this.setState({ profileAvatarPending: false, editAvatar: null, editAvatarName: '' });
+    } catch (error) {
+      this.setState({
+        profileAvatarPending: false,
+        profileEditError: requestErrorMessage(error, 'Could not delete your avatar. Please try again.')
+      });
+    }
+  };
 
   toggleTheme = (e) => {
     const el = document.documentElement;
@@ -732,6 +832,30 @@ class Component extends DCLogic {
         }
       },
       privacySeg,
+      showProfileEdit: pIsMe && s.profileEditOpen,
+      openProfileEdit: this.openProfileEdit,
+      cancelProfileEdit: this.cancelProfileEdit,
+      saveProfile: this.saveProfile,
+      profileEditPending: s.profileEditPending || s.profileAvatarPending,
+      profileSaveLabel: s.profileEditPending ? 'Saving…' : 'Save changes',
+      profileEditHasError: !!s.profileEditError,
+      profileEditError: s.profileEditError,
+      editFirstName: s.editFirstName, onEditFirstName: (e) => this.setState({ editFirstName: e.target.value }),
+      editLastName: s.editLastName, onEditLastName: (e) => this.setState({ editLastName: e.target.value }),
+      editDateOfBirth: s.editDateOfBirth, onEditDateOfBirth: (e) => this.setState({ editDateOfBirth: e.target.value }),
+      editGender: s.editGender, onEditGender: (e) => this.setState({ editGender: e.target.value }),
+      editNickname: s.editNickname, onEditNickname: (e) => this.setState({ editNickname: e.target.value }),
+      editAboutMe: s.editAboutMe, onEditAboutMe: (e) => this.setState({ editAboutMe: e.target.value }),
+      profileAvatarLabel: s.editAvatarName || 'Choose image',
+      profileAvatarPending: s.profileAvatarPending || s.profileEditPending,
+      profileAvatarUploadDisabled: s.profileAvatarPending || s.profileEditPending || !s.editAvatar,
+      profileAvatarUploadOpacity: s.profileAvatarPending || s.profileEditPending || !s.editAvatar ? '0.55' : '1',
+      profileAvatarUploadLabel: s.profileAvatarPending ? 'Working…' : 'Upload',
+      profileHasCustomAvatar: me.hasCustomAvatar,
+      pickProfileAvatar: this.pickProfileAvatar,
+      onProfileAvatar: this.onProfileAvatar,
+      replaceProfileAvatar: this.replaceProfileAvatar,
+      deleteProfileAvatar: this.deleteProfileAvatar,
       // groups
       createOpen: s.createOpen,
       toggleCreate: () => this.setState({ createOpen: !s.createOpen }),

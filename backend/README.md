@@ -93,6 +93,23 @@ per user are allowed, and logout removes only the current session. Missing
 tokens and already-absent sessions are successful no-ops; session storage
 failures return `500`.
 
+## Own profile
+
+`PATCH /api/profile` accepts a partial JSON object containing `first_name`,
+`last_name`, `date_of_birth`, `gender`, `nickname`, or `about_me`. Omitted
+fields are unchanged. First/last name and `date_of_birth` cannot be empty or
+`null`; dates keep the strict real-date `DD-MM-YYYY` contract. `gender` accepts
+`male`, `female`, or JSON `null` to clear it. Empty nickname/about values and
+JSON `null` clear those optional fields. Empty objects, unknown fields, and
+unsupported values return `400`.
+
+`PUT /api/profile/avatar` replaces the current avatar from the multipart field
+`avatar`; `DELETE /api/profile/avatar` removes it and returns the gender-based
+placeholder. Both return the same full user representation as auth endpoints.
+Replacement uses staging plus one SQL transaction for the media row and user
+relation. A failed transaction removes the new file and preserves the old
+avatar. After a successful commit, the replaced media file is removed.
+
 Supported environment variables:
 
 - `SOCIAL_NETWORK_HTTP_ADDR`
@@ -108,6 +125,9 @@ Implemented endpoints:
 - `POST /api/auth/login` (JSON)
 - `POST /api/auth/logout` (idempotent `204`; storage failures return `500`)
 - `GET /api/auth/me` (authenticated)
+- `PATCH /api/profile` (authenticated partial JSON update)
+- `PUT /api/profile/avatar` (authenticated multipart upload, field name `avatar`)
+- `DELETE /api/profile/avatar` (authenticated, idempotent)
 - `GET /ws` (authenticated WebSocket)
 - `POST /api/media` (authenticated multipart upload, field name `file`)
 - `GET /uploads/{id}` (authenticated, owner-only)
@@ -116,8 +136,8 @@ Implemented endpoints:
 
 All other reserved API groups currently return JSON `501 Not Implemented`.
 
-Profile editing, approval workflow, and privacy-aware delivery of avatars for
-other users are intentionally not implemented yet.
+Approval workflow and privacy-aware delivery of avatars for other users are
+intentionally not implemented yet.
 
 The local frontend file server does not replace the planned Docker topology.
 The final setup keeps the backend private and serves the frontend through a

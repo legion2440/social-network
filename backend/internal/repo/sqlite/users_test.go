@@ -163,7 +163,7 @@ func TestUserMediaAvatarRelationAndUserDeleteCascades(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create media: %v", err)
 	}
-	if err := users.SetAvatarMediaID(context.Background(), userID, mediaID); err != nil {
+	if err := users.SetAvatarMediaID(context.Background(), userID, &mediaID, testUpdatedAt); err != nil {
 		t.Fatalf("link avatar media: %v", err)
 	}
 	got, err := users.GetByID(context.Background(), userID)
@@ -196,7 +196,7 @@ func TestUserMediaAvatarRelationAndUserDeleteCascades(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create second media: %v", err)
 	}
-	if err := users.SetAvatarMediaID(context.Background(), userID, mediaID); err != nil {
+	if err := users.SetAvatarMediaID(context.Background(), userID, &mediaID, testUpdatedAt); err != nil {
 		t.Fatalf("link second avatar media: %v", err)
 	}
 

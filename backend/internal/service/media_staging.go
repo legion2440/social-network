@@ -106,6 +106,17 @@ type StagedMedia struct {
 	kept         bool
 }
 
+func (s *MediaStager) Remove(storageKey string) error {
+	storageKey = strings.TrimSpace(storageKey)
+	if s == nil || storageKey == "" || filepath.Base(storageKey) != storageKey {
+		return ErrInvalidInput
+	}
+	if err := os.Remove(filepath.Join(s.uploadDir, storageKey)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func (m *StagedMedia) Finalize() error {
 	if m == nil || m.tempPath == "" || m.finalPath == "" || m.finalized {
 		return ErrInvalidInput

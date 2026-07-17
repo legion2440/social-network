@@ -129,6 +129,10 @@ func (h *Handler) handleNotImplemented(w http.ResponseWriter, _ *http.Request) {
 }
 
 func readMediaUploadFile(r *http.Request) (*multipart.Part, string, error) {
+	return readMultipartUploadFile(r, "file")
+}
+
+func readMultipartUploadFile(r *http.Request, fieldName string) (*multipart.Part, string, error) {
 	reader, err := r.MultipartReader()
 	if err != nil {
 		return nil, "", err
@@ -141,7 +145,7 @@ func readMediaUploadFile(r *http.Request) (*multipart.Part, string, error) {
 		if err != nil {
 			return nil, "", err
 		}
-		if part.FormName() != "file" {
+		if part.FormName() != fieldName {
 			_ = part.Close()
 			continue
 		}
