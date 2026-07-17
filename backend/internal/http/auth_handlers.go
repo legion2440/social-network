@@ -87,11 +87,15 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if h.auth == nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	token, _ := h.sessionToken.Extract(r)
-	if h.auth != nil {
-		if err := h.auth.Logout(r.Context(), token); err != nil {
-			h.logger.Printf("logout: %v", err)
-		}
+	if err := h.auth.Logout(r.Context(), token); err != nil {
+		h.logger.Printf("logout: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
 	}
 	ClearSessionCookie(w, h.cookieSecure)
 	w.WriteHeader(http.StatusNoContent)

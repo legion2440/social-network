@@ -80,7 +80,9 @@ profile-avatar contract.
 Login accepts JSON with `email` and `password`. Authentication currently uses
 an HttpOnly, SameSite=Lax session cookie. Request token extraction is separate
 from cookie transport so a Bearer source can be added later. Multiple sessions
-per user are allowed, and logout removes only the current session.
+per user are allowed, and logout removes only the current session. Missing
+tokens and already-absent sessions are successful no-ops; session storage
+failures return `500`.
 
 Supported environment variables:
 
@@ -94,7 +96,7 @@ Implemented endpoints:
 - `GET /api/health`
 - `POST /api/auth/register` (`multipart/form-data`)
 - `POST /api/auth/login` (JSON)
-- `POST /api/auth/logout` (idempotent, always `204`)
+- `POST /api/auth/logout` (idempotent `204`; storage failures return `500`)
 - `GET /api/auth/me` (authenticated)
 - `GET /ws` (authenticated WebSocket)
 - `POST /api/media` (authenticated multipart upload, field name `file`)

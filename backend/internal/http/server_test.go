@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -43,6 +44,24 @@ func (testPasswordHasher) Compare(hash, password string) error {
 		return fmt.Errorf("password mismatch")
 	}
 	return nil
+}
+
+type failingSessionRepo struct {
+	getSession *domain.Session
+	getErr     error
+	deleteErr  error
+}
+
+func (r *failingSessionRepo) Create(context.Context, *domain.Session) error {
+	return nil
+}
+
+func (r *failingSessionRepo) GetByToken(context.Context, string) (*domain.Session, error) {
+	return r.getSession, r.getErr
+}
+
+func (r *failingSessionRepo) DeleteByToken(context.Context, string) error {
+	return r.deleteErr
 }
 
 type sequenceID struct {
@@ -186,6 +205,21 @@ func assertDBRowCount(t *testing.T, db *sql.DB, table string, want int) {
 	if got != want {
 		t.Fatalf("expected %d rows in %s, got %d", want, table, got)
 	}
+}
+
+func newSessionFailureHandler(store *failingSessionRepo) http.Handler {
+	ids := &sequenceID{}
+	sessions := service.NewSessionService(store, fixedClock{}, ids, 24*time.Hour)
+	auth := service.NewAuthService(nil, nil, sessions, nil, nil, nil)
+	return NewHandler(
+		nil,
+		sessions,
+		nil,
+		auth,
+		NewCookieSessionTokenExtractor(config.SessionCookieName),
+		false,
+		nil,
+	).Routes()
 }
 
 func TestHealthIsPublicAndChecksDatabase(t *testing.T) {
@@ -480,6 +514,43 @@ func TestLoginMeAndIdempotentCurrentSessionLogout(t *testing.T) {
 	env.handler.ServeHTTP(withoutCookieRec, httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil))
 	if withoutCookieRec.Code != http.StatusNoContent {
 		t.Fatalf("logout without cookie: expected 204, got %d", withoutCookieRec.Code)
+	}
+}
+
+func TestSessionReadFailureReturnsInternalServerError(t *testing.T) {
+	handler := newSessionFailureHandler(&failingSessionRepo{
+		getErr: errors.New("session database read failed"),
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	addSessionCookie(req, "session-token")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError || rec.Body.String() != "{\"error\":\"internal server error\"}\n" {
+		t.Fatalf("expected session read failure to return 500, got %d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSessionDeleteFailureReturnsInternalServerErrorWithoutClearingCookie(t *testing.T) {
+	handler := newSessionFailureHandler(&failingSessionRepo{
+		getSession: &domain.Session{
+			Token:     "session-token",
+			UserID:    42,
+			ExpiresAt: testNow.Add(time.Hour),
+			CreatedAt: testNow,
+		},
+		deleteErr: errors.New("session database delete failed"),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	addSessionCookie(req, "session-token")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError || rec.Body.String() != "{\"error\":\"internal server error\"}\n" {
+		t.Fatalf("expected session delete failure to return 500, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if len(rec.Result().Cookies()) != 0 {
+		t.Fatalf("failed logout cleared the cookie: %+v", rec.Result().Cookies())
 	}
 }
 

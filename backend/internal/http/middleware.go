@@ -24,6 +24,8 @@ func (h *Handler) authMiddleware(next http.Handler) http.Handler {
 				ClearSessionCookie(w, h.cookieSecure)
 			default:
 				h.logger.Printf("session lookup: %v", sessionErr)
+				writeError(w, http.StatusInternalServerError, "internal server error")
+				return
 			}
 		}
 		next.ServeHTTP(w, r)
