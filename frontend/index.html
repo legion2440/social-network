@@ -330,10 +330,9 @@
             </div>
           </sc-if>
         </div>
-      </div>
 
-      <sc-if value="{{showProfileEdit}}" hint-placeholder-val="{{false}}">
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:20px 22px;margin-bottom:18px;animation:fadeUp .25s ease both">
+        <sc-if value="{{showProfileEdit}}" hint-placeholder-val="{{false}}">
+        <div style="border-top:1px solid var(--border);padding:20px 22px;animation:fadeUp .25s ease both">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px">
             <div>
               <h2 style="margin:0;font:800 17px 'Manrope',sans-serif">Edit profile</h2>
@@ -381,7 +380,8 @@
             </div>
           </form>
         </div>
-      </sc-if>
+        </sc-if>
+      </div>
 
       <sc-if value="{{pLocked}}" hint-placeholder-val="{{false}}">
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:44px 24px;text-align:center;animation:fadeUp .35s ease both">
