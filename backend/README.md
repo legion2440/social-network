@@ -86,9 +86,11 @@ removed if the transaction fails. The session cookie is set only after a
 successful commit.
 
 Users without custom media receive one of three static SVG placeholders based
-on gender. Auth responses expose the computed `avatar_url`. Custom avatars use
-the current owner-only `/uploads/{id}` route; this is not the future public
-profile-avatar contract.
+on gender. Every full or summary user response exposes the computed
+`avatar_url`. Custom avatars use the controlled
+`/api/users/{userID}/avatar?v={mediaID}` route; the media ID is a cache-busting
+version and changes on replacement. Placeholder URLs remain under
+`/static/avatars/`.
 
 Login accepts JSON with `email` and `password`. Authentication currently uses
 an HttpOnly, SameSite=Lax session cookie. Request token extraction is separate
@@ -121,6 +123,26 @@ placeholder. Both return the same full user representation as auth endpoints.
 Replacement uses staging plus one SQL transaction for the media row and user
 relation. A failed transaction removes the new file and preserves the old
 avatar. After a successful commit, the replaced media file is removed.
+
+## Custom avatar delivery
+
+`GET /api/users/{id}/avatar` requires authentication and serves only the
+user's current custom avatar. The query string is ignored. Public-profile
+avatars are available to every authenticated user. Private-profile avatars are
+available only to their owner and accepted followers; pending followers and
+outsiders receive `403`. The current privacy and follow relation are checked in
+the same read transaction as the user and media rows on every request.
+
+Users without custom media keep their gender placeholder in `avatar_url`; an
+authorized request to their controlled avatar route returns `404`. Missing
+users, media rows, foreign-owned media, and missing physical files also return
+`404`. Successful image responses include the stored MIME, actual file length,
+`X-Content-Type-Options: nosniff`, and `Cache-Control: private, no-store`.
+
+The legacy `/uploads/{mediaID}` route remains owner-only for general media and
+is no longer emitted as a user avatar URL. The frontend recognizes only the
+controlled user-avatar URL as custom, so replace keeps the Remove action and
+delete switches it off when the response returns a placeholder.
 
 ## Followers
 
@@ -162,6 +184,7 @@ Implemented endpoints:
 - `GET|PUT|DELETE /api/users/{id}/follow` (relationship, follow, unfollow)
 - `GET /api/users/{id}/followers`
 - `GET /api/users/{id}/following`
+- `GET /api/users/{id}/avatar` (authenticated and privacy-controlled)
 - `GET /api/follow-requests`
 - `POST /api/follow-requests/{id}/accept`
 - `DELETE /api/follow-requests/{id}`
@@ -173,8 +196,7 @@ Implemented endpoints:
 
 All other reserved API groups currently return JSON `501 Not Implemented`.
 
-Posts, frontend follower controls, and privacy-aware delivery of custom avatars
-for other users are intentionally not implemented yet.
+Posts and frontend follower controls are intentionally not implemented yet.
 
 The local frontend file server does not replace the planned Docker topology.
 The final setup keeps the backend private and serves the frontend through a

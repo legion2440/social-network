@@ -60,7 +60,7 @@ function decorateUser(user) {
   user.avatarUrl = safeAvatarURL;
   user.hasAvatar = !!safeAvatarURL;
   user.noAvatar = !safeAvatarURL;
-  user.hasCustomAvatar = safeAvatarURL.indexOf('/uploads/') === 0;
+  user.hasCustomAvatar = AvatarURL.isCustomAvatarURL(safeAvatarURL);
   return user;
 }
 

@@ -130,14 +130,20 @@ test('profile update sends JSON to the protected profile endpoint', async () => 
 test('profile avatar replace keeps FormData intact and delete expects 200', async () => {
   const calls = [];
   const formData = { kind: 'avatar-form-data-test-double' };
+  const responses = [
+    { id: 7, avatar_url: '/api/users/7/avatar?v=42' },
+    { id: 7, avatar_url: '/static/avatars/neutral.svg' }
+  ];
   const api = createAuthAPI(async (path, options) => {
     calls.push({ path, options });
-    return jsonResponse(200, { id: 7, avatar_url: '/static/avatars/neutral.svg' });
+    return jsonResponse(200, responses[calls.length - 1]);
   });
 
-  await api.replaceAvatar(formData);
-  await api.deleteAvatar();
+  const replaced = await api.replaceAvatar(formData);
+  const deleted = await api.deleteAvatar();
 
+  assert.equal(replaced.avatar_url, '/api/users/7/avatar?v=42');
+  assert.equal(deleted.avatar_url, '/static/avatars/neutral.svg');
   assert.equal(calls[0].path, '/api/profile/avatar');
   assert.equal(calls[0].options.method, 'PUT');
   assert.equal(calls[0].options.body, formData);

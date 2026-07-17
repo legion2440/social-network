@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -41,8 +42,8 @@ func UserAvatarURL(user *User) string {
 	if user == nil {
 		return NeutralAvatarPlaceholderURL
 	}
-	if user.AvatarMediaID != nil && *user.AvatarMediaID > 0 {
-		return MediaURL(*user.AvatarMediaID)
+	if user.ID > 0 && user.AvatarMediaID != nil && *user.AvatarMediaID > 0 {
+		return "/api/users/" + strconv.FormatInt(user.ID, 10) + "/avatar?v=" + strconv.FormatInt(*user.AvatarMediaID, 10)
 	}
 	if user.Gender == nil {
 		return NeutralAvatarPlaceholderURL

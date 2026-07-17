@@ -17,6 +17,7 @@ type Handler struct {
 	auth         *service.AuthService
 	profile      *service.ProfileService
 	follows      *service.FollowService
+	avatars      *service.AvatarDeliveryService
 	sessionToken SessionTokenExtractor
 	cookieSecure bool
 	frontend     http.Handler
@@ -30,6 +31,7 @@ func NewHandler(
 	auth *service.AuthService,
 	profile *service.ProfileService,
 	follows *service.FollowService,
+	avatars *service.AvatarDeliveryService,
 	sessionToken SessionTokenExtractor,
 	cookieSecure bool,
 	frontendDir string,
@@ -48,6 +50,7 @@ func NewHandler(
 		auth:         auth,
 		profile:      profile,
 		follows:      follows,
+		avatars:      avatars,
 		sessionToken: sessionToken,
 		cookieSecure: cookieSecure,
 		frontend:     newFrontendHandler(frontendDir),
@@ -81,6 +84,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/users/{id}/follow", protected(h.handleFollow))
 	mux.Handle("/api/users/{id}/followers", protected(h.handleFollowers))
 	mux.Handle("/api/users/{id}/following", protected(h.handleFollowing))
+	mux.Handle("/api/users/{id}/avatar", protected(h.handleUserAvatar))
 	mux.Handle("/api/follow-requests", protected(h.handleFollowRequests))
 	mux.Handle("/api/follow-requests/{id}/accept", protected(h.handleFollowRequestAccept))
 	mux.Handle("/api/follow-requests/{id}", protected(h.handleFollowRequestReject))

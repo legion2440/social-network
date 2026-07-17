@@ -176,7 +176,7 @@ func (s *FollowService) listFollowUsers(
 
 	var users []*domain.User
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
-		if err := authorizeFollowLists(ctx, repositories.Users(), repositories.Follows(), currentUserID, targetUserID); err != nil {
+		if _, err := authorizeProfileRead(ctx, repositories.Users(), repositories.Follows(), currentUserID, targetUserID); err != nil {
 			return err
 		}
 		var err error
@@ -191,32 +191,6 @@ func (s *FollowService) listFollowUsers(
 		return nil, err
 	}
 	return users, nil
-}
-
-func authorizeFollowLists(
-	ctx context.Context,
-	users repo.UserRepo,
-	follows repo.FollowRepo,
-	currentUserID, targetUserID int64,
-) error {
-	target, err := users.GetByID(ctx, targetUserID)
-	if errors.Is(err, repo.ErrNotFound) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return err
-	}
-	if currentUserID == targetUserID || !target.IsPrivate {
-		return nil
-	}
-	accepted, err := follows.IsAccepted(ctx, currentUserID, targetUserID)
-	if err != nil {
-		return err
-	}
-	if !accepted {
-		return ErrForbidden
-	}
-	return nil
 }
 
 func relationshipStatus(status domain.FollowStatus) RelationshipStatus {

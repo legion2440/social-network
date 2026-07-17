@@ -52,7 +52,7 @@ func TestUserAvatarURL(t *testing.T) {
 		{name: "neutral", user: &User{}, want: NeutralAvatarPlaceholderURL},
 		{name: "male", user: &User{Gender: &male}, want: MaleAvatarPlaceholderURL},
 		{name: "female", user: &User{Gender: &female}, want: FemaleAvatarPlaceholderURL},
-		{name: "custom", user: &User{Gender: &female, AvatarMediaID: &mediaID}, want: "/uploads/42"},
+		{name: "custom", user: &User{ID: 7, Gender: &female, AvatarMediaID: &mediaID}, want: "/api/users/7/avatar?v=42"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			if got := UserAvatarURL(testCase.user); got != testCase.want {

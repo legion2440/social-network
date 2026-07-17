@@ -121,10 +121,11 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 	)
 	profile := service.NewProfileService(transactions, fixedClock{}, avatarStager, nil)
 	follows := service.NewFollowService(users, sqlite.NewFollowRepo(db), transactions, fixedClock{})
+	avatarDelivery := service.NewAvatarDeliveryService(transactions, uploadDir)
 
 	return &testEnvironment{
 		db:        db,
-		handler:   NewHandler(db, sessions, media, auth, profile, follows, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
+		handler:   NewHandler(db, sessions, media, auth, profile, follows, avatarDelivery, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
 		users:     users,
 		sessions:  sessions,
 		follows:   follows,
@@ -269,6 +270,7 @@ func newSessionFailureHandlerWithFrontend(store *failingSessionRepo, frontendDir
 		sessions,
 		nil,
 		auth,
+		nil,
 		nil,
 		nil,
 		NewCookieSessionTokenExtractor(config.SessionCookieName),
@@ -466,17 +468,22 @@ func TestRegisterWithWebPAvatarPersistsMediaInRegistration(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("decode register response: %v", err)
 	}
-	if response.Gender == nil || *response.Gender != domain.GenderFemale || !strings.HasPrefix(response.AvatarURL, "/uploads/") {
+	if response.Gender == nil || *response.Gender != domain.GenderFemale {
 		t.Fatalf("unexpected avatar response: %+v", response)
 	}
 	assertDBRowCount(t, env.db, "users", 1)
 	assertDBRowCount(t, env.db, "media", 1)
 	assertDBRowCount(t, env.db, "sessions", 1)
 
+	var mediaID int64
 	var storageKey, mime string
 	var size int64
-	if err := env.db.QueryRow(`SELECT storage_key, mime, size FROM media LIMIT 1`).Scan(&storageKey, &mime, &size); err != nil {
+	if err := env.db.QueryRow(`SELECT id, storage_key, mime, size FROM media LIMIT 1`).Scan(&mediaID, &storageKey, &mime, &size); err != nil {
 		t.Fatalf("query avatar media: %v", err)
+	}
+	wantAvatarURL := "/api/users/" + strconv.FormatInt(response.ID, 10) + "/avatar?v=" + strconv.FormatInt(mediaID, 10)
+	if response.AvatarURL != wantAvatarURL {
+		t.Fatalf("unexpected avatar URL: got %q want %q", response.AvatarURL, wantAvatarURL)
 	}
 	if mime != "image/webp" || size != int64(len(webp)) || filepath.Ext(storageKey) != ".webp" {
 		t.Fatalf("unexpected avatar metadata: key=%q mime=%q size=%d", storageKey, mime, size)
@@ -496,6 +503,193 @@ func TestRegisterWithWebPAvatarPersistsMediaInRegistration(t *testing.T) {
 	env.handler.ServeHTTP(avatarRec, avatarReq)
 	if avatarRec.Code != http.StatusOK || avatarRec.Header().Get("Content-Type") != "image/webp" || !bytes.Equal(avatarRec.Body.Bytes(), webp) {
 		t.Fatalf("avatar delivery failed: status=%d type=%q body=%q", avatarRec.Code, avatarRec.Header().Get("Content-Type"), avatarRec.Body.Bytes())
+	}
+	if avatarRec.Header().Get("Content-Length") != strconv.Itoa(len(webp)) ||
+		avatarRec.Header().Get("X-Content-Type-Options") != "nosniff" ||
+		avatarRec.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("unexpected avatar headers: %+v", avatarRec.Header())
+	}
+}
+
+func TestUserAvatarDeliveryEnforcesCurrentPrivacyAndFollowRelation(t *testing.T) {
+	env := newTestEnvironment(t)
+	avatarBytes := []byte("RIFF\x10\x00\x00\x00WEBPVP8 controlled-avatar")
+	registerRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(registerRec, newRegisterRequest(
+		t,
+		defaultRegisterFields("avatar-owner@example.com"),
+		"avatar.webp",
+		avatarBytes,
+	))
+	if registerRec.Code != http.StatusCreated {
+		t.Fatalf("register avatar owner: status=%d body=%q", registerRec.Code, registerRec.Body.String())
+	}
+	var owner authUserResponse
+	if err := json.NewDecoder(registerRec.Body).Decode(&owner); err != nil {
+		t.Fatalf("decode avatar owner: %v", err)
+	}
+	ownerToken := sessionCookieFromResponse(t, registerRec).Value
+	_, acceptedToken := env.createUserAndSession(t, "avatar-accepted@example.com")
+	_, pendingToken := env.createUserAndSession(t, "avatar-pending@example.com")
+	_, outsiderToken := env.createUserAndSession(t, "avatar-outsider@example.com")
+
+	followPath := "/api/users/" + strconv.FormatInt(owner.ID, 10) + "/follow"
+	follow := func(token string, wantStatus service.RelationshipStatus) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		env.handler.ServeHTTP(rec, authenticatedRequest(http.MethodPut, followPath, token, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("follow avatar owner: status=%d body=%q", rec.Code, rec.Body.String())
+		}
+		var response followStatusResponse
+		if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+			t.Fatalf("decode follow response: %v", err)
+		}
+		if response.Status != wantStatus {
+			t.Fatalf("follow avatar owner: got %q want %q", response.Status, wantStatus)
+		}
+	}
+	requestAvatar := func(label, token string, wantCode int) {
+		t.Helper()
+		t.Run(label, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, owner.AvatarURL, nil)
+			if token != "" {
+				addSessionCookie(req, token)
+			}
+			rec := httptest.NewRecorder()
+			env.handler.ServeHTTP(rec, req)
+			if rec.Code != wantCode {
+				t.Fatalf("want status %d, got %d body=%q", wantCode, rec.Code, rec.Body.String())
+			}
+			switch wantCode {
+			case http.StatusOK:
+				if !bytes.Equal(rec.Body.Bytes(), avatarBytes) {
+					t.Fatalf("unexpected avatar bytes: %q", rec.Body.Bytes())
+				}
+				if rec.Header().Get("Content-Type") != "image/webp" ||
+					rec.Header().Get("Content-Length") != strconv.Itoa(len(avatarBytes)) ||
+					rec.Header().Get("X-Content-Type-Options") != "nosniff" ||
+					rec.Header().Get("Cache-Control") != "private, no-store" {
+					t.Fatalf("unexpected avatar headers: %+v", rec.Header())
+				}
+			case http.StatusForbidden:
+				if rec.Body.String() != "{\"error\":\"forbidden\"}\n" {
+					t.Fatalf("unexpected forbidden response: %q", rec.Body.String())
+				}
+			}
+		})
+	}
+
+	follow(acceptedToken, service.RelationshipAccepted)
+	setProfilePrivacy(t, env, ownerToken, true)
+	follow(pendingToken, service.RelationshipPending)
+
+	requestAvatar("private-owner", ownerToken, http.StatusOK)
+	requestAvatar("private-accepted", acceptedToken, http.StatusOK)
+	requestAvatar("private-pending", pendingToken, http.StatusForbidden)
+	requestAvatar("private-outsider", outsiderToken, http.StatusForbidden)
+	requestAvatar("unauthenticated", "", http.StatusUnauthorized)
+
+	unfollowRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(unfollowRec, authenticatedRequest(http.MethodDelete, followPath, acceptedToken, nil))
+	if unfollowRec.Code != http.StatusNoContent {
+		t.Fatalf("unfollow avatar owner: status=%d body=%q", unfollowRec.Code, unfollowRec.Body.String())
+	}
+	requestAvatar("private-after-unfollow", acceptedToken, http.StatusForbidden)
+
+	setProfilePrivacy(t, env, ownerToken, false)
+	follow(acceptedToken, service.RelationshipAccepted)
+	requestAvatar("public-owner", ownerToken, http.StatusOK)
+	requestAvatar("public-accepted", acceptedToken, http.StatusOK)
+	requestAvatar("public-pending", pendingToken, http.StatusOK)
+	requestAvatar("public-outsider", outsiderToken, http.StatusOK)
+
+	setProfilePrivacy(t, env, ownerToken, true)
+	requestAvatar("private-restored-accepted", acceptedToken, http.StatusOK)
+	requestAvatar("private-closes-pending", pendingToken, http.StatusForbidden)
+	requestAvatar("private-closes-outsider", outsiderToken, http.StatusForbidden)
+
+	var mediaID int64
+	if err := env.db.QueryRow(`SELECT avatar_media_id FROM users WHERE id = ?`, owner.ID).Scan(&mediaID); err != nil {
+		t.Fatalf("query avatar media ID: %v", err)
+	}
+	legacyPath := "/uploads/" + strconv.FormatInt(mediaID, 10)
+	ownerLegacyRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(ownerLegacyRec, authenticatedRequest(http.MethodGet, legacyPath, ownerToken, nil))
+	if ownerLegacyRec.Code != http.StatusOK || !bytes.Equal(ownerLegacyRec.Body.Bytes(), avatarBytes) {
+		t.Fatalf("owner legacy avatar access failed: status=%d body=%q", ownerLegacyRec.Code, ownerLegacyRec.Body.Bytes())
+	}
+	outsiderLegacyRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(outsiderLegacyRec, authenticatedRequest(http.MethodGet, legacyPath, outsiderToken, nil))
+	if outsiderLegacyRec.Code != http.StatusNotFound {
+		t.Fatalf("outsider accessed owner-only upload: status=%d body=%q", outsiderLegacyRec.Code, outsiderLegacyRec.Body.String())
+	}
+}
+
+func TestUserAvatarDeliveryRejectsMissingAndForeignMedia(t *testing.T) {
+	env := newTestEnvironment(t)
+	targetID, targetToken := env.createUserAndSession(t, "avatar-target@example.com")
+	otherID, otherToken := env.createUserAndSession(t, "avatar-other@example.com")
+	avatarPath := "/api/users/" + strconv.FormatInt(targetID, 10) + "/avatar"
+
+	noAvatarRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(noAvatarRec, authenticatedRequest(http.MethodGet, avatarPath, targetToken, nil))
+	if noAvatarRec.Code != http.StatusNotFound {
+		t.Fatalf("missing custom avatar: status=%d body=%q", noAvatarRec.Code, noAvatarRec.Body.String())
+	}
+	setProfilePrivacy(t, env, targetToken, true)
+	privateNoAvatarRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(privateNoAvatarRec, authenticatedRequest(http.MethodGet, avatarPath, otherToken, nil))
+	if privateNoAvatarRec.Code != http.StatusForbidden || privateNoAvatarRec.Body.String() != "{\"error\":\"forbidden\"}\n" {
+		t.Fatalf("private avatar existence leaked: status=%d body=%q", privateNoAvatarRec.Code, privateNoAvatarRec.Body.String())
+	}
+	setProfilePrivacy(t, env, targetToken, false)
+	unknownUserRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(unknownUserRec, authenticatedRequest(http.MethodGet, "/api/users/999999/avatar", targetToken, nil))
+	if unknownUserRec.Code != http.StatusNotFound {
+		t.Fatalf("unknown avatar user: status=%d body=%q", unknownUserRec.Code, unknownUserRec.Body.String())
+	}
+
+	mediaRepo := sqlite.NewMediaRepo(env.db)
+	foreignBytes := []byte("\x89PNG\r\n\x1a\nforeign-avatar")
+	foreignKey := "foreign-avatar.png"
+	if err := os.WriteFile(filepath.Join(env.uploadDir, foreignKey), foreignBytes, 0o600); err != nil {
+		t.Fatalf("write foreign avatar: %v", err)
+	}
+	foreignMediaID, err := mediaRepo.Create(context.Background(), otherID, "image/png", int64(len(foreignBytes)), foreignKey, "foreign.png", testNow)
+	if err != nil {
+		t.Fatalf("create foreign avatar media: %v", err)
+	}
+	if err := env.users.SetAvatarMediaID(context.Background(), targetID, &foreignMediaID, testNow); err != nil {
+		t.Fatalf("attach foreign avatar media: %v", err)
+	}
+	foreignRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(foreignRec, authenticatedRequest(http.MethodGet, avatarPath, targetToken, nil))
+	if foreignRec.Code != http.StatusNotFound {
+		t.Fatalf("foreign-owned avatar was delivered: status=%d body=%q", foreignRec.Code, foreignRec.Body.String())
+	}
+
+	missingMediaID, err := mediaRepo.Create(context.Background(), targetID, "image/png", 10, "missing-avatar.png", "missing.png", testNow)
+	if err != nil {
+		t.Fatalf("create missing avatar media: %v", err)
+	}
+	if err := env.users.SetAvatarMediaID(context.Background(), targetID, &missingMediaID, testNow); err != nil {
+		t.Fatalf("attach missing avatar media: %v", err)
+	}
+	missingRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(missingRec, authenticatedRequest(http.MethodGet, avatarPath, targetToken, nil))
+	if missingRec.Code != http.StatusNotFound {
+		t.Fatalf("missing physical avatar file: status=%d body=%q", missingRec.Code, missingRec.Body.String())
+	}
+
+	if err := env.users.SetAvatarMediaID(context.Background(), otherID, &foreignMediaID, testNow); err != nil {
+		t.Fatalf("attach avatar media to owner: %v", err)
+	}
+	otherAvatarURL := domain.UserAvatarURL(&domain.User{ID: otherID, AvatarMediaID: &foreignMediaID})
+	otherRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(otherRec, authenticatedRequest(http.MethodGet, otherAvatarURL, otherToken, nil))
+	if otherRec.Code != http.StatusOK || !bytes.Equal(otherRec.Body.Bytes(), foreignBytes) {
+		t.Fatalf("media owner avatar delivery failed: status=%d body=%q", otherRec.Code, otherRec.Body.Bytes())
 	}
 }
 
@@ -1025,7 +1219,8 @@ func TestProfileAvatarReplaceAndIdempotentDelete(t *testing.T) {
 	if err := json.NewDecoder(replaceRec.Body).Decode(&replaced); err != nil {
 		t.Fatalf("decode replace response: %v", err)
 	}
-	if !strings.HasPrefix(replaced.AvatarURL, "/uploads/") || replaced.AvatarURL == domain.MediaURL(oldMediaID) {
+	oldAvatarURL := "/api/users/" + strconv.FormatInt(replaced.ID, 10) + "/avatar?v=" + strconv.FormatInt(oldMediaID, 10)
+	if !strings.HasPrefix(replaced.AvatarURL, "/api/users/"+strconv.FormatInt(replaced.ID, 10)+"/avatar?v=") || replaced.AvatarURL == oldAvatarURL {
 		t.Fatalf("avatar URL was not replaced: %q", replaced.AvatarURL)
 	}
 	if _, err := os.Stat(filepath.Join(env.uploadDir, oldStorageKey)); !errors.Is(err, os.ErrNotExist) {
@@ -1038,13 +1233,25 @@ func TestProfileAvatarReplaceAndIdempotentDelete(t *testing.T) {
 	if oldRows != 0 {
 		t.Fatalf("old media row still exists")
 	}
+	var newMediaID int64
 	var newStorageKey string
-	if err := env.db.QueryRow(`SELECT storage_key FROM media`).Scan(&newStorageKey); err != nil {
+	if err := env.db.QueryRow(`SELECT id, storage_key FROM media`).Scan(&newMediaID, &newStorageKey); err != nil {
 		t.Fatalf("query new avatar: %v", err)
+	}
+	wantReplacedURL := "/api/users/" + strconv.FormatInt(replaced.ID, 10) + "/avatar?v=" + strconv.FormatInt(newMediaID, 10)
+	if replaced.AvatarURL != wantReplacedURL {
+		t.Fatalf("unexpected replaced avatar URL: got %q want %q", replaced.AvatarURL, wantReplacedURL)
 	}
 	storedAvatar, err := os.ReadFile(filepath.Join(env.uploadDir, newStorageKey))
 	if err != nil || !bytes.Equal(storedAvatar, newAvatar) {
 		t.Fatalf("new avatar was not stored: contents=%q err=%v", storedAvatar, err)
+	}
+	deliveredReq := httptest.NewRequest(http.MethodGet, replaced.AvatarURL, nil)
+	addSessionCookie(deliveredReq, cookie.Value)
+	deliveredRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(deliveredRec, deliveredReq)
+	if deliveredRec.Code != http.StatusOK || deliveredRec.Header().Get("Content-Type") != "image/png" || !bytes.Equal(deliveredRec.Body.Bytes(), newAvatar) {
+		t.Fatalf("replaced avatar delivery failed: status=%d type=%q body=%q", deliveredRec.Code, deliveredRec.Header().Get("Content-Type"), deliveredRec.Body.Bytes())
 	}
 
 	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/profile/avatar", nil)
@@ -1060,6 +1267,13 @@ func TestProfileAvatarReplaceAndIdempotentDelete(t *testing.T) {
 	}
 	if deleted.AvatarURL != domain.FemaleAvatarPlaceholderURL {
 		t.Fatalf("expected female placeholder, got %q", deleted.AvatarURL)
+	}
+	deletedRouteReq := httptest.NewRequest(http.MethodGet, replaced.AvatarURL, nil)
+	addSessionCookie(deletedRouteReq, cookie.Value)
+	deletedRouteRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(deletedRouteRec, deletedRouteReq)
+	if deletedRouteRec.Code != http.StatusNotFound {
+		t.Fatalf("deleted avatar route: expected 404, got %d body=%q", deletedRouteRec.Code, deletedRouteRec.Body.String())
 	}
 	assertDBRowCount(t, env.db, "media", 0)
 	if _, err := os.Stat(filepath.Join(env.uploadDir, newStorageKey)); !errors.Is(err, os.ErrNotExist) {
