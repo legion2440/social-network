@@ -117,7 +117,7 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 
 	return &testEnvironment{
 		db:        db,
-		handler:   NewHandler(db, sessions, media, auth, NewCookieSessionTokenExtractor(config.SessionCookieName), false, nil).Routes(),
+		handler:   NewHandler(db, sessions, media, auth, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
 		users:     users,
 		sessions:  sessions,
 		uploadDir: uploadDir,
@@ -218,8 +218,63 @@ func newSessionFailureHandler(store *failingSessionRepo) http.Handler {
 		auth,
 		NewCookieSessionTokenExtractor(config.SessionCookieName),
 		false,
+		"",
 		nil,
 	).Routes()
+}
+
+func TestFrontendFilesAreServedWithoutShadowingBackendRoutes(t *testing.T) {
+	frontendDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(frontendDir, "js"), 0o755); err != nil {
+		t.Fatalf("create frontend js directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(frontendDir, "index.html"), []byte("<h1>loop frontend</h1>\n"), 0o644); err != nil {
+		t.Fatalf("write frontend index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(frontendDir, "js", "app.js"), []byte("console.log('loop');\n"), 0o644); err != nil {
+		t.Fatalf("write frontend script: %v", err)
+	}
+
+	handler := NewHandler(nil, nil, nil, nil, nil, false, frontendDir, nil).Routes()
+
+	for _, test := range []struct {
+		path        string
+		contentType string
+		body        string
+	}{
+		{path: "/", contentType: "text/html", body: "<h1>loop frontend</h1>"},
+		{path: "/js/app.js", contentType: "text/javascript", body: "console.log('loop');"},
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d body=%q", test.path, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Header().Get("Content-Type"), test.contentType) {
+			t.Fatalf("%s: unexpected content type %q", test.path, rec.Header().Get("Content-Type"))
+		}
+		if !strings.Contains(rec.Body.String(), test.body) {
+			t.Fatalf("%s: unexpected body %q", test.path, rec.Body.String())
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/unknown", nil))
+	if rec.Code != http.StatusNotFound || rec.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("API fallback was shadowed by frontend: status=%d content-type=%q body=%q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/uploads/1", nil))
+	if rec.Code != http.StatusUnauthorized || rec.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("uploads route was shadowed by frontend: status=%d content-type=%q body=%q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/static/avatars/neutral.svg", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Type"), "image/svg+xml") {
+		t.Fatalf("avatar placeholder route was shadowed by frontend: status=%d content-type=%q", rec.Code, rec.Header().Get("Content-Type"))
+	}
 }
 
 func TestHealthIsPublicAndChecksDatabase(t *testing.T) {

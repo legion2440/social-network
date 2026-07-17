@@ -11,13 +11,22 @@ go test ./...
 go run ./cmd/server
 ```
 
+The dependency-free frontend API-client tests use Node's built-in test runner:
+
+```bash
+cd ../frontend
+npm test
+```
+
 The SQLite driver is `github.com/mattn/go-sqlite3`, so CGO and a working C
 compiler are required. On Windows, run from Git Bash and verify that
 `go env CGO_ENABLED` prints `1` before building.
 
 The default address is `http://127.0.0.1:8080`. Runtime paths such as
 `var/social-network.db` and `var/uploads` are relative to the backend working
-directory.
+directory. For local development the same Go server also serves the frontend
+from `../frontend` by default, so browser requests and the session cookie stay
+same-origin.
 
 ## Database migrations
 
@@ -89,6 +98,7 @@ Supported environment variables:
 - `SOCIAL_NETWORK_HTTP_ADDR`
 - `SOCIAL_NETWORK_DB_PATH`
 - `SOCIAL_NETWORK_UPLOAD_DIR`
+- `SOCIAL_NETWORK_FRONTEND_DIR` (local static frontend path; default `../frontend`)
 - `SOCIAL_NETWORK_COOKIE_SECURE`
 
 Implemented endpoints:
@@ -102,8 +112,14 @@ Implemented endpoints:
 - `POST /api/media` (authenticated multipart upload, field name `file`)
 - `GET /uploads/{id}` (authenticated, owner-only)
 - `GET /static/avatars/{male,female,neutral}.svg`
+- `GET /` and frontend assets (local development and browser smoke only)
 
 All other reserved API groups currently return JSON `501 Not Implemented`.
 
 Profile editing, approval workflow, and privacy-aware delivery of avatars for
 other users are intentionally not implemented yet.
+
+The local frontend file server does not replace the planned Docker topology.
+The final setup keeps the backend private and serves the frontend through a
+separate frontend/reverse-proxy container; the backend static handler is only a
+development convenience and does not need to be used there.

@@ -115,6 +115,7 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		auth,
 		httpserver.NewCookieSessionTokenExtractor(config.SessionCookieName),
 		cfg.CookieSecure,
+		cfg.FrontendDir,
 		log.Default(),
 	)
 

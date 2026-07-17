@@ -1,0 +1,7 @@
+{
+  "name": "social-network-frontend",
+  "private": true,
+  "scripts": {
+    "test": "node --test js/auth-api.test.js"
+  }
+}

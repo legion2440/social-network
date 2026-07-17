@@ -39,6 +39,20 @@ function cover(color) {
 }
 function num(x) { return String(x); }
 
+function decorateUser(user) {
+  const safeAvatarURL = user.avatarUrl ? String(user.avatarUrl).replace(/["\\\r\n]/g, '') : '';
+  user.avatarBackground = safeAvatarURL ? 'center / cover no-repeat url("' + safeAvatarURL + '")' : user.color;
+  user.avatarText = safeAvatarURL ? '' : user.initials;
+  return user;
+}
+
+Object.keys(USERS).forEach(uid => decorateUser(USERS[uid]));
+
+function requestErrorMessage(error, fallback) {
+  if (error && typeof error.message === 'string' && error.message.trim()) return error.message.trim();
+  return fallback;
+}
+
 class Component extends DCLogic {
   constructor(props) {
     super(props);
@@ -100,7 +114,11 @@ class Component extends DCLogic {
         { id: 'n3', type: 'request', uid: 'sara', gid: 'g1', time: '1d', read: false, status: 'pending' },
         { id: 'n4', type: 'event', uid: 'mei', gid: 'g1', time: '2d', read: true, status: 'info', extra: 'Tokens naming workshop' }
       ],
-      authMode: 'login'
+      authMode: 'login', authStatus: 'checking', authPending: false, logoutPending: false,
+      authError: '', bootstrapError: '', appError: '',
+      authEmail: '', authPassword: '',
+      regFirstName: '', regLastName: '', regDateOfBirth: '', regGender: '',
+      regNickname: '', regAboutMe: '', regAvatar: null, regAvatarName: ''
     };
     this.msgEl = null;
   }
@@ -109,6 +127,7 @@ class Component extends DCLogic {
     document.documentElement.dataset.theme = this.state.theme;
     this.applyTokens();
     setTimeout(() => this.setState({ feedLoading: false }), 900);
+    this.loadCurrentUser();
   }
   componentDidUpdate() {
     this.applyTokens();
@@ -119,6 +138,105 @@ class Component extends DCLogic {
     el.style.setProperty('--accent', this.props.accent || '#5661d8');
     el.style.setProperty('--r', (this.props.radius != null ? this.props.radius : 18) + 'px');
   }
+
+  applyAuthUser(user) {
+    const firstName = user.first_name || '';
+    const lastName = user.last_name || '';
+    const nickname = (user.nickname || '').trim();
+    const initials = ((firstName.charAt(0) || '') + (lastName.charAt(0) || '')).toUpperCase() || '?';
+    USERS.me = decorateUser({
+      id: 'me', apiId: user.id,
+      name: (firstName + ' ' + lastName).trim(),
+      handle: nickname ? (nickname.charAt(0) === '@' ? nickname : '@' + nickname) : user.email,
+      initials, color: '#6b62c9',
+      bio: user.about_me || '', email: user.email, dob: user.date_of_birth,
+      gender: user.gender, avatarUrl: user.avatar_url, private: false
+    });
+  }
+
+  loadCurrentUser = async () => {
+    this.setState({ authStatus: 'checking', bootstrapError: '', appError: '' });
+    try {
+      const user = await AuthAPI.me();
+      this.applyAuthUser(user);
+      this.setState({ authStatus: 'authenticated', screen: 'feed' });
+    } catch (error) {
+      if (error && error.status === 401) {
+        this.setState({ authStatus: 'anonymous', screen: 'auth', bootstrapError: '' });
+        return;
+      }
+      this.setState({
+        authStatus: 'error',
+        bootstrapError: requestErrorMessage(error, 'Could not load your session. Please try again.')
+      });
+    }
+  };
+
+  setAuthMode = (mode) => this.setState({ authMode: mode, authError: '' });
+
+  pickRegistrationAvatar = () => {
+    const input = document.getElementById('registration-avatar');
+    if (input) input.click();
+  };
+
+  onRegistrationAvatar = (event) => {
+    const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+    this.setState({ regAvatar: file, regAvatarName: file ? file.name : '' });
+  };
+
+  submitAuth = async (event) => {
+    if (event) event.preventDefault();
+    if (this.state.authPending) return;
+
+    const s = this.state;
+    this.setState({ authPending: true, authError: '' });
+    try {
+      let user;
+      if (s.authMode === 'login') {
+        user = await AuthAPI.login(s.authEmail.trim(), s.authPassword);
+      } else {
+        const form = new FormData();
+        form.append('email', s.authEmail.trim());
+        form.append('password', s.authPassword);
+        form.append('first_name', s.regFirstName.trim());
+        form.append('last_name', s.regLastName.trim());
+        form.append('date_of_birth', s.regDateOfBirth.trim());
+        if (s.regGender) form.append('gender', s.regGender);
+        if (s.regNickname.trim()) form.append('nickname', s.regNickname.trim());
+        if (s.regAboutMe.trim()) form.append('about_me', s.regAboutMe.trim());
+        if (s.regAvatar) form.append('avatar', s.regAvatar, s.regAvatar.name);
+        user = await AuthAPI.register(form);
+      }
+
+      this.applyAuthUser(user);
+      this.setState({
+        authStatus: 'authenticated', authPending: false, authError: '',
+        authPassword: '', screen: 'feed'
+      });
+    } catch (error) {
+      this.setState({
+        authPending: false,
+        authError: requestErrorMessage(error, 'Authentication failed. Please try again.')
+      });
+    }
+  };
+
+  logout = async () => {
+    if (this.state.logoutPending) return;
+    this.setState({ logoutPending: true, appError: '' });
+    try {
+      await AuthAPI.logout();
+      this.setState({
+        authStatus: 'anonymous', logoutPending: false, authMode: 'login',
+        authError: '', authPassword: '', screen: 'auth'
+      });
+    } catch (error) {
+      this.setState({
+        logoutPending: false,
+        appError: requestErrorMessage(error, 'Could not log out. Please try again.')
+      });
+    }
+  };
 
   go = (screen) => this.setState({ screen, privacyOpen: false, emojiOpen: false });
   openProfile = (uid) => this.setState({ screen: 'profile', profileId: uid, profileTab: 'posts' });
@@ -422,7 +540,10 @@ class Component extends DCLogic {
       title: ev.title, dateDay: ev.day, dateMon: ev.mon,
       timeLabel: ev.mon + ' ' + ev.day + ' · ' + ev.time, desc: ev.desc,
       goingLabel: num(ev.going.length),
-      goingAvatars: ev.going.slice(0, 3).map(uid => ({ initials: USERS[uid].initials, color: USERS[uid].color })),
+      goingAvatars: ev.going.slice(0, 3).map(uid => ({
+        avatarText: USERS[uid].avatarText,
+        avatarBackground: USERS[uid].avatarBackground
+      })),
       goBg: ev.rsvp === 'going' ? 'var(--accent)' : 'transparent',
       goColor: ev.rsvp === 'going' ? '#fff' : 'var(--text2)',
       goBd: ev.rsvp === 'going' ? 'transparent' : 'var(--border)',
@@ -527,12 +648,13 @@ class Component extends DCLogic {
       bg: s.authMode === t.k ? 'var(--surface)' : 'transparent',
       color: s.authMode === t.k ? 'var(--text)' : 'var(--text3)',
       sh: s.authMode === t.k ? 'var(--shadow)' : 'none',
-      pick: () => this.setState({ authMode: t.k })
+      pick: () => this.setAuthMode(t.k)
     }));
 
     return {
       // shell
-      isAuth: s.screen === 'auth', isApp: s.screen !== 'auth',
+      isAuthChecking: s.authStatus === 'checking', isAuthStartupError: s.authStatus === 'error',
+      isAuth: s.authStatus === 'anonymous', isApp: s.authStatus === 'authenticated',
       isFeed: s.screen === 'feed', isProfile: s.screen === 'profile', isGroups: s.screen === 'groups',
       isGroup: s.screen === 'group', isChat: s.screen === 'chat', isNotifs: s.screen === 'notifications',
       rightRail: ['feed', 'profile', 'groups', 'notifications'].indexOf(s.screen) >= 0,
@@ -542,11 +664,29 @@ class Component extends DCLogic {
       toggleTheme: this.toggleTheme,
       goHome: () => this.go('feed'),
       goMyProfile: () => this.openProfile('me'),
-      goLogout: () => this.go('auth'),
+      goLogout: this.logout,
+      logoutDisabled: s.logoutPending,
+      appHasError: !!s.appError, appError: s.appError,
       // auth
       authTabs, authIsLogin: s.authMode === 'login', authIsReg: s.authMode === 'register',
-      authCta: s.authMode === 'login' ? 'Sign in' : 'Create account',
-      submitAuth: () => this.go('feed'),
+      authCta: s.authPending ? 'Please wait…' : (s.authMode === 'login' ? 'Sign in' : 'Create account'),
+      authDisabled: s.authPending,
+      authButtonOpacity: s.authPending ? '0.65' : '1',
+      authButtonCursor: s.authPending ? 'wait' : 'pointer',
+      authHasError: !!s.authError, authError: s.authError,
+      bootstrapError: s.bootstrapError, retryAuthBootstrap: this.loadCurrentUser,
+      authEmail: s.authEmail, onAuthEmail: (e) => this.setState({ authEmail: e.target.value }),
+      authPassword: s.authPassword, onAuthPassword: (e) => this.setState({ authPassword: e.target.value }),
+      regFirstName: s.regFirstName, onRegFirstName: (e) => this.setState({ regFirstName: e.target.value }),
+      regLastName: s.regLastName, onRegLastName: (e) => this.setState({ regLastName: e.target.value }),
+      regDateOfBirth: s.regDateOfBirth, onRegDateOfBirth: (e) => this.setState({ regDateOfBirth: e.target.value }),
+      regGender: s.regGender, onRegGender: (e) => this.setState({ regGender: e.target.value }),
+      regNickname: s.regNickname, onRegNickname: (e) => this.setState({ regNickname: e.target.value }),
+      regAboutMe: s.regAboutMe, onRegAboutMe: (e) => this.setState({ regAboutMe: e.target.value }),
+      avatarButtonLabel: s.regAvatarName || 'avatar',
+      pickRegistrationAvatar: this.pickRegistrationAvatar,
+      onRegistrationAvatar: this.onRegistrationAvatar,
+      submitAuth: this.submitAuth,
       // feed
       feedLoading: s.feedLoading, feedReady: !s.feedLoading,
       posts: feedPosts,

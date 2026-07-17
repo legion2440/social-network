@@ -9,6 +9,7 @@ func TestLoadDefaultsUseBackendRelativeRuntimePaths(t *testing.T) {
 	t.Setenv("SOCIAL_NETWORK_HTTP_ADDR", "")
 	t.Setenv("SOCIAL_NETWORK_DB_PATH", "")
 	t.Setenv("SOCIAL_NETWORK_UPLOAD_DIR", "")
+	t.Setenv("SOCIAL_NETWORK_FRONTEND_DIR", "")
 	t.Setenv("SOCIAL_NETWORK_COOKIE_SECURE", "")
 
 	cfg, err := Load()
@@ -24,8 +25,23 @@ func TestLoadDefaultsUseBackendRelativeRuntimePaths(t *testing.T) {
 	if filepath.IsAbs(cfg.UploadDir) || filepath.Clean(cfg.UploadDir) != filepath.Join("var", "uploads") {
 		t.Fatalf("unexpected upload path %q", cfg.UploadDir)
 	}
+	if filepath.IsAbs(cfg.FrontendDir) || filepath.Clean(cfg.FrontendDir) != filepath.Join("..", "frontend") {
+		t.Fatalf("unexpected frontend path %q", cfg.FrontendDir)
+	}
 	if cfg.CookieSecure {
 		t.Fatal("local HTTP cookie must not be secure by default")
+	}
+}
+
+func TestLoadUsesConfiguredFrontendDir(t *testing.T) {
+	t.Setenv("SOCIAL_NETWORK_FRONTEND_DIR", "./web")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if filepath.Clean(cfg.FrontendDir) != "web" {
+		t.Fatalf("unexpected frontend path %q", cfg.FrontendDir)
 	}
 }
 

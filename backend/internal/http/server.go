@@ -17,6 +17,7 @@ type Handler struct {
 	auth         *service.AuthService
 	sessionToken SessionTokenExtractor
 	cookieSecure bool
+	frontend     http.Handler
 	logger       *log.Logger
 }
 
@@ -27,6 +28,7 @@ func NewHandler(
 	auth *service.AuthService,
 	sessionToken SessionTokenExtractor,
 	cookieSecure bool,
+	frontendDir string,
 	logger *log.Logger,
 ) *Handler {
 	if logger == nil {
@@ -42,8 +44,18 @@ func NewHandler(
 		auth:         auth,
 		sessionToken: sessionToken,
 		cookieSecure: cookieSecure,
+		frontend:     newFrontendHandler(frontendDir),
 		logger:       logger,
 	}
+}
+
+func newFrontendHandler(frontendDir string) http.Handler {
+	if frontendDir == "" {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			writeError(w, http.StatusNotFound, "not found")
+		})
+	}
+	return http.FileServer(http.Dir(frontendDir))
 }
 
 func (h *Handler) Routes() http.Handler {
@@ -76,9 +88,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		writeError(w, http.StatusNotFound, "not found")
-	})
+	mux.Handle("/", h.frontend)
 
 	return h.recoverMiddleware(h.authMiddleware(mux))
 }
