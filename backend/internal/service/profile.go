@@ -18,6 +18,11 @@ type ProfileField struct {
 	Value   *string
 }
 
+type ProfileBoolField struct {
+	Present bool
+	Value   *bool
+}
+
 type UpdateProfileInput struct {
 	FirstName   ProfileField
 	LastName    ProfileField
@@ -25,6 +30,7 @@ type UpdateProfileInput struct {
 	Gender      ProfileField
 	Nickname    ProfileField
 	AboutMe     ProfileField
+	IsPrivate   ProfileBoolField
 }
 
 func (i UpdateProfileInput) Empty() bool {
@@ -33,7 +39,8 @@ func (i UpdateProfileInput) Empty() bool {
 		!i.DateOfBirth.Present &&
 		!i.Gender.Present &&
 		!i.Nickname.Present &&
-		!i.AboutMe.Present
+		!i.AboutMe.Present &&
+		!i.IsPrivate.Present
 }
 
 type ProfileService struct {
@@ -247,6 +254,12 @@ func applyProfileUpdate(user *domain.User, input UpdateProfileInput) error {
 	}
 	if input.AboutMe.Present {
 		user.AboutMe = optionalTrimmed(input.AboutMe.Value)
+	}
+	if input.IsPrivate.Present {
+		if input.IsPrivate.Value == nil {
+			return ErrInvalidInput
+		}
+		user.IsPrivate = *input.IsPrivate.Value
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -83,6 +84,7 @@ type testEnvironment struct {
 	handler      http.Handler
 	users        *sqlite.UserRepo
 	sessions     *service.SessionService
+	follows      *service.FollowService
 	uploadDir    string
 	cookieSecure bool
 }
@@ -118,12 +120,14 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 		avatarStager,
 	)
 	profile := service.NewProfileService(transactions, fixedClock{}, avatarStager, nil)
+	follows := service.NewFollowService(users, sqlite.NewFollowRepo(db), transactions, fixedClock{})
 
 	return &testEnvironment{
 		db:        db,
-		handler:   NewHandler(db, sessions, media, auth, profile, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
+		handler:   NewHandler(db, sessions, media, auth, profile, follows, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
 		users:     users,
 		sessions:  sessions,
+		follows:   follows,
 		uploadDir: uploadDir,
 	}
 }
@@ -151,6 +155,28 @@ func (e *testEnvironment) createUserAndSession(t *testing.T, email string) (int6
 
 func addSessionCookie(req *http.Request, token string) {
 	req.AddCookie(&http.Cookie{Name: config.SessionCookieName, Value: token, Path: "/"})
+}
+
+func setProfilePrivacy(t *testing.T, env *testEnvironment, token string, isPrivate bool) authUserResponse {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPatch, "/api/profile", strings.NewReader(fmt.Sprintf(`{"is_private":%t}`, isPrivate)))
+	addSessionCookie(req, token)
+	rec := httptest.NewRecorder()
+	env.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set profile privacy to %t: status=%d body=%q", isPrivate, rec.Code, rec.Body.String())
+	}
+	var response authUserResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode profile privacy response: %v", err)
+	}
+	return response
+}
+
+func authenticatedRequest(method, path, token string, body io.Reader) *http.Request {
+	req := httptest.NewRequest(method, path, body)
+	addSessionCookie(req, token)
+	return req
 }
 
 func defaultRegisterFields(email string) map[string]string {
@@ -243,6 +269,7 @@ func newSessionFailureHandlerWithFrontend(store *failingSessionRepo, frontendDir
 		sessions,
 		nil,
 		auth,
+		nil,
 		nil,
 		NewCookieSessionTokenExtractor(config.SessionCookieName),
 		false,
@@ -374,6 +401,9 @@ func TestRegisterWithoutAvatarCreatesUserSessionAndNeutralPlaceholder(t *testing
 	if !bytes.Contains(responseBody, []byte(`"gender":null`)) {
 		t.Fatalf("missing nullable gender in response: %s", responseBody)
 	}
+	if !bytes.Contains(responseBody, []byte(`"is_private":false`)) {
+		t.Fatalf("missing default public privacy in response: %s", responseBody)
+	}
 	if response.Email != "neutral@example.com" || response.Gender != nil || response.AvatarURL != domain.NeutralAvatarPlaceholderURL {
 		t.Fatalf("unexpected register response: %+v", response)
 	}
@@ -402,6 +432,9 @@ func TestRegisterWithoutAvatarCreatesUserSessionAndNeutralPlaceholder(t *testing
 	env.handler.ServeHTTP(meRec, meReq)
 	if meRec.Code != http.StatusOK {
 		t.Fatalf("me: expected 200, got %d body=%q", meRec.Code, meRec.Body.String())
+	}
+	if !bytes.Contains(meRec.Body.Bytes(), []byte(`"is_private":false`)) {
+		t.Fatalf("me response is missing privacy: %s", meRec.Body.Bytes())
 	}
 
 	for _, placeholderURL := range []string{
@@ -563,7 +596,8 @@ func TestProfileUpdatePersistsStrictPartialFields(t *testing.T) {
 		"date_of_birth":"29-02-1992",
 		"gender":null,
 		"nickname":"  comet  ",
-		"about_me":"   "
+		"about_me":"   ",
+		"is_private":true
 	}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/profile", strings.NewReader(patchBody))
 	addSessionCookie(req, cookie.Value)
@@ -582,6 +616,9 @@ func TestProfileUpdatePersistsStrictPartialFields(t *testing.T) {
 	if response.Gender != nil || response.Nickname == nil || *response.Nickname != "comet" || response.AboutMe != nil {
 		t.Fatalf("unexpected optional profile fields: %+v", response)
 	}
+	if !response.IsPrivate {
+		t.Fatal("profile privacy was not returned")
+	}
 	if response.AvatarURL != domain.NeutralAvatarPlaceholderURL {
 		t.Fatalf("expected neutral placeholder after clearing gender, got %q", response.AvatarURL)
 	}
@@ -590,7 +627,7 @@ func TestProfileUpdatePersistsStrictPartialFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get updated user: %v", err)
 	}
-	if stored.FirstName != response.FirstName || stored.DateOfBirth != response.DateOfBirth || stored.Gender != nil || stored.AboutMe != nil {
+	if stored.FirstName != response.FirstName || stored.DateOfBirth != response.DateOfBirth || stored.Gender != nil || stored.AboutMe != nil || !stored.IsPrivate {
 		t.Fatalf("profile update was not persisted: %+v", stored)
 	}
 }
@@ -605,6 +642,9 @@ func TestProfileUpdateRejectsInvalidAndUnknownFieldsWithoutChanges(t *testing.T)
 		{name: "invalid gender", body: `{"gender":"other"}`},
 		{name: "empty gender", body: `{"gender":""}`},
 		{name: "null required field", body: `{"first_name":null}`},
+		{name: "null privacy", body: `{"is_private":null}`},
+		{name: "string privacy", body: `{"is_private":"true"}`},
+		{name: "number privacy", body: `{"is_private":1}`},
 		{name: "unknown field", body: `{"email":"new@example.com"}`},
 		{name: "empty object", body: `{}`},
 	} {
@@ -626,6 +666,242 @@ func TestProfileUpdateRejectsInvalidAndUnknownFieldsWithoutChanges(t *testing.T)
 				t.Fatalf("invalid update changed user: %+v", stored)
 			}
 		})
+	}
+}
+
+func TestFollowRequestsRespectPersistedPrivacyTransitions(t *testing.T) {
+	env := newTestEnvironment(t)
+	ownerID, ownerToken := env.createUserAndSession(t, "owner@example.com")
+	acceptedFollowerID, acceptedFollowerToken := env.createUserAndSession(t, "accepted@example.com")
+	requesterID, requesterToken := env.createUserAndSession(t, "requester@example.com")
+	secondRequesterID, secondRequesterToken := env.createUserAndSession(t, "second-requester@example.com")
+
+	followURL := func(userID int64) string {
+		return "/api/users/" + strconv.FormatInt(userID, 10) + "/follow"
+	}
+	follow := func(token string, targetID int64) followStatusResponse {
+		rec := httptest.NewRecorder()
+		env.handler.ServeHTTP(rec, authenticatedRequest(http.MethodPut, followURL(targetID), token, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("follow user %d: status=%d body=%q", targetID, rec.Code, rec.Body.String())
+		}
+		var response followStatusResponse
+		if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+			t.Fatalf("decode follow response: %v", err)
+		}
+		return response
+	}
+
+	if response := follow(acceptedFollowerToken, ownerID); response.Status != service.RelationshipFollowing {
+		t.Fatalf("public profile follow must be accepted, got %+v", response)
+	}
+	if response := setProfilePrivacy(t, env, ownerToken, true); !response.IsPrivate {
+		t.Fatal("owner did not become private")
+	}
+	if response := follow(requesterToken, ownerID); response.Status != service.RelationshipPending {
+		t.Fatalf("private profile follow must be pending, got %+v", response)
+	}
+	accepted, err := env.follows.IsFollower(context.Background(), requesterID, ownerID)
+	if err != nil {
+		t.Fatalf("check pending follower: %v", err)
+	}
+	if accepted {
+		t.Fatal("pending relation counted as follower")
+	}
+
+	followersRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(followersRec, authenticatedRequest(
+		http.MethodGet,
+		"/api/users/"+strconv.FormatInt(ownerID, 10)+"/followers",
+		ownerToken,
+		nil,
+	))
+	if followersRec.Code != http.StatusOK {
+		t.Fatalf("list followers: status=%d body=%q", followersRec.Code, followersRec.Body.String())
+	}
+	var followers userListResponse
+	if err := json.NewDecoder(followersRec.Body).Decode(&followers); err != nil {
+		t.Fatalf("decode followers: %v", err)
+	}
+	if len(followers.Users) != 1 || followers.Users[0].ID != acceptedFollowerID {
+		t.Fatalf("pending relation leaked into followers: %+v", followers.Users)
+	}
+
+	requestsRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(requestsRec, authenticatedRequest(http.MethodGet, "/api/follow-requests", ownerToken, nil))
+	if requestsRec.Code != http.StatusOK {
+		t.Fatalf("list follow requests: status=%d body=%q", requestsRec.Code, requestsRec.Body.String())
+	}
+	var requests followRequestListResponse
+	if err := json.NewDecoder(requestsRec.Body).Decode(&requests); err != nil {
+		t.Fatalf("decode follow requests: %v", err)
+	}
+	if len(requests.Requests) != 1 || requests.Requests[0].User.ID != requesterID {
+		t.Fatalf("unexpected pending requests: %+v", requests.Requests)
+	}
+
+	if response := setProfilePrivacy(t, env, ownerToken, false); response.IsPrivate {
+		t.Fatal("owner did not become public")
+	}
+	relationshipRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(relationshipRec, authenticatedRequest(http.MethodGet, followURL(ownerID), requesterToken, nil))
+	if relationshipRec.Code != http.StatusOK {
+		t.Fatalf("get relationship: status=%d body=%q", relationshipRec.Code, relationshipRec.Body.String())
+	}
+	var relationship relationshipResponse
+	if err := json.NewDecoder(relationshipRec.Body).Decode(&relationship); err != nil {
+		t.Fatalf("decode relationship: %v", err)
+	}
+	if relationship.Status != service.RelationshipPending {
+		t.Fatalf("privacy change silently accepted pending relation: %+v", relationship)
+	}
+	if response := follow(requesterToken, ownerID); response.Status != service.RelationshipFollowing {
+		t.Fatalf("explicit repeat follow on public profile must accept pending, got %+v", response)
+	}
+
+	setProfilePrivacy(t, env, ownerToken, true)
+	if response := follow(secondRequesterToken, ownerID); response.Status != service.RelationshipPending {
+		t.Fatalf("second private follow must be pending, got %+v", response)
+	}
+	requestsRec = httptest.NewRecorder()
+	env.handler.ServeHTTP(requestsRec, authenticatedRequest(http.MethodGet, "/api/follow-requests", ownerToken, nil))
+	if requestsRec.Code != http.StatusOK {
+		t.Fatalf("list second follow requests: status=%d body=%q", requestsRec.Code, requestsRec.Body.String())
+	}
+	if err := json.NewDecoder(requestsRec.Body).Decode(&requests); err != nil {
+		t.Fatalf("decode second follow requests: %v", err)
+	}
+	if len(requests.Requests) != 1 || requests.Requests[0].User.ID != secondRequesterID {
+		t.Fatalf("unexpected second pending request: %+v", requests.Requests)
+	}
+	secondRequestID := requests.Requests[0].ID
+	setProfilePrivacy(t, env, ownerToken, false)
+
+	acceptURL := "/api/follow-requests/" + strconv.FormatInt(secondRequestID, 10) + "/accept"
+	acceptRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(acceptRec, authenticatedRequest(http.MethodPost, acceptURL, ownerToken, nil))
+	if acceptRec.Code != http.StatusOK {
+		t.Fatalf("accept old pending: status=%d body=%q", acceptRec.Code, acceptRec.Body.String())
+	}
+	repeatAcceptRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(repeatAcceptRec, authenticatedRequest(http.MethodPost, acceptURL, ownerToken, nil))
+	if repeatAcceptRec.Code != http.StatusOK {
+		t.Fatalf("repeat accept: status=%d body=%q", repeatAcceptRec.Code, repeatAcceptRec.Body.String())
+	}
+
+	for _, pair := range []struct {
+		followerID int64
+		label      string
+	}{
+		{followerID: acceptedFollowerID, label: "existing accepted"},
+		{followerID: requesterID, label: "repeated follow"},
+		{followerID: secondRequesterID, label: "accepted old pending"},
+	} {
+		accepted, err := env.follows.IsFollower(context.Background(), pair.followerID, ownerID)
+		if err != nil || !accepted {
+			t.Fatalf("%s relation is not accepted: accepted=%t err=%v", pair.label, accepted, err)
+		}
+	}
+
+	followingRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(followingRec, authenticatedRequest(
+		http.MethodGet,
+		"/api/users/"+strconv.FormatInt(requesterID, 10)+"/following",
+		requesterToken,
+		nil,
+	))
+	if followingRec.Code != http.StatusOK {
+		t.Fatalf("list following: status=%d body=%q", followingRec.Code, followingRec.Body.String())
+	}
+	var following userListResponse
+	if err := json.NewDecoder(followingRec.Body).Decode(&following); err != nil {
+		t.Fatalf("decode following: %v", err)
+	}
+	if len(following.Users) != 1 || following.Users[0].ID != ownerID {
+		t.Fatalf("unexpected following list: %+v", following.Users)
+	}
+}
+
+func TestFollowRejectUnfollowAndAuthorization(t *testing.T) {
+	env := newTestEnvironment(t)
+	ownerID, ownerToken := env.createUserAndSession(t, "reject-owner@example.com")
+	requesterID, requesterToken := env.createUserAndSession(t, "reject-requester@example.com")
+	otherID, otherToken := env.createUserAndSession(t, "reject-other@example.com")
+	setProfilePrivacy(t, env, ownerToken, true)
+
+	followURL := "/api/users/" + strconv.FormatInt(ownerID, 10) + "/follow"
+	followRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(followRec, authenticatedRequest(http.MethodPut, followURL, requesterToken, nil))
+	if followRec.Code != http.StatusOK {
+		t.Fatalf("create pending request: status=%d body=%q", followRec.Code, followRec.Body.String())
+	}
+	requestsRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(requestsRec, authenticatedRequest(http.MethodGet, "/api/follow-requests", ownerToken, nil))
+	var requests followRequestListResponse
+	if err := json.NewDecoder(requestsRec.Body).Decode(&requests); err != nil || len(requests.Requests) != 1 {
+		t.Fatalf("get pending request: requests=%+v err=%v", requests.Requests, err)
+	}
+	requestID := requests.Requests[0].ID
+	rejectURL := "/api/follow-requests/" + strconv.FormatInt(requestID, 10)
+
+	unauthorizedReject := httptest.NewRecorder()
+	env.handler.ServeHTTP(unauthorizedReject, authenticatedRequest(http.MethodDelete, rejectURL, otherToken, nil))
+	if unauthorizedReject.Code != http.StatusNotFound {
+		t.Fatalf("other user rejected request: status=%d", unauthorizedReject.Code)
+	}
+	rejectRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(rejectRec, authenticatedRequest(http.MethodDelete, rejectURL, ownerToken, nil))
+	if rejectRec.Code != http.StatusNoContent {
+		t.Fatalf("reject request: status=%d body=%q", rejectRec.Code, rejectRec.Body.String())
+	}
+	accepted, err := env.follows.IsFollower(context.Background(), requesterID, ownerID)
+	if err != nil || accepted {
+		t.Fatalf("rejected request counted as follower: accepted=%t err=%v", accepted, err)
+	}
+
+	setProfilePrivacy(t, env, ownerToken, false)
+	followRec = httptest.NewRecorder()
+	env.handler.ServeHTTP(followRec, authenticatedRequest(http.MethodPut, followURL, requesterToken, nil))
+	if followRec.Code != http.StatusOK {
+		t.Fatalf("follow public owner: status=%d body=%q", followRec.Code, followRec.Body.String())
+	}
+	relationshipURL := "/api/users/" + strconv.FormatInt(requesterID, 10) + "/follow"
+	relationshipRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(relationshipRec, authenticatedRequest(http.MethodGet, relationshipURL, ownerToken, nil))
+	var relationship relationshipResponse
+	if err := json.NewDecoder(relationshipRec.Body).Decode(&relationship); err != nil {
+		t.Fatalf("decode reverse relationship: %v", err)
+	}
+	if relationship.Status != service.RelationshipNone || !relationship.FollowsMe {
+		t.Fatalf("unexpected reverse relationship: %+v", relationship)
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		unfollowRec := httptest.NewRecorder()
+		env.handler.ServeHTTP(unfollowRec, authenticatedRequest(http.MethodDelete, followURL, requesterToken, nil))
+		if unfollowRec.Code != http.StatusNoContent {
+			t.Fatalf("unfollow attempt %d: status=%d body=%q", attempt+1, unfollowRec.Code, unfollowRec.Body.String())
+		}
+	}
+	accepted, err = env.follows.IsFollower(context.Background(), requesterID, ownerID)
+	if err != nil || accepted {
+		t.Fatalf("unfollow did not remove accepted relation: accepted=%t err=%v", accepted, err)
+	}
+
+	selfFollowRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(selfFollowRec, authenticatedRequest(
+		http.MethodPut,
+		"/api/users/"+strconv.FormatInt(otherID, 10)+"/follow",
+		otherToken,
+		nil,
+	))
+	if selfFollowRec.Code != http.StatusBadRequest {
+		t.Fatalf("self-follow: expected 400, got %d", selfFollowRec.Code)
+	}
+	withoutSessionRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(withoutSessionRec, httptest.NewRequest(http.MethodPut, followURL, nil))
+	if withoutSessionRec.Code != http.StatusUnauthorized {
+		t.Fatalf("follow without session: expected 401, got %d", withoutSessionRec.Code)
 	}
 }
 
@@ -723,6 +999,9 @@ func TestLoginMeAndIdempotentCurrentSessionLogout(t *testing.T) {
 	if loginRec.Code != http.StatusOK {
 		t.Fatalf("login: expected 200, got %d body=%q", loginRec.Code, loginRec.Body.String())
 	}
+	if !bytes.Contains(loginRec.Body.Bytes(), []byte(`"is_private":false`)) {
+		t.Fatalf("login response is missing privacy: %s", loginRec.Body.Bytes())
+	}
 	loginCookie := sessionCookieFromResponse(t, loginRec)
 	if loginCookie.Value == registerCookie.Value {
 		t.Fatal("login reused the registration session")
@@ -742,6 +1021,9 @@ func TestLoginMeAndIdempotentCurrentSessionLogout(t *testing.T) {
 	env.handler.ServeHTTP(meRec, meReq)
 	if meRec.Code != http.StatusOK {
 		t.Fatalf("me: expected 200, got %d body=%q", meRec.Code, meRec.Body.String())
+	}
+	if !bytes.Contains(meRec.Body.Bytes(), []byte(`"is_private":false`)) {
+		t.Fatalf("me response is missing privacy: %s", meRec.Body.Bytes())
 	}
 
 	logoutReq := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)

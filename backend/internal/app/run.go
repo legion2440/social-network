@@ -110,12 +110,14 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		avatarStager,
 	)
 	profile := service.NewProfileService(transactions, appClock, avatarStager, log.Default())
+	follows := service.NewFollowService(users, sqlite.NewFollowRepo(db), transactions, appClock)
 	handler := httpserver.NewHandler(
 		db,
 		sessions,
 		media,
 		auth,
 		profile,
+		follows,
 		httpserver.NewCookieSessionTokenExtractor(config.SessionCookieName),
 		cfg.CookieSecure,
 		cfg.FrontendDir,

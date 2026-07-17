@@ -33,6 +33,7 @@ func TestUserRepoCreatesAndReadsFullUser(t *testing.T) {
 		Gender:       &gender,
 		Nickname:     &nickname,
 		AboutMe:      &aboutMe,
+		IsPrivate:    true,
 		CreatedAt:    testCreatedAt,
 		UpdatedAt:    testUpdatedAt,
 	}
@@ -51,6 +52,9 @@ func TestUserRepoCreatesAndReadsFullUser(t *testing.T) {
 	}
 	if got.AvatarMediaID != nil {
 		t.Fatalf("avatar_media_id must default to NULL, got %d", *got.AvatarMediaID)
+	}
+	if !got.IsPrivate {
+		t.Fatal("is_private was not persisted")
 	}
 	if got.DateOfBirth != testBirthDate || !got.CreatedAt.Equal(testCreatedAt) || !got.UpdatedAt.Equal(testUpdatedAt) {
 		t.Fatalf("date round trip failed: birth=%v created=%v updated=%v", got.DateOfBirth, got.CreatedAt, got.UpdatedAt)
@@ -76,6 +80,9 @@ func TestUserRepoStoresOptionalFieldsAsNull(t *testing.T) {
 	}
 	if got.Gender != nil || got.Nickname != nil || got.AboutMe != nil || got.AvatarMediaID != nil {
 		t.Fatalf("optional fields must be NULL: %+v", got)
+	}
+	if got.IsPrivate {
+		t.Fatal("new user must be public by default")
 	}
 }
 

@@ -45,7 +45,7 @@ func TestMigrationsRunAllTheWayDownAndBackUp(t *testing.T) {
 	if err := migrateDown(db); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
-	for _, table := range []string{"sessions", "media", "users"} {
+	for _, table := range []string{"follows", "sessions", "media", "users"} {
 		if tableExists(t, db, table) {
 			t.Fatalf("table %s still exists after down migrations", table)
 		}
@@ -88,7 +88,7 @@ func TestOpenRejectsDisposableLegacyBootstrapDatabase(t *testing.T) {
 func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 
-	for _, table := range []string{"users", "media", "sessions", "schema_migrations"} {
+	for _, table := range []string{"users", "media", "sessions", "follows", "schema_migrations"} {
 		if !tableExists(t, db, table) {
 			t.Fatalf("expected table %s", table)
 		}
@@ -105,6 +105,7 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 		"nickname",
 		"about_me",
 		"avatar_media_id",
+		"is_private",
 		"created_at",
 		"updated_at",
 	}
@@ -117,7 +118,7 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	if !columns["id"].primaryKey {
 		t.Fatal("users.id must be the primary key")
 	}
-	for _, column := range []string{"email", "password_hash", "first_name", "last_name", "date_of_birth", "created_at", "updated_at"} {
+	for _, column := range []string{"email", "password_hash", "first_name", "last_name", "date_of_birth", "is_private", "created_at", "updated_at"} {
 		if !columns[column].notNull {
 			t.Fatalf("users.%s must be NOT NULL", column)
 		}
@@ -140,6 +141,8 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 		{table: "media", column: "created_at"},
 		{table: "sessions", column: "expires_at"},
 		{table: "sessions", column: "created_at"},
+		{table: "follows", column: "created_at"},
+		{table: "follows", column: "updated_at"},
 	} {
 		definition := tableColumns(t, db, tableAndColumn.table)[tableAndColumn.column]
 		if definition.columnType != "INTEGER" {
@@ -177,6 +180,80 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "media", "owner_user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "users", "avatar_media_id", "media", "id", "SET NULL")
 	assertForeignKey(t, db, "sessions", "user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "follows", "follower_user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "follows", "followed_user_id", "users", "id", "CASCADE")
+}
+
+func TestUserPrivacyAndFollowConstraints(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "social-network.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	insertUser := func(email string) int64 {
+		result, err := db.Exec(`
+			INSERT INTO users (
+				email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at
+			) VALUES (?, 'hash', 'Test', 'User', '14-03-1992', 1, 1)
+		`, email)
+		if err != nil {
+			t.Fatalf("insert user %s: %v", email, err)
+		}
+		id, err := result.LastInsertId()
+		if err != nil {
+			t.Fatalf("last insert ID: %v", err)
+		}
+		return id
+	}
+	firstID := insertUser("first@example.com")
+	secondID := insertUser("second@example.com")
+
+	var defaultPrivacy int
+	if err := db.QueryRow(`SELECT is_private FROM users WHERE id = ?`, firstID).Scan(&defaultPrivacy); err != nil {
+		t.Fatalf("query default privacy: %v", err)
+	}
+	if defaultPrivacy != 0 {
+		t.Fatalf("new user must default to public, got %d", defaultPrivacy)
+	}
+	if _, err := db.Exec(`UPDATE users SET is_private = 2 WHERE id = ?`, firstID); err == nil {
+		t.Fatal("expected invalid is_private value to fail")
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO follows (follower_user_id, followed_user_id, status, created_at, updated_at)
+		VALUES (?, ?, 'pending', 1, 1)
+	`, firstID, secondID); err != nil {
+		t.Fatalf("insert valid follow: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO follows (follower_user_id, followed_user_id, status, created_at, updated_at)
+		VALUES (?, ?, 'accepted', 1, 1)
+	`, firstID, secondID); err == nil {
+		t.Fatal("expected duplicate follow relation to fail")
+	}
+	if _, err := db.Exec(`
+		INSERT INTO follows (follower_user_id, followed_user_id, status, created_at, updated_at)
+		VALUES (?, ?, 'pending', 1, 1)
+	`, firstID, firstID); err == nil {
+		t.Fatal("expected self-follow to fail")
+	}
+	if _, err := db.Exec(`
+		INSERT INTO follows (follower_user_id, followed_user_id, status, created_at, updated_at)
+		VALUES (?, ?, 'rejected', 1, 1)
+	`, secondID, firstID); err == nil {
+		t.Fatal("expected unsupported follow status to fail")
+	}
+	if _, err := db.Exec(`DELETE FROM users WHERE id = ?`, secondID); err != nil {
+		t.Fatalf("delete followed user: %v", err)
+	}
+	var followCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM follows`).Scan(&followCount); err != nil {
+		t.Fatalf("count follows: %v", err)
+	}
+	if followCount != 0 {
+		t.Fatalf("user delete must cascade follows, got %d rows", followCount)
+	}
 }
 
 func TestUsersDateOfBirthConstraintAcceptsOnlyRealDDMMYYYYDates(t *testing.T) {

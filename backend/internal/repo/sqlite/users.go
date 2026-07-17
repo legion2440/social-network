@@ -42,10 +42,11 @@ func (r *UserRepo) Create(ctx context.Context, user *domain.User) (int64, error)
 			nickname,
 			about_me,
 			avatar_media_id,
+			is_private,
 			created_at,
 			updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		strings.TrimSpace(user.Email),
 		user.PasswordHash,
@@ -56,6 +57,7 @@ func (r *UserRepo) Create(ctx context.Context, user *domain.User) (int64, error)
 		nullableTrimmedText(user.Nickname),
 		nullableTrimmedText(user.AboutMe),
 		nullableInt64(user.AvatarMediaID),
+		boolToInt(user.IsPrivate),
 		timeToUnix(user.CreatedAt),
 		timeToUnix(user.UpdatedAt),
 	)
@@ -89,6 +91,7 @@ func (r *UserRepo) UpdateProfile(ctx context.Context, user *domain.User) error {
 			gender = ?,
 			nickname = ?,
 			about_me = ?,
+			is_private = ?,
 			updated_at = ?
 		WHERE id = ?
 	`,
@@ -98,6 +101,7 @@ func (r *UserRepo) UpdateProfile(ctx context.Context, user *domain.User) error {
 		gender,
 		nullableTrimmedText(user.Nickname),
 		nullableTrimmedText(user.AboutMe),
+		boolToInt(user.IsPrivate),
 		timeToUnix(user.UpdatedAt),
 		user.ID,
 	)
@@ -146,6 +150,7 @@ func (r *UserRepo) GetByID(ctx context.Context, id int64) (*domain.User, error) 
 			nickname,
 			about_me,
 			avatar_media_id,
+			is_private,
 			created_at,
 			updated_at
 		FROM users
@@ -167,6 +172,7 @@ func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*domain.User, 
 			nickname,
 			about_me,
 			avatar_media_id,
+			is_private,
 			created_at,
 			updated_at
 		FROM users
@@ -184,6 +190,7 @@ func scanUser(row rowScanner) (*domain.User, error) {
 	var (
 		user                      domain.User
 		createdAt, updatedAt      int64
+		isPrivate                 int
 		gender, nickname, aboutMe sql.NullString
 		avatarMediaID             sql.NullInt64
 	)
@@ -198,6 +205,7 @@ func scanUser(row rowScanner) (*domain.User, error) {
 		&nickname,
 		&aboutMe,
 		&avatarMediaID,
+		&isPrivate,
 		&createdAt,
 		&updatedAt,
 	); err != nil {
@@ -219,6 +227,10 @@ func scanUser(row rowScanner) (*domain.User, error) {
 	user.Gender = parsedGender
 	user.Nickname = stringFromNullString(nickname)
 	user.AboutMe = stringFromNullString(aboutMe)
+	if isPrivate != 0 && isPrivate != 1 {
+		return nil, fmt.Errorf("invalid is_private value: %d", isPrivate)
+	}
+	user.IsPrivate = isPrivate == 1
 	if avatarMediaID.Valid {
 		value := avatarMediaID.Int64
 		user.AvatarMediaID = &value
@@ -254,6 +266,13 @@ func nullableInt64(value *int64) any {
 		return nil
 	}
 	return *value
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func genderFromNullString(value sql.NullString) (*domain.Gender, error) {

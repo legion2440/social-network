@@ -16,6 +16,7 @@ type Handler struct {
 	media        *service.MediaService
 	auth         *service.AuthService
 	profile      *service.ProfileService
+	follows      *service.FollowService
 	sessionToken SessionTokenExtractor
 	cookieSecure bool
 	frontend     http.Handler
@@ -28,6 +29,7 @@ func NewHandler(
 	media *service.MediaService,
 	auth *service.AuthService,
 	profile *service.ProfileService,
+	follows *service.FollowService,
 	sessionToken SessionTokenExtractor,
 	cookieSecure bool,
 	frontendDir string,
@@ -45,6 +47,7 @@ func NewHandler(
 		media:        media,
 		auth:         auth,
 		profile:      profile,
+		follows:      follows,
 		sessionToken: sessionToken,
 		cookieSecure: cookieSecure,
 		frontend:     newFrontendHandler(frontendDir),
@@ -75,6 +78,13 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/profile", protected(h.handleProfile))
 	mux.Handle("/api/profile/avatar", protected(h.handleProfileAvatar))
 	mux.Handle("/api/profile/", protected(h.handleNotImplemented))
+	mux.Handle("/api/users/{id}/follow", protected(h.handleFollow))
+	mux.Handle("/api/users/{id}/followers", protected(h.handleFollowers))
+	mux.Handle("/api/users/{id}/following", protected(h.handleFollowing))
+	mux.Handle("/api/follow-requests", protected(h.handleFollowRequests))
+	mux.Handle("/api/follow-requests/{id}/accept", protected(h.handleFollowRequestAccept))
+	mux.Handle("/api/follow-requests/{id}", protected(h.handleFollowRequestReject))
+	mux.Handle("/api/follow-requests/", protected(h.handleNotImplemented))
 	mux.Handle("/ws", protected(h.handleWS))
 	mux.Handle("/api/media", protected(h.handleMediaUpload))
 	mux.Handle("/uploads/", protected(h.handleMediaDownload))

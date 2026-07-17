@@ -256,6 +256,7 @@ type authUserResponse struct {
 	Nickname    *string        `json:"nickname"`
 	AboutMe     *string        `json:"about_me"`
 	AvatarURL   string         `json:"avatar_url"`
+	IsPrivate   bool           `json:"is_private"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 }
@@ -274,6 +275,7 @@ func newAuthUserResponse(user *domain.User) *authUserResponse {
 		Nickname:    user.Nickname,
 		AboutMe:     user.AboutMe,
 		AvatarURL:   domain.UserAvatarURL(user),
+		IsPrivate:   user.IsPrivate,
 		CreatedAt:   user.CreatedAt,
 		UpdatedAt:   user.UpdatedAt,
 	}

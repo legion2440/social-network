@@ -102,6 +102,18 @@ func readUpdateProfileInput(w http.ResponseWriter, r *http.Request) (service.Upd
 
 	var input service.UpdateProfileInput
 	for name, value := range raw {
+		if name == "is_private" {
+			input.IsPrivate.Present = true
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return service.UpdateProfileInput{}, service.ErrInvalidInput
+			}
+			var boolValue bool
+			if err := json.Unmarshal(value, &boolValue); err != nil {
+				return service.UpdateProfileInput{}, service.ErrInvalidInput
+			}
+			input.IsPrivate.Value = &boolValue
+			continue
+		}
 		fieldForName, ok := profileJSONFields[name]
 		if !ok {
 			return service.UpdateProfileInput{}, service.ErrInvalidInput

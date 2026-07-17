@@ -91,7 +91,7 @@ class Component extends DCLogic {
       ],
       follow: { mei: 'following', david: 'following', nina: 'following', tom: 'none', sara: 'none' },
       myFollowers: ['mei', 'david', 'nina', 'sara'],
-      myPrivacy: 'public',
+      myPrivacy: 'public', profilePrivacyPending: false, profilePrivacyError: '',
       profileId: 'me', profileTab: 'posts',
       groups: [
         { id: 'g1', name: 'Design Systems Guild', desc: 'Tokens, components and the people who argue about them.', members: 148, color: '#6b62c9', state: 'joined', owner: 'me', memberIds: ['me', 'mei', 'david', 'nina'],
@@ -168,7 +168,7 @@ class Component extends DCLogic {
       handle: nickname ? (nickname.charAt(0) === '@' ? nickname : '@' + nickname) : user.email,
       initials, color: '#6b62c9',
       bio: user.about_me || '', aboutMe: user.about_me || '', email: user.email, dob: user.date_of_birth,
-      gender: user.gender, avatarUrl: user.avatar_url, private: false
+      gender: user.gender, avatarUrl: user.avatar_url, private: user.is_private === true
     });
   }
 
@@ -177,7 +177,11 @@ class Component extends DCLogic {
     try {
       const user = await AuthAPI.me();
       this.applyAuthUser(user);
-      this.setState({ authStatus: 'authenticated', screen: 'feed' });
+      this.setState({
+        authStatus: 'authenticated', screen: 'feed',
+        myPrivacy: user.is_private === true ? 'private' : 'public',
+        profilePrivacyPending: false, profilePrivacyError: ''
+      });
     } catch (error) {
       if (error && error.status === 401) {
         this.setState({ authStatus: 'anonymous', screen: 'auth', bootstrapError: '' });
@@ -229,7 +233,9 @@ class Component extends DCLogic {
       this.applyAuthUser(user);
       const authenticatedState = {
         authStatus: 'authenticated', authPending: false, authError: '',
-        authPassword: '', screen: 'feed'
+        authPassword: '', screen: 'feed',
+        myPrivacy: user.is_private === true ? 'private' : 'public',
+        profilePrivacyPending: false, profilePrivacyError: ''
       };
       if (s.authMode === 'register') Object.assign(authenticatedState, emptyRegistrationForm());
       Object.assign(authenticatedState, emptyProfileEditor());
@@ -249,7 +255,8 @@ class Component extends DCLogic {
       await AuthAPI.logout();
       this.setState(Object.assign({
         authStatus: 'anonymous', logoutPending: false, authMode: 'login',
-        authError: '', screen: 'auth'
+        authError: '', screen: 'auth', myPrivacy: 'public',
+        profilePrivacyPending: false, profilePrivacyError: ''
       }, emptyRegistrationForm(), emptyProfileEditor()));
     } catch (error) {
       this.setState({
@@ -281,7 +288,7 @@ class Component extends DCLogic {
 
   saveProfile = async (event) => {
     if (event) event.preventDefault();
-    if (this.state.profileEditPending || this.state.profileAvatarPending) return;
+    if (this.state.profileEditPending || this.state.profileAvatarPending || this.state.profilePrivacyPending) return;
     const s = this.state;
     this.setState({ profileEditPending: true, profileEditError: '' });
     try {
@@ -294,7 +301,9 @@ class Component extends DCLogic {
         about_me: s.editAboutMe
       });
       this.applyAuthUser(user);
-      this.setState(Object.assign({}, emptyProfileEditor()));
+      this.setState(Object.assign({
+        myPrivacy: user.is_private === true ? 'private' : 'public'
+      }, emptyProfileEditor()));
     } catch (error) {
       this.setState({
         profileEditPending: false,
@@ -314,7 +323,7 @@ class Component extends DCLogic {
   };
 
   replaceProfileAvatar = async () => {
-    if (this.state.profileAvatarPending || this.state.profileEditPending || !this.state.editAvatar) return;
+    if (this.state.profileAvatarPending || this.state.profileEditPending || this.state.profilePrivacyPending || !this.state.editAvatar) return;
     const avatar = this.state.editAvatar;
     this.setState({ profileAvatarPending: true, profileEditError: '' });
     try {
@@ -324,7 +333,10 @@ class Component extends DCLogic {
       this.applyAuthUser(user);
       const input = document.getElementById('profile-avatar');
       if (input) input.value = '';
-      this.setState({ profileAvatarPending: false, editAvatar: null, editAvatarName: '' });
+      this.setState({
+        profileAvatarPending: false, editAvatar: null, editAvatarName: '',
+        myPrivacy: user.is_private === true ? 'private' : 'public'
+      });
     } catch (error) {
       this.setState({
         profileAvatarPending: false,
@@ -334,18 +346,46 @@ class Component extends DCLogic {
   };
 
   deleteProfileAvatar = async () => {
-    if (this.state.profileAvatarPending || this.state.profileEditPending) return;
+    if (this.state.profileAvatarPending || this.state.profileEditPending || this.state.profilePrivacyPending) return;
     this.setState({ profileAvatarPending: true, profileEditError: '' });
     try {
       const user = await AuthAPI.deleteAvatar();
       this.applyAuthUser(user);
       const input = document.getElementById('profile-avatar');
       if (input) input.value = '';
-      this.setState({ profileAvatarPending: false, editAvatar: null, editAvatarName: '' });
+      this.setState({
+        profileAvatarPending: false, editAvatar: null, editAvatarName: '',
+        myPrivacy: user.is_private === true ? 'private' : 'public'
+      });
     } catch (error) {
       this.setState({
         profileAvatarPending: false,
         profileEditError: requestErrorMessage(error, 'Could not delete your avatar. Please try again.')
+      });
+    }
+  };
+
+  setProfilePrivacy = async (privacy) => {
+    if (
+      this.state.profilePrivacyPending ||
+      this.state.profileEditPending ||
+      this.state.profileAvatarPending ||
+      privacy === this.state.myPrivacy
+    ) return;
+    const isPrivate = privacy === 'private';
+    this.setState({ profilePrivacyPending: true, profilePrivacyError: '' });
+    try {
+      const user = await AuthAPI.updateProfile({ is_private: isPrivate });
+      this.applyAuthUser(user);
+      this.setState({
+        myPrivacy: user.is_private === true ? 'private' : 'public',
+        profilePrivacyPending: false,
+        profilePrivacyError: ''
+      });
+    } catch (error) {
+      this.setState({
+        profilePrivacyPending: false,
+        profilePrivacyError: requestErrorMessage(error, 'Could not update profile privacy. Please try again.')
       });
     }
   };
@@ -618,7 +658,10 @@ class Component extends DCLogic {
       label: o.label, icon: o.icon,
       bg: s.myPrivacy === o.k ? 'var(--surface)' : 'transparent',
       color: s.myPrivacy === o.k ? 'var(--text)' : 'var(--text3)',
-      pick: () => this.setState({ myPrivacy: o.k })
+      disabled: s.profilePrivacyPending || s.profileEditPending || s.profileAvatarPending,
+      opacity: s.profilePrivacyPending || s.profileEditPending || s.profileAvatarPending ? '0.6' : '1',
+      cursor: s.profilePrivacyPending ? 'wait' : (s.profileEditPending || s.profileAvatarPending ? 'not-allowed' : 'pointer'),
+      pick: () => this.setProfilePrivacy(o.k)
     }));
 
     // groups
@@ -832,11 +875,13 @@ class Component extends DCLogic {
         }
       },
       privacySeg,
+      profilePrivacyHasError: pIsMe && !!s.profilePrivacyError,
+      profilePrivacyError: s.profilePrivacyError,
       showProfileEdit: pIsMe && s.profileEditOpen,
       openProfileEdit: this.openProfileEdit,
       cancelProfileEdit: this.cancelProfileEdit,
       saveProfile: this.saveProfile,
-      profileEditPending: s.profileEditPending || s.profileAvatarPending,
+      profileEditPending: s.profileEditPending || s.profileAvatarPending || s.profilePrivacyPending,
       profileSaveLabel: s.profileEditPending ? 'Saving…' : 'Save changes',
       profileEditHasError: !!s.profileEditError,
       profileEditError: s.profileEditError,
@@ -847,9 +892,9 @@ class Component extends DCLogic {
       editNickname: s.editNickname, onEditNickname: (e) => this.setState({ editNickname: e.target.value }),
       editAboutMe: s.editAboutMe, onEditAboutMe: (e) => this.setState({ editAboutMe: e.target.value }),
       profileAvatarLabel: s.editAvatarName || 'Choose image',
-      profileAvatarPending: s.profileAvatarPending || s.profileEditPending,
-      profileAvatarUploadDisabled: s.profileAvatarPending || s.profileEditPending || !s.editAvatar,
-      profileAvatarUploadOpacity: s.profileAvatarPending || s.profileEditPending || !s.editAvatar ? '0.55' : '1',
+      profileAvatarPending: s.profileAvatarPending || s.profileEditPending || s.profilePrivacyPending,
+      profileAvatarUploadDisabled: s.profileAvatarPending || s.profileEditPending || s.profilePrivacyPending || !s.editAvatar,
+      profileAvatarUploadOpacity: s.profileAvatarPending || s.profileEditPending || s.profilePrivacyPending || !s.editAvatar ? '0.55' : '1',
       profileAvatarUploadLabel: s.profileAvatarPending ? 'Working…' : 'Upload',
       profileHasCustomAvatar: me.hasCustomAvatar,
       pickProfileAvatar: this.pickProfileAvatar,

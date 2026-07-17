@@ -36,6 +36,7 @@ func (m *TransactionManager) WithinTransaction(ctx context.Context, fn func(repo
 		users:    &UserRepo{db: tx},
 		sessions: &SessionRepo{db: tx},
 		media:    &MediaRepo{db: tx},
+		follows:  &FollowRepo{db: tx},
 	}
 	if err := fn(repositories); err != nil {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
@@ -55,6 +56,7 @@ type transactionRepositories struct {
 	users    *UserRepo
 	sessions *SessionRepo
 	media    *MediaRepo
+	follows  *FollowRepo
 }
 
 func (r *transactionRepositories) Users() repo.UserRepo {
@@ -67,4 +69,8 @@ func (r *transactionRepositories) Sessions() repo.SessionRepo {
 
 func (r *transactionRepositories) Media() repo.MediaRepo {
 	return r.media
+}
+
+func (r *transactionRepositories) Follows() repo.FollowRepo {
+	return r.follows
 }

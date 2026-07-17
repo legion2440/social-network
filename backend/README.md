@@ -42,6 +42,8 @@ Current migrations:
 - `000002_create_media`
 - `000003_add_user_avatar_media`
 - `000004_create_sessions`
+- `000005_add_user_privacy`
+- `000006_create_follows`
 
 To inspect the current version with the SQLite CLI:
 
@@ -64,8 +66,10 @@ The user model contains email, password hash, first and last name, date of
 birth, optional `male`/`female` gender, optional nickname/about text, an
 optional custom avatar media reference, and created/updated timestamps. Gender
 accepts only `NULL`, `male`, or `female`; every other value is an error.
-Deleting a user cascades to owned media metadata and sessions; deleting avatar
-media sets the user's optional avatar reference to `NULL`.
+Profiles are public by default; `is_private` is stored as a constrained SQLite
+integer and exposed as a JSON boolean. Deleting a user cascades to owned media
+metadata, sessions, and follow relations; deleting avatar media sets the user's
+optional avatar reference to `NULL`.
 
 ## Authentication
 
@@ -96,12 +100,20 @@ failures return `500`.
 ## Own profile
 
 `PATCH /api/profile` accepts a partial JSON object containing `first_name`,
-`last_name`, `date_of_birth`, `gender`, `nickname`, or `about_me`. Omitted
-fields are unchanged. First/last name and `date_of_birth` cannot be empty or
-`null`; dates keep the strict real-date `DD-MM-YYYY` contract. `gender` accepts
-`male`, `female`, or JSON `null` to clear it. Empty nickname/about values and
-JSON `null` clear those optional fields. Empty objects, unknown fields, and
-unsupported values return `400`.
+`last_name`, `date_of_birth`, `gender`, `nickname`, `about_me`, or `is_private`.
+Omitted fields are unchanged. First/last name and `date_of_birth` cannot be
+empty or `null`; dates keep the strict real-date `DD-MM-YYYY` contract. `gender`
+accepts `male`, `female`, or JSON `null` to clear it. Empty nickname/about
+values and JSON `null` clear those optional fields. `is_private` accepts only a
+JSON boolean; `null`, strings, and numbers return `400`. Empty objects, unknown
+fields, and unsupported values also return `400`.
+
+Changing a public profile to private keeps existing accepted followers.
+Changing a private profile to public does not automatically accept pending
+requests. A pending request is promoted to accepted when its author explicitly
+follows the now-public profile again, or when the profile owner accepts it.
+The existing frontend Public/Private profile switch persists this field through
+the same endpoint and keeps its previous state when the request fails.
 
 `PUT /api/profile/avatar` replaces the current avatar from the multipart field
 `avatar`; `DELETE /api/profile/avatar` removes it and returns the gender-based
@@ -109,6 +121,23 @@ placeholder. Both return the same full user representation as auth endpoints.
 Replacement uses staging plus one SQL transaction for the media row and user
 relation. A failed transaction removes the new file and preserves the old
 avatar. After a successful commit, the replaced media file is removed.
+
+## Followers
+
+All follower endpoints require authentication. `PUT /api/users/{id}/follow`
+creates an accepted relation for a public profile or a pending request for a
+private profile. It returns `{"status":"following"}` or
+`{"status":"pending"}`. Repeating the operation never demotes an accepted
+relation. `DELETE /api/users/{id}/follow` removes the current relation and is
+idempotent.
+
+`GET /api/users/{id}/follow` returns the current relation as `none`, `pending`,
+or `following`, plus `follows_me` for the accepted reverse relation.
+`GET /api/users/{id}/followers` and `/following` list accepted relations only.
+Pending requests are available to their target through
+`GET /api/follow-requests`; the owner accepts one with
+`POST /api/follow-requests/{id}/accept` or rejects it with
+`DELETE /api/follow-requests/{id}`. Pending relations never count as followers.
 
 Supported environment variables:
 
@@ -128,6 +157,12 @@ Implemented endpoints:
 - `PATCH /api/profile` (authenticated partial JSON update)
 - `PUT /api/profile/avatar` (authenticated multipart upload, field name `avatar`)
 - `DELETE /api/profile/avatar` (authenticated, idempotent)
+- `GET|PUT|DELETE /api/users/{id}/follow` (relationship, follow, unfollow)
+- `GET /api/users/{id}/followers`
+- `GET /api/users/{id}/following`
+- `GET /api/follow-requests`
+- `POST /api/follow-requests/{id}/accept`
+- `DELETE /api/follow-requests/{id}`
 - `GET /ws` (authenticated WebSocket)
 - `POST /api/media` (authenticated multipart upload, field name `file`)
 - `GET /uploads/{id}` (authenticated, owner-only)
@@ -136,8 +171,8 @@ Implemented endpoints:
 
 All other reserved API groups currently return JSON `501 Not Implemented`.
 
-Approval workflow and privacy-aware delivery of avatars for other users are
-intentionally not implemented yet.
+Posts, frontend follower controls, and privacy-aware delivery of custom avatars
+for other users are intentionally not implemented yet.
 
 The local frontend file server does not replace the planned Docker topology.
 The final setup keeps the backend private and serves the frontend through a

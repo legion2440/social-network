@@ -117,7 +117,7 @@ test('profile update sends JSON to the protected profile endpoint', async () => 
     call = { path, options };
     return jsonResponse(200, { id: 7, first_name: 'Updated' });
   });
-  const patch = { first_name: 'Updated', gender: null };
+  const patch = { first_name: 'Updated', gender: null, is_private: true };
 
   assert.equal((await api.updateProfile(patch)).first_name, 'Updated');
   assert.equal(call.path, '/api/profile');

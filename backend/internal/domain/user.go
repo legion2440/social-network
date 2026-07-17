@@ -68,6 +68,7 @@ type User struct {
 	Nickname      *string   `json:"nickname,omitempty"`
 	AboutMe       *string   `json:"about_me,omitempty"`
 	AvatarMediaID *int64    `json:"avatar_media_id,omitempty"`
+	IsPrivate     bool      `json:"is_private"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

@@ -297,7 +297,7 @@
                 <span style="font:600 12px 'Manrope',sans-serif;color:var(--text3);margin-right:2px">Profile:</span>
                 <div style="display:flex;background:var(--surface2);border-radius:999px;padding:4px;gap:3px">
                   <sc-for list="{{privacySeg}}" as="sg" hint-placeholder-count="2">
-                    <button onclick="{{sg.pick}}" style="display:flex;align-items:center;gap:6px;border:none;padding:6px 14px;border-radius:999px;cursor:pointer;font:700 12px 'Manrope',sans-serif;background:{{sg.bg}};color:{{sg.color}};transition:all .2s">
+                    <button onclick="{{sg.pick}}" disabled="{{sg.disabled}}" style="display:flex;align-items:center;gap:6px;border:none;padding:6px 14px;border-radius:999px;cursor:{{sg.cursor}};opacity:{{sg.opacity}};font:700 12px 'Manrope',sans-serif;background:{{sg.bg}};color:{{sg.color}};transition:all .2s">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="{{sg.icon}}"></path></svg>
                       {{sg.label}}
                     </button>
@@ -312,6 +312,9 @@
               </sc-if>
             </div>
           </div>
+          <sc-if value="{{profilePrivacyHasError}}" hint-placeholder-val="{{false}}">
+            <div role="alert" style="margin:8px 0 0;text-align:right;font:600 12px/1.4 'Manrope',sans-serif;color:#c24141">{{profilePrivacyError}}</div>
+          </sc-if>
           <div style="display:flex;align-items:center;gap:8px;margin-top:12px">
             <h1 style="font:800 21px 'Manrope',sans-serif;margin:0">{{pUser.name}}</h1>
             <sc-if value="{{pShowLock}}" hint-placeholder-val="{{false}}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10.5V7a5 5 0 0 1 10 0v3.5M6 10.5h12a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1Z"></path></svg></sc-if>
