@@ -71,6 +71,13 @@ function createComponent() {
   return component;
 }
 
+function installEmptyAuthenticatedLoads() {
+  global.AuthAPI.feed = async () => ({ posts: [], next_cursor: null });
+  global.AuthAPI.followers = async () => ({ users: [] });
+  global.AuthAPI.users = async () => ({ users: [], next_cursor: null });
+  global.AuthAPI.followRequests = async () => ({ requests: [] });
+}
+
 test('feed reset starts a new generation while the previous request is pending', async () => {
   const component = createComponent();
   const oldRequest = deferred();
@@ -189,4 +196,98 @@ test('accept invalidates feed, directory, selected followers and current profile
   assert.deepEqual(openedProfiles, [2]);
   assert.equal(component.state.followRequests.length, 0);
   assert.equal(component.state.apiUsersByID['2'].relationship.follows_me, true);
+});
+
+test('pending follow requests cannot leak from the logged-out user into a new login', async () => {
+  const component = createComponent();
+  const oldRequests = deferred();
+  global.AuthAPI.followRequests = () => oldRequests.promise;
+  global.AuthAPI.logout = async () => null;
+
+  const staleLoad = component.loadFollowRequests();
+  await component.logout();
+
+  installEmptyAuthenticatedLoads();
+  global.AuthAPI.login = async () => rawUser(9);
+  component.state.authMode = 'login';
+  component.state.authEmail = 'user9@example.com';
+  component.state.authPassword = 'secret';
+  await component.submitAuth();
+
+  oldRequests.resolve({
+    requests: [{ id: 55, user: rawUser(2, 'none', { followsMe: true }) }]
+  });
+  await staleLoad;
+  await Promise.resolve();
+
+  assert.equal(component.state.authStatus, 'authenticated');
+  assert.equal(component.state.apiUsersByID['9'].apiId, 9);
+  assert.equal(component.state.apiUsersByID['2'], undefined);
+  assert.deepEqual(component.state.followRequests, []);
+});
+
+test('pending follow mutation cannot update state or refresh data after logout', async () => {
+  const component = createComponent();
+  const mutationResponse = deferred();
+  component.state.apiUsersByID = component.mergeAPIUsers([rawUser(2, 'none')]);
+  global.AuthAPI.follow = () => mutationResponse.promise;
+  global.AuthAPI.logout = async () => null;
+  let refreshes = 0;
+  component.loadDirectory = () => { refreshes += 1; };
+  component.loadFeed = () => { refreshes += 1; };
+
+  const mutation = component.toggleFollow(2);
+  await component.logout();
+  mutationResponse.resolve({ status: 'accepted' });
+  await mutation;
+
+  assert.equal(component.state.authStatus, 'anonymous');
+  assert.deepEqual(component.state.apiUsersByID, {});
+  assert.deepEqual(component.state.followPendingByID, {});
+  assert.equal(refreshes, 0);
+});
+
+test('pending accept mutation cannot update state or refresh data after logout', async () => {
+  const component = createComponent();
+  const mutationResponse = deferred();
+  component.state.followRequests = [{ id: 41, user: rawUser(2, 'none') }];
+  component.state.apiUsersByID = component.mergeAPIUsers([rawUser(2, 'none')]);
+  global.AuthAPI.acceptFollowRequest = () => mutationResponse.promise;
+  global.AuthAPI.logout = async () => null;
+  let refreshes = 0;
+  component.loadPostFollowers = () => { refreshes += 1; };
+  component.loadDirectory = () => { refreshes += 1; };
+  component.loadFeed = () => { refreshes += 1; };
+  component.openProfile = () => { refreshes += 1; };
+
+  const mutation = component.acceptFollowRequest(41);
+  await component.logout();
+  mutationResponse.resolve({ status: 'accepted' });
+  await mutation;
+
+  assert.equal(component.state.authStatus, 'anonymous');
+  assert.deepEqual(component.state.apiUsersByID, {});
+  assert.deepEqual(component.state.followRequests, []);
+  assert.deepEqual(component.state.followRequestPendingByID, {});
+  assert.equal(refreshes, 0);
+});
+
+test('pending reject mutation cannot update state or refresh data after logout', async () => {
+  const component = createComponent();
+  const mutationResponse = deferred();
+  component.state.followRequests = [{ id: 41, user: rawUser(2, 'none') }];
+  global.AuthAPI.rejectFollowRequest = () => mutationResponse.promise;
+  global.AuthAPI.logout = async () => null;
+  let refreshes = 0;
+  component.loadDirectory = () => { refreshes += 1; };
+
+  const mutation = component.rejectFollowRequest(41);
+  await component.logout();
+  mutationResponse.resolve(null);
+  await mutation;
+
+  assert.equal(component.state.authStatus, 'anonymous');
+  assert.deepEqual(component.state.followRequests, []);
+  assert.deepEqual(component.state.followRequestPendingByID, {});
+  assert.equal(refreshes, 0);
 });

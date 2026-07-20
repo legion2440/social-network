@@ -129,6 +129,7 @@ class Component extends DCLogic {
       ...emptyProfileEditor()
     };
     this.msgEl = null;
+    this.authGate = UserModel.createRequestGate();
     this.profileGate = UserModel.createRequestGate();
     this.feedGate = UserModel.createRequestGate();
     this.directoryGate = UserModel.createRequestGate();
@@ -202,6 +203,7 @@ class Component extends DCLogic {
   }
 
   loadFeed = async (reset) => {
+    const authGeneration = this.authGate.current();
     const generation = reset ? this.feedGate.begin() : this.feedGate.current();
     if (!reset && this.state.feedPending) return;
     const cursor = reset ? null : this.state.feedNextCursor;
@@ -209,7 +211,7 @@ class Component extends DCLogic {
     this.setState({ feedPending: true, feedLoading: !!reset, feedError: '' });
     try {
       const page = await AuthAPI.feed(cursor, 20);
-      if (!this.feedGate.isCurrent(generation)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !this.feedGate.isCurrent(generation)) return;
       const mapped = (page.posts || []).map(post => this.mapAPIPost(post));
       const apiUsersByID = this.mergeAPIUsers((page.posts || []).map(post => post.author));
       this.setState({
@@ -219,7 +221,7 @@ class Component extends DCLogic {
         feedNextCursor: page.next_cursor || null, feedError: ''
       });
     } catch (error) {
-      if (!this.feedGate.isCurrent(generation)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !this.feedGate.isCurrent(generation)) return;
       this.setState({
         feedLoading: false, feedPending: false,
         feedError: requestErrorMessage(error, 'Could not load the feed. Please try again.')
@@ -229,11 +231,12 @@ class Component extends DCLogic {
 
   loadPostFollowers = async () => {
     if (!USERS.me.apiId) return;
+    const authGeneration = this.authGate.current();
     const generation = this.postFollowersGate.begin();
     this.setState({ postFollowersLoading: true });
     try {
       const response = await AuthAPI.followers(USERS.me.apiId);
-      if (!this.postFollowersGate.isCurrent(generation)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !this.postFollowersGate.isCurrent(generation)) return;
       const apiUsersByID = this.mergeAPIUsers(response.users || []);
       const followers = (response.users || []).map(user => apiUsersByID[String(user.id)]);
       this.setState({
@@ -243,7 +246,7 @@ class Component extends DCLogic {
         selectedFollowers: UserModel.pruneSelected(this.state.selectedFollowers, followers)
       });
     } catch (error) {
-      if (!this.postFollowersGate.isCurrent(generation)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !this.postFollowersGate.isCurrent(generation)) return;
       this.setState({
         postFollowersLoading: false,
         composerError: requestErrorMessage(error, 'Could not load followers for selected posts.')
@@ -252,11 +255,12 @@ class Component extends DCLogic {
   };
 
   loadDirectory = async () => {
+    const authGeneration = this.authGate.current();
     const generation = this.directoryGate.begin();
     this.setState({ directoryLoading: true, directoryError: '' });
     try {
       const response = await AuthAPI.users(null, 20);
-      if (!this.directoryGate.isCurrent(generation)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !this.directoryGate.isCurrent(generation)) return;
       const apiUsersByID = this.mergeAPIUsers(response.users || []);
       this.setState({
         apiUsersByID,
@@ -265,7 +269,7 @@ class Component extends DCLogic {
         directoryLoading: false, directoryError: ''
       });
     } catch (error) {
-      if (!this.directoryGate.isCurrent(generation)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !this.directoryGate.isCurrent(generation)) return;
       this.setState({
         directoryLoading: false,
         directoryError: requestErrorMessage(error, 'Could not load user suggestions.')
@@ -275,13 +279,16 @@ class Component extends DCLogic {
 
   loadFollowRequests = async () => {
     if (this.state.followRequestsLoading) return;
+    const authGeneration = this.authGate.current();
     this.setState({ followRequestsLoading: true, followRequestsError: '' });
     try {
       const response = await AuthAPI.followRequests();
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const requests = response.requests || [];
       const apiUsersByID = this.mergeAPIUsers(requests.map(request => request.user));
       this.setState({ apiUsersByID, followRequests: requests, followRequestsLoading: false });
     } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
         followRequestsLoading: false,
         followRequestsError: requestErrorMessage(error, 'Could not load follow requests.')
@@ -291,6 +298,7 @@ class Component extends DCLogic {
 
   loadProfileConnections = async (targetUserID, generation) => {
     targetUserID = Number(targetUserID);
+    const authGeneration = this.authGate.current();
     generation = generation || this.profileGate.current();
     this.setState({ profileListsLoading: true, profileListsError: '' });
     try {
@@ -298,7 +306,11 @@ class Component extends DCLogic {
         AuthAPI.followers(targetUserID),
         AuthAPI.following(targetUserID)
       ]);
-      if (!this.profileGate.isCurrent(generation) || Number(this.state.profileId) !== targetUserID) return;
+      if (
+        !this.authGate.isCurrent(authGeneration) ||
+        !this.profileGate.isCurrent(generation) ||
+        Number(this.state.profileId) !== targetUserID
+      ) return;
       const followers = responses[0].users || [];
       const following = responses[1].users || [];
       const apiUsersByID = this.mergeAPIUsers(following, this.mergeAPIUsers(followers));
@@ -309,7 +321,11 @@ class Component extends DCLogic {
         profileListsLoading: false, profileListsError: ''
       });
     } catch (error) {
-      if (!this.profileGate.isCurrent(generation) || Number(this.state.profileId) !== targetUserID) return;
+      if (
+        !this.authGate.isCurrent(authGeneration) ||
+        !this.profileGate.isCurrent(generation) ||
+        Number(this.state.profileId) !== targetUserID
+      ) return;
       if (error && error.status === 403) {
         this.setState({ profileFollowers: [], profileFollowing: [], profileListsLoading: false, profileListsError: '' });
         return;
@@ -323,6 +339,7 @@ class Component extends DCLogic {
 
   loadProfilePosts = async (targetUserID, reset, generation) => {
     targetUserID = Number(targetUserID || this.state.profileId);
+    const authGeneration = this.authGate.current();
     generation = generation || this.profileGate.current();
     if (!targetUserID || (!reset && this.state.profilePostsPending)) return;
     const cursor = reset ? null : this.state.profilePostsNextCursor;
@@ -330,7 +347,11 @@ class Component extends DCLogic {
     this.setState({ profilePostsPending: true, profilePostsLoading: !!reset, profilePostsError: '' });
     try {
       const page = await AuthAPI.userPosts(targetUserID, cursor, 20);
-      if (!this.profileGate.isCurrent(generation) || Number(this.state.profileId) !== targetUserID) return;
+      if (
+        !this.authGate.isCurrent(authGeneration) ||
+        !this.profileGate.isCurrent(generation) ||
+        Number(this.state.profileId) !== targetUserID
+      ) return;
       const mapped = (page.posts || []).map(post => this.mapAPIPost(post));
       const apiUsersByID = this.mergeAPIUsers((page.posts || []).map(post => post.author));
       this.setState({
@@ -340,7 +361,11 @@ class Component extends DCLogic {
         profilePostsNextCursor: page.next_cursor || null, profilePostsError: ''
       });
     } catch (error) {
-      if (!this.profileGate.isCurrent(generation) || Number(this.state.profileId) !== targetUserID) return;
+      if (
+        !this.authGate.isCurrent(authGeneration) ||
+        !this.profileGate.isCurrent(generation) ||
+        Number(this.state.profileId) !== targetUserID
+      ) return;
       if (error && error.status === 403) {
         const user = this.apiUser(targetUserID);
         user.canViewProfile = false;
@@ -360,9 +385,11 @@ class Component extends DCLogic {
   };
 
   loadCurrentUser = async () => {
+    const authGeneration = this.authGate.begin();
     this.setState({ authStatus: 'checking', bootstrapError: '', appError: '' });
     try {
       const user = await AuthAPI.me();
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const apiUsersByID = this.applyAuthUser(user);
       this.setState({
         authStatus: 'authenticated', screen: 'feed',
@@ -375,6 +402,7 @@ class Component extends DCLogic {
       this.loadDirectory();
       this.loadFollowRequests();
     } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration)) return;
       if (error && error.status === 401) {
         this.setState({ authStatus: 'anonymous', screen: 'auth', bootstrapError: '' });
         return;
@@ -402,6 +430,7 @@ class Component extends DCLogic {
     if (event) event.preventDefault();
     if (this.state.authPending) return;
 
+    const authGeneration = this.authGate.begin();
     const s = this.state;
     this.setState({ authPending: true, authError: '' });
     try {
@@ -422,6 +451,7 @@ class Component extends DCLogic {
         user = await AuthAPI.register(form);
       }
 
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const apiUsersByID = this.applyAuthUser(user);
       const authenticatedState = {
         authStatus: 'authenticated', authPending: false, authError: '',
@@ -438,6 +468,7 @@ class Component extends DCLogic {
       this.loadDirectory();
       this.loadFollowRequests();
     } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
         authPending: false,
         authError: requestErrorMessage(error, 'Authentication failed. Please try again.')
@@ -447,9 +478,12 @@ class Component extends DCLogic {
 
   logout = async () => {
     if (this.state.logoutPending) return;
+    const authGeneration = this.authGate.current();
     this.setState({ logoutPending: true, appError: '' });
     try {
       await AuthAPI.logout();
+      if (!this.authGate.isCurrent(authGeneration)) return;
+      this.authGate.begin();
       this.feedGate.begin();
       this.directoryGate.begin();
       this.postFollowersGate.begin();
@@ -471,6 +505,7 @@ class Component extends DCLogic {
         privacy: 'public', privacyOpen: false
       }, emptyRegistrationForm(), emptyProfileEditor()));
     } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
         logoutPending: false,
         appError: requestErrorMessage(error, 'Could not log out. Please try again.')
@@ -486,6 +521,7 @@ class Component extends DCLogic {
     if (targetUserID === 'me') targetUserID = USERS.me.apiId;
     targetUserID = Number(targetUserID);
     if (!Number.isInteger(targetUserID) || targetUserID <= 0) return;
+    const authGeneration = this.authGate.current();
     const generation = this.profileGate.begin();
     const isMe = targetUserID === USERS.me.apiId;
     this.setState({
@@ -502,7 +538,7 @@ class Component extends DCLogic {
         AuthAPI.userProfile(targetUserID),
         isMe ? Promise.resolve({ status: 'none', follows_me: false }) : AuthAPI.relationship(targetUserID)
       ]);
-      if (!this.profileGate.isCurrent(generation)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !this.profileGate.isCurrent(generation)) return;
       const rawUser = Object.assign({}, results[0], { relationship: results[1] });
       const apiUsersByID = this.mergeAPIUsers([rawUser]);
       const profileUser = apiUsersByID[String(targetUserID)];
@@ -512,7 +548,7 @@ class Component extends DCLogic {
         this.loadProfileConnections(targetUserID, generation);
       }
     } catch (error) {
-      if (!this.profileGate.isCurrent(generation)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !this.profileGate.isCurrent(generation)) return;
       this.setState({
         profileLoading: false, profileReady: false,
         profileError: error && error.status === 404
@@ -538,6 +574,7 @@ class Component extends DCLogic {
   saveProfile = async (event) => {
     if (event) event.preventDefault();
     if (this.state.profileEditPending || this.state.profileAvatarPending || this.state.profilePrivacyPending) return;
+    const authGeneration = this.authGate.current();
     const s = this.state;
     this.setState({ profileEditPending: true, profileEditError: '' });
     try {
@@ -549,12 +586,14 @@ class Component extends DCLogic {
         nickname: s.editNickname,
         about_me: s.editAboutMe
       });
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const apiUsersByID = this.applyAuthUser(user);
       this.setState(Object.assign({
         apiUsersByID,
         myPrivacy: user.is_private === true ? 'private' : 'public'
       }, emptyProfileEditor()));
     } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
         profileEditPending: false,
         profileEditError: requestErrorMessage(error, 'Could not update your profile. Please try again.')
@@ -574,12 +613,14 @@ class Component extends DCLogic {
 
   replaceProfileAvatar = async () => {
     if (this.state.profileAvatarPending || this.state.profileEditPending || this.state.profilePrivacyPending || !this.state.editAvatar) return;
+    const authGeneration = this.authGate.current();
     const avatar = this.state.editAvatar;
     this.setState({ profileAvatarPending: true, profileEditError: '' });
     try {
       const form = new FormData();
       form.append('avatar', avatar, avatar.name);
       const user = await AuthAPI.replaceAvatar(form);
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const apiUsersByID = this.applyAuthUser(user);
       const input = document.getElementById('profile-avatar');
       if (input) input.value = '';
@@ -589,6 +630,7 @@ class Component extends DCLogic {
         myPrivacy: user.is_private === true ? 'private' : 'public'
       });
     } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
         profileAvatarPending: false,
         profileEditError: requestErrorMessage(error, 'Could not replace your avatar. Please try again.')
@@ -598,9 +640,11 @@ class Component extends DCLogic {
 
   deleteProfileAvatar = async () => {
     if (this.state.profileAvatarPending || this.state.profileEditPending || this.state.profilePrivacyPending) return;
+    const authGeneration = this.authGate.current();
     this.setState({ profileAvatarPending: true, profileEditError: '' });
     try {
       const user = await AuthAPI.deleteAvatar();
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const apiUsersByID = this.applyAuthUser(user);
       const input = document.getElementById('profile-avatar');
       if (input) input.value = '';
@@ -610,6 +654,7 @@ class Component extends DCLogic {
         myPrivacy: user.is_private === true ? 'private' : 'public'
       });
     } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
         profileAvatarPending: false,
         profileEditError: requestErrorMessage(error, 'Could not delete your avatar. Please try again.')
@@ -624,10 +669,12 @@ class Component extends DCLogic {
       this.state.profileAvatarPending ||
       privacy === this.state.myPrivacy
     ) return;
+    const authGeneration = this.authGate.current();
     const isPrivate = privacy === 'private';
     this.setState({ profilePrivacyPending: true, profilePrivacyError: '' });
     try {
       const user = await AuthAPI.updateProfile({ is_private: isPrivate });
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const apiUsersByID = this.applyAuthUser(user);
       this.setState({
         apiUsersByID,
@@ -636,6 +683,7 @@ class Component extends DCLogic {
         profilePrivacyError: ''
       });
     } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
         profilePrivacyPending: false,
         profilePrivacyError: requestErrorMessage(error, 'Could not update profile privacy. Please try again.')
@@ -667,6 +715,7 @@ class Component extends DCLogic {
     if (!Number.isInteger(targetUserID) || targetUserID <= 0 || targetUserID === USERS.me.apiId) return;
     const key = String(targetUserID);
     if (this.state.followPendingByID[key]) return;
+    const authGeneration = this.authGate.current();
     const user = this.apiUser(targetUserID);
     const status = UserModel.normalizeStatus(user.relationship && user.relationship.status);
     this.setState({
@@ -678,6 +727,7 @@ class Component extends DCLogic {
       const response = status === 'none'
         ? await AuthAPI.follow(targetUserID)
         : (await AuthAPI.unfollow(targetUserID), { status: 'none' });
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const apiUsersByID = this.mergeAPIUsers([{
         id: targetUserID,
         relationship: {
@@ -696,6 +746,7 @@ class Component extends DCLogic {
       this.loadFeed(true);
       if (this.state.screen === 'profile' && Number(this.state.profileId) === targetUserID) this.openProfile(targetUserID);
     } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const pending = Object.assign({}, this.state.followPendingByID);
       delete pending[key];
       const message = requestErrorMessage(error, 'Could not update follow status.');
@@ -737,6 +788,7 @@ class Component extends DCLogic {
   sendPost = async () => {
     const s = this.state;
     if (s.composerPending || !s.composerText.trim()) return;
+    const authGeneration = this.authGate.current();
     const selectedUserIDs = Object.keys(s.selectedFollowers)
       .filter(id => s.selectedFollowers[id])
       .map(id => Number(id));
@@ -749,6 +801,7 @@ class Component extends DCLogic {
         media: s.composerFile
       }, FormData);
       const response = await AuthAPI.createPost(form);
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const post = this.mapAPIPost(response);
       const apiUsersByID = this.mergeAPIUsers([response.author]);
       const me = apiUsersByID[String(USERS.me.apiId)];
@@ -766,6 +819,7 @@ class Component extends DCLogic {
         privacy: 'public', privacyOpen: false, selectedFollowers: {}
       });
     } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
         composerPending: false,
         composerError: requestErrorMessage(error, 'Could not create the post. Your draft was kept.')
@@ -865,12 +919,14 @@ class Component extends DCLogic {
     if (this.state.followRequestPendingByID[key]) return;
     const request = this.state.followRequests.find(item => String(item.id) === key);
     if (!request) return;
+    const authGeneration = this.authGate.current();
     this.setState({
       followRequestPendingByID: Object.assign({}, this.state.followRequestPendingByID, { [key]: true }),
       followRequestsError: ''
     });
     try {
       await AuthAPI.acceptFollowRequest(requestID);
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const user = this.apiUser(request.user.id);
       const apiUsersByID = this.mergeAPIUsers([{
         id: request.user.id,
@@ -895,6 +951,7 @@ class Component extends DCLogic {
         this.profileGate.begin();
       }
     } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const pending = Object.assign({}, this.state.followRequestPendingByID);
       delete pending[key];
       this.setState({
@@ -908,12 +965,14 @@ class Component extends DCLogic {
     const key = String(requestID);
     if (this.state.followRequestPendingByID[key]) return;
     if (!this.state.followRequests.some(item => String(item.id) === key)) return;
+    const authGeneration = this.authGate.current();
     this.setState({
       followRequestPendingByID: Object.assign({}, this.state.followRequestPendingByID, { [key]: true }),
       followRequestsError: ''
     });
     try {
       await AuthAPI.rejectFollowRequest(requestID);
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const pending = Object.assign({}, this.state.followRequestPendingByID);
       delete pending[key];
       this.setState({
@@ -922,6 +981,7 @@ class Component extends DCLogic {
       });
       this.loadDirectory();
     } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration)) return;
       const pending = Object.assign({}, this.state.followRequestPendingByID);
       delete pending[key];
       this.setState({
