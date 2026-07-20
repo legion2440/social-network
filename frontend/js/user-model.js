@@ -96,11 +96,12 @@
     }
 
     var rawURL = user.rawAvatarUrl || '';
+    var canUseCustomAvatar = user.canViewProfile !== false && canViewPrivate;
     if (!canViewPrivate) user.canViewProfile = false;
-    user.avatarUrl = isStaticAvatar(rawURL) || canViewPrivate ? rawURL : '';
+    user.avatarUrl = isStaticAvatar(rawURL) || canUseCustomAvatar ? rawURL : '';
     user.hasAvatar = !!user.avatarUrl;
     user.noAvatar = !user.avatarUrl;
-    user.hasCustomAvatar = !!rawURL && !isStaticAvatar(rawURL);
+    user.hasCustomAvatar = !!user.avatarUrl && !isStaticAvatar(user.avatarUrl);
     return user;
   }
 

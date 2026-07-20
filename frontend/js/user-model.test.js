@@ -43,13 +43,29 @@ test('locked private user clears sensitive data and hides a custom avatar', () =
   assert.equal(user.rawAvatarUrl, '/api/users/9/avatar?v=4');
 });
 
+test('server-locked profile hides custom avatar despite a stale accepted relationship', () => {
+  const user = UserModel.normalizeUser({
+    id: 9, first_name: 'Private', last_name: 'User', nickname: null,
+    is_private: true, avatar_url: '/api/users/9/avatar?v=5',
+    can_view_profile: false,
+    relationship: { status: 'accepted', follows_me: false }
+  }, null, 1);
+
+  assert.equal(user.relationship.status, 'accepted');
+  assert.equal(user.canViewProfile, false);
+  assert.equal(user.avatarUrl, '');
+  assert.equal(user.hasCustomAvatar, false);
+  assert.equal(user.rawAvatarUrl, '/api/users/9/avatar?v=5');
+});
+
 test('accepted relationship restores access to the stored custom avatar', () => {
   const previous = UserModel.normalizeUser({
     id: 9, first_name: 'Private', last_name: 'User', is_private: true,
     avatar_url: '/api/users/9/avatar?v=4', relationship: { status: 'none', follows_me: false }
   }, null, 1);
   const accepted = UserModel.normalizeUser({
-    id: 9, relationship: { status: 'accepted', follows_me: false }
+    id: 9, can_view_profile: true,
+    relationship: { status: 'accepted', follows_me: false }
   }, previous, 1);
 
   assert.equal(accepted.avatarUrl, '/api/users/9/avatar?v=4');

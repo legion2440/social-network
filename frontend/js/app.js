@@ -130,6 +130,9 @@ class Component extends DCLogic {
     };
     this.msgEl = null;
     this.profileGate = UserModel.createRequestGate();
+    this.feedGate = UserModel.createRequestGate();
+    this.directoryGate = UserModel.createRequestGate();
+    this.postFollowersGate = UserModel.createRequestGate();
   }
 
   componentDidMount() {
@@ -199,12 +202,14 @@ class Component extends DCLogic {
   }
 
   loadFeed = async (reset) => {
-    if (this.state.feedPending) return;
+    const generation = reset ? this.feedGate.begin() : this.feedGate.current();
+    if (!reset && this.state.feedPending) return;
     const cursor = reset ? null : this.state.feedNextCursor;
     if (!reset && !cursor) return;
     this.setState({ feedPending: true, feedLoading: !!reset, feedError: '' });
     try {
       const page = await AuthAPI.feed(cursor, 20);
+      if (!this.feedGate.isCurrent(generation)) return;
       const mapped = (page.posts || []).map(post => this.mapAPIPost(post));
       const apiUsersByID = this.mergeAPIUsers((page.posts || []).map(post => post.author));
       this.setState({
@@ -214,6 +219,7 @@ class Component extends DCLogic {
         feedNextCursor: page.next_cursor || null, feedError: ''
       });
     } catch (error) {
+      if (!this.feedGate.isCurrent(generation)) return;
       this.setState({
         feedLoading: false, feedPending: false,
         feedError: requestErrorMessage(error, 'Could not load the feed. Please try again.')
@@ -222,10 +228,12 @@ class Component extends DCLogic {
   };
 
   loadPostFollowers = async () => {
-    if (!USERS.me.apiId || this.state.postFollowersLoading) return;
+    if (!USERS.me.apiId) return;
+    const generation = this.postFollowersGate.begin();
     this.setState({ postFollowersLoading: true });
     try {
       const response = await AuthAPI.followers(USERS.me.apiId);
+      if (!this.postFollowersGate.isCurrent(generation)) return;
       const apiUsersByID = this.mergeAPIUsers(response.users || []);
       const followers = (response.users || []).map(user => apiUsersByID[String(user.id)]);
       this.setState({
@@ -235,6 +243,7 @@ class Component extends DCLogic {
         selectedFollowers: UserModel.pruneSelected(this.state.selectedFollowers, followers)
       });
     } catch (error) {
+      if (!this.postFollowersGate.isCurrent(generation)) return;
       this.setState({
         postFollowersLoading: false,
         composerError: requestErrorMessage(error, 'Could not load followers for selected posts.')
@@ -243,10 +252,11 @@ class Component extends DCLogic {
   };
 
   loadDirectory = async () => {
-    if (this.state.directoryLoading) return;
+    const generation = this.directoryGate.begin();
     this.setState({ directoryLoading: true, directoryError: '' });
     try {
       const response = await AuthAPI.users(null, 20);
+      if (!this.directoryGate.isCurrent(generation)) return;
       const apiUsersByID = this.mergeAPIUsers(response.users || []);
       this.setState({
         apiUsersByID,
@@ -255,6 +265,7 @@ class Component extends DCLogic {
         directoryLoading: false, directoryError: ''
       });
     } catch (error) {
+      if (!this.directoryGate.isCurrent(generation)) return;
       this.setState({
         directoryLoading: false,
         directoryError: requestErrorMessage(error, 'Could not load user suggestions.')
@@ -439,6 +450,10 @@ class Component extends DCLogic {
     this.setState({ logoutPending: true, appError: '' });
     try {
       await AuthAPI.logout();
+      this.feedGate.begin();
+      this.directoryGate.begin();
+      this.postFollowersGate.begin();
+      this.profileGate.begin();
       this.setState(Object.assign({
         authStatus: 'anonymous', logoutPending: false, authMode: 'login',
         authError: '', screen: 'auth', myPrivacy: 'public',
@@ -672,7 +687,10 @@ class Component extends DCLogic {
       }]);
       const pending = Object.assign({}, this.state.followPendingByID);
       delete pending[key];
-      this.setState({ apiUsersByID, followPendingByID: pending });
+      const posts = status === 'none'
+        ? this.state.posts
+        : this.state.posts.filter(post => Number(post.apiAuthorID) !== targetUserID);
+      this.setState({ apiUsersByID, followPendingByID: pending, posts });
 
       this.loadDirectory();
       this.loadFeed(true);
@@ -870,7 +888,12 @@ class Component extends DCLogic {
       });
       this.loadPostFollowers();
       this.loadDirectory();
-      if (this.state.screen === 'profile' && Number(this.state.profileId) === USERS.me.apiId) this.openProfile(USERS.me.apiId);
+      this.loadFeed(true);
+      if (this.state.screen === 'profile' && Number.isInteger(Number(this.state.profileId))) {
+        this.openProfile(Number(this.state.profileId));
+      } else {
+        this.profileGate.begin();
+      }
     } catch (error) {
       const pending = Object.assign({}, this.state.followRequestPendingByID);
       delete pending[key];
@@ -1394,3 +1417,5 @@ class Component extends DCLogic {
     };
   }
 }
+
+if (typeof module === 'object' && module.exports) module.exports = { Component };
