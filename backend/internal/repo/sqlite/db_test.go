@@ -45,7 +45,7 @@ func TestMigrationsRunAllTheWayDownAndBackUp(t *testing.T) {
 	if err := migrateDown(db); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
-	for _, table := range []string{"follows", "sessions", "media", "users"} {
+	for _, table := range []string{"post_selected_users", "posts", "follows", "sessions", "media", "users"} {
 		if tableExists(t, db, table) {
 			t.Fatalf("table %s still exists after down migrations", table)
 		}
@@ -88,7 +88,7 @@ func TestOpenRejectsDisposableLegacyBootstrapDatabase(t *testing.T) {
 func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 
-	for _, table := range []string{"users", "media", "sessions", "follows", "schema_migrations"} {
+	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "schema_migrations"} {
 		if !tableExists(t, db, table) {
 			t.Fatalf("expected table %s", table)
 		}
@@ -152,7 +152,6 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 
 	for _, table := range []string{
 		"categories",
-		"posts",
 		"comments",
 		"reactions",
 		"moderation_reports",
@@ -182,6 +181,10 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "sessions", "user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "follows", "follower_user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "follows", "followed_user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "posts", "author_user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "posts", "media_id", "media", "id", "SET NULL")
+	assertForeignKey(t, db, "post_selected_users", "post_id", "posts", "id", "CASCADE")
+	assertForeignKey(t, db, "post_selected_users", "user_id", "users", "id", "CASCADE")
 }
 
 func TestUserPrivacyAndFollowConstraints(t *testing.T) {
@@ -256,6 +259,95 @@ func TestUserPrivacyAndFollowConstraints(t *testing.T) {
 	}
 }
 
+func TestPostSchemaConstraintsAndIndexes(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "social-network.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	postColumns := tableColumns(t, db, "posts")
+	for _, column := range []string{"id", "author_user_id", "text", "privacy", "media_id", "created_at"} {
+		if _, exists := postColumns[column]; !exists {
+			t.Fatalf("posts.%s is missing", column)
+		}
+	}
+	if postColumns["text"].columnType != "TEXT" || postColumns["privacy"].columnType != "TEXT" || postColumns["created_at"].columnType != "INTEGER" {
+		t.Fatalf("unexpected post storage types: %+v", postColumns)
+	}
+	for _, index := range []string{
+		"idx_posts_created",
+		"idx_posts_author_created",
+		"idx_posts_media_unique",
+		"idx_post_selected_users_user_post",
+	} {
+		if !schemaObjectExists(t, db, "index", index) {
+			t.Fatalf("expected index %s", index)
+		}
+	}
+
+	insertUser := func(email string) int64 {
+		result, err := db.Exec(`
+			INSERT INTO users (
+				email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at
+			) VALUES (?, 'hash', 'Post', 'User', '18-07-1992', 1, 1)
+		`, email)
+		if err != nil {
+			t.Fatalf("insert user %s: %v", email, err)
+		}
+		id, _ := result.LastInsertId()
+		return id
+	}
+	authorID := insertUser("post-schema-author@example.com")
+	selectedID := insertUser("post-schema-selected@example.com")
+	mediaResult, err := db.Exec(`
+		INSERT INTO media (owner_user_id, mime, size, storage_key, original_name, created_at)
+		VALUES (?, 'image/png', 8, 'post-schema.png', 'post.png', 1)
+	`, authorID)
+	if err != nil {
+		t.Fatalf("insert media: %v", err)
+	}
+	mediaID, _ := mediaResult.LastInsertId()
+	postResult, err := db.Exec(`
+		INSERT INTO posts (author_user_id, text, privacy, media_id, created_at)
+		VALUES (?, 'selected post', 'selected', ?, 1)
+	`, authorID, mediaID)
+	if err != nil {
+		t.Fatalf("insert post: %v", err)
+	}
+	postID, _ := postResult.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO post_selected_users (post_id, user_id) VALUES (?, ?)`, postID, selectedID); err != nil {
+		t.Fatalf("insert selected audience: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO post_selected_users (post_id, user_id) VALUES (?, ?)`, postID, selectedID); err == nil {
+		t.Fatal("expected duplicate selected audience to fail")
+	}
+	if _, err := db.Exec(`INSERT INTO posts (author_user_id, text, privacy, media_id, created_at) VALUES (?, 'reuse media', 'public', ?, 2)`, authorID, mediaID); err == nil {
+		t.Fatal("expected one media row to be used by at most one post")
+	}
+	for name, test := range map[string]struct {
+		text    string
+		privacy string
+	}{
+		"blank text":        {text: "   ", privacy: "public"},
+		"untrimmed text":    {text: " post ", privacy: "public"},
+		"unsupported state": {text: "post", privacy: "private"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := db.Exec(`INSERT INTO posts (author_user_id, text, privacy, created_at) VALUES (?, ?, ?, 2)`, authorID, test.text, test.privacy); err == nil {
+				t.Fatal("expected post constraint failure")
+			}
+		})
+	}
+	if _, err := db.Exec(`DELETE FROM posts WHERE id = ?`, postID); err != nil {
+		t.Fatalf("delete post: %v", err)
+	}
+	var audienceCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM post_selected_users WHERE post_id = ?`, postID).Scan(&audienceCount); err != nil || audienceCount != 0 {
+		t.Fatalf("post delete did not cascade audience: count=%d err=%v", audienceCount, err)
+	}
+}
+
 func TestUsersDateOfBirthConstraintAcceptsOnlyRealDDMMYYYYDates(t *testing.T) {
 	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "social-network.db"))
 	if err != nil {
@@ -311,6 +403,15 @@ func tableExists(t *testing.T, db *sql.DB, table string) bool {
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
 		t.Fatalf("query table %s: %v", table, err)
+	}
+	return count == 1
+}
+
+func schemaObjectExists(t *testing.T, db *sql.DB, objectType, name string) bool {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = ? AND name = ?`, objectType, name).Scan(&count); err != nil {
+		t.Fatalf("query schema object %s %s: %v", objectType, name, err)
 	}
 	return count == 1
 }

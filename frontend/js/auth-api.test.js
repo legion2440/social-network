@@ -151,3 +151,27 @@ test('profile avatar replace keeps FormData intact and delete expects 200', asyn
   assert.equal(calls[1].path, '/api/profile/avatar');
   assert.equal(calls[1].options.method, 'DELETE');
 });
+
+test('posts client sends multipart unchanged and builds cursor requests', async () => {
+  const calls = [];
+  const formData = { kind: 'post-form-data-test-double' };
+  const api = createAuthAPI(async (path, options) => {
+    calls.push({ path, options });
+    if (options.method === 'POST') return jsonResponse(201, { id: 42 });
+    return jsonResponse(200, { posts: [], next_cursor: null });
+  });
+
+  assert.deepEqual(await api.createPost(formData), { id: 42 });
+  await api.feed('opaque+/=', 20);
+  await api.userPosts(7, 'next cursor', 50);
+  await api.followers(7);
+
+  assert.equal(calls[0].path, '/api/posts');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.body, formData);
+  assert.equal(calls[0].options.headers['Content-Type'], undefined);
+  assert.equal(calls[1].path, '/api/posts/feed?cursor=opaque%2B%2F%3D&limit=20');
+  assert.equal(calls[2].path, '/api/users/7/posts?cursor=next%20cursor&limit=50');
+  assert.equal(calls[3].path, '/api/users/7/followers');
+  assert.ok(calls.every(call => call.options.credentials === 'same-origin'));
+});

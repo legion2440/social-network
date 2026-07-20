@@ -40,11 +40,21 @@ type FollowRepo interface {
 	IsAccepted(ctx context.Context, followerUserID, followedUserID int64) (bool, error)
 }
 
+type PostRepo interface {
+	Create(ctx context.Context, post *domain.Post) (int64, error)
+	AddSelectedUsers(ctx context.Context, postID int64, userIDs []int64) error
+	GetByID(ctx context.Context, postID int64) (*domain.Post, error)
+	GetAccessibleByID(ctx context.Context, viewerUserID, postID int64) (*domain.Post, error)
+	ListFeed(ctx context.Context, viewerUserID int64, cursor *domain.PostCursor, limit int) ([]*domain.Post, error)
+	ListByAuthor(ctx context.Context, viewerUserID, authorUserID int64, cursor *domain.PostCursor, limit int) ([]*domain.Post, error)
+}
+
 type TransactionRepositories interface {
 	Users() UserRepo
 	Sessions() SessionRepo
 	Media() MediaRepo
 	Follows() FollowRepo
+	Posts() PostRepo
 }
 
 type TransactionManager interface {

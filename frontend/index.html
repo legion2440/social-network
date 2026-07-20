@@ -153,15 +153,15 @@
           </div>
           <textarea rows="2" placeholder="What's on your mind?" value="{{composerText}}" onchange="{{onComposer}}" style="flex:1;border:none;background:transparent;color:var(--text);font-size:15px;line-height:1.5;outline:none;padding-top:8px"></textarea>
         </div>
-        <sc-if value="{{composerImg}}" hint-placeholder-val="{{false}}">
+        <sc-if value="{{composerHasMedia}}" hint-placeholder-val="{{false}}">
           <div style="margin:10px 0 2px 52px;position:relative;height:130px;border-radius:14px;border:1.5px dashed var(--border);background:repeating-linear-gradient(45deg,transparent 0 12px,var(--surface2) 12px 24px);display:grid;place-items:center">
-            <span style="font:600 11px ui-monospace,monospace;color:var(--text3);letter-spacing:.08em;text-transform:uppercase">attached image</span>
-            <button onclick="{{removeComposerImg}}" style="position:absolute;top:8px;right:8px;width:26px;height:26px;border-radius:50%;border:none;background:var(--surface);color:var(--text2);cursor:pointer;display:grid;place-items:center;box-shadow:var(--shadow)">
+            <span style="font:600 11px ui-monospace,monospace;color:var(--text3);letter-spacing:.04em">{{composerMediaName}}</span>
+            <button onclick="{{removeComposerMedia}}" title="Remove selected media" style="position:absolute;top:8px;right:8px;width:26px;height:26px;border-radius:50%;border:none;background:var(--surface);color:var(--text2);cursor:pointer;display:grid;place-items:center;box-shadow:var(--shadow)">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M17.5 6.5l-11 11m0-11 11 11"></path></svg>
             </button>
           </div>
         </sc-if>
-        <sc-if value="{{privacyIsPrivate}}" hint-placeholder-val="{{false}}">
+        <sc-if value="{{privacyIsSelected}}" hint-placeholder-val="{{false}}">
           <div style="margin:10px 0 2px 52px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;animation:drop .25s ease both">
             <span style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">Visible to:</span>
             <sc-for list="{{followerChips}}" as="fc" hint-placeholder-count="3">
@@ -170,10 +170,13 @@
                 {{fc.name}}
               </button>
             </sc-for>
+            <sc-if value="{{selectedFollowersEmpty}}" hint-placeholder-val="{{false}}"><span style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">No accepted followers available.</span></sc-if>
           </div>
         </sc-if>
+        <sc-if value="{{composerHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="margin:10px 0 0 52px;font:600 12.5px/1.45 'Manrope',sans-serif;color:#c24141">{{composerError}}</div></sc-if>
         <div style="display:flex;align-items:center;gap:8px;margin-top:12px;padding-left:52px;position:relative">
-          <button onclick="{{toggleComposerImg}}" title="Add image or GIF" style="width:36px;height:36px;border-radius:12px;border:none;background:transparent;color:var(--text2);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--surface2)">
+          <input id="post-media" type="file" accept="image/jpeg,image/png,image/gif,image/webp" onchange="{{onComposerMedia}}" style="display:none">
+          <button onclick="{{pickComposerMedia}}" title="Add image or GIF" style="width:36px;height:36px;border-radius:12px;border:none;background:transparent;color:var(--text2);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--surface2)">
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm4.5 6a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM21 15.5 16 10 5 20"></path></svg>
           </button>
           <button onclick="{{togglePrivacy}}" style="display:flex;align-items:center;gap:7px;padding:8px 13px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text2);font:700 12.5px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
@@ -192,9 +195,15 @@
               </sc-for>
             </div>
           </sc-if>
-          <button onclick="{{sendPost}}" style="margin-left:auto;padding:9px 22px;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 13.5px 'Manrope',sans-serif;cursor:pointer;opacity:{{postBtnOp}};transition:opacity .2s,transform .15s" style-hover="transform:translateY(-1px)" style-active="transform:scale(.97)">Post</button>
+          <button onclick="{{sendPost}}" disabled="{{postBtnDisabled}}" style="margin-left:auto;padding:9px 22px;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 13.5px 'Manrope',sans-serif;cursor:pointer;opacity:{{postBtnOp}};transition:opacity .2s,transform .15s" style-hover="transform:translateY(-1px)" style-active="transform:scale(.97)">{{postButtonLabel}}</button>
         </div>
       </div>
+
+      <sc-if value="{{feedHasError}}" hint-placeholder-val="{{false}}">
+        <div role="alert" style="margin-bottom:18px;padding:14px 16px;border:1px solid color-mix(in oklab,var(--danger) 35%,var(--border));border-radius:14px;background:var(--surface);color:var(--danger);font:600 13px/1.45 'Manrope',sans-serif">
+          {{feedError}} <button onclick="{{retryFeed}}" style="margin-left:8px;border:none;background:transparent;color:var(--accent);font:800 13px 'Manrope',sans-serif;cursor:pointer">Retry</button>
+        </div>
+      </sc-if>
 
       <sc-if value="{{feedLoading}}" hint-placeholder-val="{{true}}">
         <div style="display:flex;flex-direction:column;gap:18px">
@@ -232,50 +241,11 @@
               </div>
               <p style="margin:12px 0 0;font:500 15px/1.55 'Manrope',sans-serif;text-wrap:pretty">{{p.text}}</p>
               <sc-if value="{{p.hasImage}}" hint-placeholder-val="{{false}}">
-                <div style="margin-top:13px;height:210px;border-radius:14px;border:1.5px dashed var(--border);background:repeating-linear-gradient(45deg,transparent 0 12px,var(--surface2) 12px 24px);display:grid;place-items:center">
-                  <span style="font:600 11px ui-monospace,monospace;color:var(--text3);letter-spacing:.08em;text-transform:uppercase">{{p.image}}</span>
-                </div>
-              </sc-if>
-              <div style="display:flex;gap:6px;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
-                <button onclick="{{p.onLike}}" style="display:flex;align-items:center;gap:7px;padding:7px 13px;border:none;border-radius:999px;background:transparent;color:{{p.likeColor}};font:700 13px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
-                  <sc-if value="{{p.liked}}" hint-placeholder-val="{{false}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="var(--danger)" stroke="var(--danger)" stroke-width="1.8" stroke-linejoin="round" style="animation:pop .4s ease both"><path d="M20.8 4.9a5.4 5.4 0 0 0-7.7 0l-1.1 1-1-1a5.4 5.4 0 1 0-7.7 7.7l8.7 8.7 8.8-8.7a5.4 5.4 0 0 0 0-7.7Z"></path></svg></sc-if>
-                  <sc-if value="{{p.notLiked}}" hint-placeholder-val="{{true}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M20.8 4.9a5.4 5.4 0 0 0-7.7 0l-1.1 1-1-1a5.4 5.4 0 1 0-7.7 7.7l8.7 8.7 8.8-8.7a5.4 5.4 0 0 0 0-7.7Z"></path></svg></sc-if>
-                  {{p.likes}}
-                </button>
-                <button onclick="{{p.onToggleComments}}" style="display:flex;align-items:center;gap:7px;padding:7px 13px;border:none;border-radius:999px;background:transparent;color:var(--text2);font:700 13px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>
-                  {{p.commentCount}}
-                </button>
-              </div>
-              <sc-if value="{{p.showComments}}" hint-placeholder-val="{{false}}">
-                <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px;animation:drop .25s ease both">
-                  <sc-for list="{{p.comments}}" as="c" hint-placeholder-count="1">
-                    <div style="display:flex;gap:10px">
-                      <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{c.user.color}};overflow:hidden">
-                        <sc-if value="{{c.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{c.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
-                        <sc-if value="{{c.user.noAvatar}}" hint-placeholder-val="{{true}}">{{c.user.initials}}</sc-if>
-                      </div>
-                      <div style="flex:1;background:var(--surface2);border-radius:4px 14px 14px 14px;padding:9px 13px">
-                        <span style="font:700 12.5px 'Manrope',sans-serif">{{c.user.name}}</span>
-                        <span style="font:600 11px 'Manrope',sans-serif;color:var(--text3)"> · {{c.time}}</span>
-                        <p style="margin:3px 0 0;font:500 13.5px/1.5 'Manrope',sans-serif">{{c.text}}</p>
-                      </div>
-                    </div>
-                  </sc-for>
-                  <div style="display:flex;gap:10px;align-items:center">
-                    <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{me.color}};overflow:hidden">
-                      <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{me.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
-                      <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
-                    </div>
-                    <input placeholder="Write a comment…" value="{{p.draft}}" onchange="{{p.onDraft}}" onkeydown="{{p.onKey}}" style="flex:1;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13.5px;outline-color:var(--accent)">
-                    <button onclick="{{p.onSendComment}}" style="width:36px;height:36px;border-radius:50%;border:none;background:var(--soft);color:var(--accent);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--soft2)">
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2.5 10.8 13.2m10.7-10.7-6.8 19-3.9-8.3-8.3-3.9Z"></path></svg>
-                    </button>
-                  </div>
-                </div>
+                <img src="{{p.mediaUrl}}" alt="Post media" style="display:block;width:100%;max-height:440px;margin-top:13px;border-radius:14px;border:1px solid var(--border);object-fit:cover">
               </sc-if>
             </article>
           </sc-for>
+          <sc-if value="{{feedHasMore}}" hint-placeholder-val="{{false}}"><button onclick="{{feedLoadMore}}" disabled="{{feedLoadMoreDisabled}}" style="align-self:center;padding:10px 20px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--text2);font:800 13px 'Manrope',sans-serif;cursor:pointer">{{feedLoadMoreLabel}}</button></sc-if>
         </div>
       </sc-if>
     </div>
@@ -404,6 +374,8 @@
         </div>
         <sc-if value="{{pTabPosts}}" hint-placeholder-val="{{true}}">
           <div style="display:flex;flex-direction:column;gap:18px">
+            <sc-if value="{{pPostsLoading}}" hint-placeholder-val="{{false}}"><div style="padding:28px;text-align:center;font:600 13.5px 'Manrope',sans-serif;color:var(--text3)">Loading posts…</div></sc-if>
+            <sc-if value="{{pPostsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="padding:18px;text-align:center;border:1px solid color-mix(in oklab,var(--danger) 35%,var(--border));border-radius:14px;color:var(--danger);font:600 13px 'Manrope',sans-serif">{{pPostsError}} <button onclick="{{retryProfilePosts}}" style="margin-left:8px;border:none;background:transparent;color:var(--accent);font:800 13px 'Manrope',sans-serif;cursor:pointer">Retry</button></div></sc-if>
             <sc-for list="{{pPosts}}" as="p" hint-placeholder-count="2">
               <article style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;animation:fadeUp .4s ease both">
                 <div style="display:flex;gap:12px;align-items:center">
@@ -419,19 +391,14 @@
                 </div>
                 <p style="margin:12px 0 0;font:500 15px/1.55 'Manrope',sans-serif;text-wrap:pretty">{{p.text}}</p>
                 <sc-if value="{{p.hasImage}}" hint-placeholder-val="{{false}}">
-                  <div style="margin-top:13px;height:190px;border-radius:14px;border:1.5px dashed var(--border);background:repeating-linear-gradient(45deg,transparent 0 12px,var(--surface2) 12px 24px);display:grid;place-items:center">
-                    <span style="font:600 11px ui-monospace,monospace;color:var(--text3);letter-spacing:.08em;text-transform:uppercase">{{p.image}}</span>
-                  </div>
+                  <img src="{{p.mediaUrl}}" alt="Post media" style="display:block;width:100%;max-height:440px;margin-top:13px;border-radius:14px;border:1px solid var(--border);object-fit:cover">
                 </sc-if>
-                <div style="display:flex;gap:16px;margin-top:12px;border-top:1px solid var(--border);padding-top:10px;font:700 13px 'Manrope',sans-serif;color:var(--text3)">
-                  <span style="display:flex;align-items:center;gap:6px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M20.8 4.9a5.4 5.4 0 0 0-7.7 0l-1.1 1-1-1a5.4 5.4 0 1 0-7.7 7.7l8.7 8.7 8.8-8.7a5.4 5.4 0 0 0 0-7.7Z"></path></svg>{{p.likes}}</span>
-                  <span style="display:flex;align-items:center;gap:6px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>{{p.commentCount}}</span>
-                </div>
               </article>
             </sc-for>
             <sc-if value="{{pNoPosts}}" hint-placeholder-val="{{false}}">
               <div style="padding:36px;text-align:center;font:600 13.5px 'Manrope',sans-serif;color:var(--text3)">No posts yet.</div>
             </sc-if>
+            <sc-if value="{{pPostsHasMore}}" hint-placeholder-val="{{false}}"><button onclick="{{loadMoreProfilePosts}}" disabled="{{profileLoadMoreDisabled}}" style="align-self:center;padding:10px 20px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--text2);font:800 13px 'Manrope',sans-serif;cursor:pointer">{{profileLoadMoreLabel}}</button></sc-if>
           </div>
         </sc-if>
         <sc-if value="{{pTabFollowers}}" hint-placeholder-val="{{false}}">
@@ -903,6 +870,7 @@
 
 </x-dc>
 <script src="js/avatar-url.js"></script>
+<script src="js/post-model.js"></script>
 <script type="text/x-dc" data-dc-script="" data-props="{&quot;accent&quot;: {&quot;editor&quot;: &quot;color&quot;, &quot;default&quot;: &quot;#5661d8&quot;, &quot;options&quot;: [&quot;#5661d8&quot;, &quot;#0e8577&quot;, &quot;#c14f70&quot;, &quot;#a06b23&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Theme&quot;}, &quot;radius&quot;: {&quot;editor&quot;: &quot;range&quot;, &quot;default&quot;: 18, &quot;min&quot;: 6, &quot;max&quot;: 26, &quot;step&quot;: 2, &quot;unit&quot;: &quot;px&quot;, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Theme&quot;}, &quot;defaultTheme&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;light&quot;, &quot;dark&quot;], &quot;default&quot;: &quot;light&quot;, &quot;tsType&quot;: &quot;'light' | 'dark'&quot;, &quot;section&quot;: &quot;Theme&quot;}}" data-src="js/app.js"></script>
 <script src="js/app-loader.js"></script>
 

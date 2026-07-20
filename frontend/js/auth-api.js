@@ -69,6 +69,13 @@
       return data;
     }
 
+    function pagePath(path, cursor, limit) {
+      var query = [];
+      if (cursor) query.push('cursor=' + encodeURIComponent(cursor));
+      if (limit) query.push('limit=' + encodeURIComponent(String(limit)));
+      return path + (query.length ? '?' + query.join('&') : '');
+    }
+
     return {
       register: function (formData) {
         return request('/api/auth/register', {
@@ -115,6 +122,31 @@
       deleteAvatar: function () {
         return request('/api/profile/avatar', {
           method: 'DELETE',
+          expectedStatus: 200
+        });
+      },
+      createPost: function (formData) {
+        return request('/api/posts', {
+          method: 'POST',
+          body: formData,
+          expectedStatus: 201
+        });
+      },
+      feed: function (cursor, limit) {
+        return request(pagePath('/api/posts/feed', cursor, limit), {
+          method: 'GET',
+          expectedStatus: 200
+        });
+      },
+      userPosts: function (userID, cursor, limit) {
+        return request(pagePath('/api/users/' + encodeURIComponent(String(userID)) + '/posts', cursor, limit), {
+          method: 'GET',
+          expectedStatus: 200
+        });
+      },
+      followers: function (userID) {
+        return request('/api/users/' + encodeURIComponent(String(userID)) + '/followers', {
+          method: 'GET',
           expectedStatus: 200
         });
       }

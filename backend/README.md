@@ -44,6 +44,7 @@ Current migrations:
 - `000004_create_sessions`
 - `000005_add_user_privacy`
 - `000006_create_follows`
+- `000007_create_posts`
 
 To inspect the current version with the SQLite CLI:
 
@@ -163,6 +164,46 @@ to their target through `GET /api/follow-requests`; the owner accepts one with
 `POST /api/follow-requests/{id}/accept` or rejects it with
 `DELETE /api/follow-requests/{id}`. Pending relations never count as followers.
 
+## Posts
+
+`POST /api/posts` creates a post from one strict `multipart/form-data`
+request. `text` and `privacy` must each occur exactly once. Text is trimmed,
+must contain 1–5000 Unicode code points, and is always required even when media
+is attached. Privacy is `public`, `followers`, or `selected`. Selected posts
+accept repeated `selected_user_id` values; duplicates are normalized and the
+result must contain 1–100 current accepted followers other than the author.
+Audience values on other privacy modes, unknown fields, and duplicate scalar
+fields return `400`.
+
+The optional `media` field accepts one JPEG, PNG, GIF, or WebP file up to 20
+MB. Media is staged before the SQL transaction. The transaction rechecks the
+selected followers, creates the media, post, and audience rows, then finalizes
+the file before commit. Any failure, including a commit failure after the move,
+rolls back every row and removes the staged or final file.
+
+`GET /api/posts/feed` returns the current user's posts plus posts from users
+they currently follow with an accepted relation. It is not a global public
+discovery feed. `GET /api/users/{id}/posts` returns accessible posts for one
+profile; a private-profile outsider receives `403`, while an unknown profile
+returns `404`. Both endpoints order by `(created_at DESC, id DESC)`, accept an
+opaque `cursor`, default to `limit=20`, enforce a maximum of 50, and return
+`posts` plus nullable `next_cursor`.
+
+Post access is filtered in SQLite before cursor pagination and LIMIT. Authors
+always see their own posts. For everyone else, a private author profile first
+requires a current accepted follow. `followers` posts require that relation,
+and `selected` posts additionally require the persisted audience row. Audience
+rows survive unfollow, so access disappears immediately and returns after the
+accepted relation is restored.
+
+Every post response contains the post ID, safe author summary, trimmed text,
+privacy, nullable `media_url`, and creation time. `GET /api/posts/{id}/media`
+rechecks the same current access policy on every authenticated request. It
+returns `403` for an existing but forbidden post and `404` for absent media,
+ownership mismatch, missing metadata, or a missing physical file. Successful
+responses use the detected MIME, actual file length,
+`X-Content-Type-Options: nosniff`, and `Cache-Control: private, no-store`.
+
 Supported environment variables:
 
 - `SOCIAL_NETWORK_HTTP_ADDR`
@@ -185,18 +226,22 @@ Implemented endpoints:
 - `GET /api/users/{id}/followers`
 - `GET /api/users/{id}/following`
 - `GET /api/users/{id}/avatar` (authenticated and privacy-controlled)
+- `GET /api/users/{id}/posts` (authenticated, privacy-filtered cursor pagination)
 - `GET /api/follow-requests`
 - `POST /api/follow-requests/{id}/accept`
 - `DELETE /api/follow-requests/{id}`
 - `GET /ws` (authenticated WebSocket)
 - `POST /api/media` (authenticated multipart upload, field name `file`)
 - `GET /uploads/{id}` (authenticated, owner-only)
+- `POST /api/posts` (authenticated multipart post creation)
+- `GET /api/posts/feed` (authenticated cursor feed)
+- `GET /api/posts/{id}/media` (authenticated and privacy-controlled)
 - `GET /static/avatars/{male,female,neutral}.svg`
 - `GET /` and frontend assets (local development and browser smoke only)
 
 All other reserved API groups currently return JSON `501 Not Implemented`.
 
-Posts and frontend follower controls are intentionally not implemented yet.
+Frontend follower controls are intentionally not implemented yet.
 
 The local frontend file server does not replace the planned Docker topology.
 The final setup keeps the backend private and serves the frontend through a

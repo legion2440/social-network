@@ -101,6 +101,11 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		return nil, fmt.Errorf("avatar storage init: %w", err)
 	}
 	transactions := sqlite.NewTransactionManager(db)
+	postStager, err := service.NewMediaStager(ids, cfg.UploadDir, service.MaxMediaBytes)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("post media storage init: %w", err)
+	}
 	auth := service.NewAuthService(
 		users,
 		transactions,
@@ -112,6 +117,8 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 	profile := service.NewProfileService(transactions, appClock, avatarStager, log.Default())
 	follows := service.NewFollowService(users, sqlite.NewFollowRepo(db), transactions, appClock)
 	avatarDelivery := service.NewAvatarDeliveryService(transactions, cfg.UploadDir)
+	posts := service.NewPostService(transactions, appClock, postStager)
+	postMedia := service.NewPostMediaDeliveryService(transactions, cfg.UploadDir)
 	handler := httpserver.NewHandler(
 		db,
 		sessions,
@@ -120,6 +127,8 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		profile,
 		follows,
 		avatarDelivery,
+		posts,
+		postMedia,
 		httpserver.NewCookieSessionTokenExtractor(config.SessionCookieName),
 		cfg.CookieSecure,
 		cfg.FrontendDir,

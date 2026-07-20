@@ -18,6 +18,8 @@ type Handler struct {
 	profile      *service.ProfileService
 	follows      *service.FollowService
 	avatars      *service.AvatarDeliveryService
+	posts        *service.PostService
+	postMedia    *service.PostMediaDeliveryService
 	sessionToken SessionTokenExtractor
 	cookieSecure bool
 	frontend     http.Handler
@@ -32,6 +34,8 @@ func NewHandler(
 	profile *service.ProfileService,
 	follows *service.FollowService,
 	avatars *service.AvatarDeliveryService,
+	posts *service.PostService,
+	postMedia *service.PostMediaDeliveryService,
 	sessionToken SessionTokenExtractor,
 	cookieSecure bool,
 	frontendDir string,
@@ -51,6 +55,8 @@ func NewHandler(
 		profile:      profile,
 		follows:      follows,
 		avatars:      avatars,
+		posts:        posts,
+		postMedia:    postMedia,
 		sessionToken: sessionToken,
 		cookieSecure: cookieSecure,
 		frontend:     newFrontendHandler(frontendDir),
@@ -85,12 +91,17 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/users/{id}/followers", protected(h.handleFollowers))
 	mux.Handle("/api/users/{id}/following", protected(h.handleFollowing))
 	mux.Handle("/api/users/{id}/avatar", protected(h.handleUserAvatar))
+	mux.Handle("/api/users/{id}/posts", protected(h.handleUserPosts))
 	mux.Handle("/api/follow-requests", protected(h.handleFollowRequests))
 	mux.Handle("/api/follow-requests/{id}/accept", protected(h.handleFollowRequestAccept))
 	mux.Handle("/api/follow-requests/{id}", protected(h.handleFollowRequestReject))
 	mux.Handle("/api/follow-requests/", protected(h.handleNotImplemented))
 	mux.Handle("/ws", protected(h.handleWS))
 	mux.Handle("/api/media", protected(h.handleMediaUpload))
+	mux.Handle("/api/posts", protected(h.handlePosts))
+	mux.Handle("/api/posts/feed", protected(h.handlePostFeed))
+	mux.Handle("/api/posts/{id}/media", protected(h.handlePostMedia))
+	mux.HandleFunc("/api/posts/", h.handleNotImplemented)
 	mux.Handle("/uploads/", protected(h.handleMediaDownload))
 	mux.Handle("/static/avatars/", http.FileServer(http.FS(avatarPlaceholderFiles)))
 
@@ -98,7 +109,6 @@ func (h *Handler) Routes() http.Handler {
 		"/api/auth",
 		"/api/users",
 		"/api/follow",
-		"/api/posts",
 		"/api/groups",
 		"/api/events",
 		"/api/chats",

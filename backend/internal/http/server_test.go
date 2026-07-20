@@ -85,6 +85,7 @@ type testEnvironment struct {
 	users        *sqlite.UserRepo
 	sessions     *service.SessionService
 	follows      *service.FollowService
+	posts        *service.PostService
 	uploadDir    string
 	cookieSecure bool
 }
@@ -122,13 +123,20 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 	profile := service.NewProfileService(transactions, fixedClock{}, avatarStager, nil)
 	follows := service.NewFollowService(users, sqlite.NewFollowRepo(db), transactions, fixedClock{})
 	avatarDelivery := service.NewAvatarDeliveryService(transactions, uploadDir)
+	postStager, err := service.NewMediaStager(ids, uploadDir, service.MaxMediaBytes)
+	if err != nil {
+		t.Fatalf("new post media stager: %v", err)
+	}
+	posts := service.NewPostService(transactions, fixedClock{}, postStager)
+	postMedia := service.NewPostMediaDeliveryService(transactions, uploadDir)
 
 	return &testEnvironment{
 		db:        db,
-		handler:   NewHandler(db, sessions, media, auth, profile, follows, avatarDelivery, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
+		handler:   NewHandler(db, sessions, media, auth, profile, follows, avatarDelivery, posts, postMedia, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
 		users:     users,
 		sessions:  sessions,
 		follows:   follows,
+		posts:     posts,
 		uploadDir: uploadDir,
 	}
 }
@@ -270,6 +278,8 @@ func newSessionFailureHandlerWithFrontend(store *failingSessionRepo, frontendDir
 		sessions,
 		nil,
 		auth,
+		nil,
+		nil,
 		nil,
 		nil,
 		nil,

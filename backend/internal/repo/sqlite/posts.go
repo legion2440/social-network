@@ -1,0 +1,237 @@
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"social-network/backend/internal/domain"
+	"social-network/backend/internal/repo"
+)
+
+type PostRepo struct {
+	db sqlExecutor
+}
+
+func NewPostRepo(db *sql.DB) *PostRepo {
+	return &PostRepo{db: db}
+}
+
+const postSelectColumns = `
+	p.id, p.author_user_id, p.text, p.privacy, p.media_id, p.created_at,
+	u.id, u.first_name, u.last_name, u.gender, u.nickname,
+	u.avatar_media_id, u.is_private
+`
+
+// Every post read uses this predicate. viewer_follow is the current accepted
+// relation from the viewer to the post author, joined by each query.
+const postAccessPredicate = `
+	(
+		p.author_user_id = ?
+		OR (
+			(u.is_private = 0 OR viewer_follow.id IS NOT NULL)
+			AND (
+				p.privacy = 'public'
+				OR (p.privacy = 'followers' AND viewer_follow.id IS NOT NULL)
+				OR (
+					p.privacy = 'selected'
+					AND viewer_follow.id IS NOT NULL
+					AND EXISTS (
+						SELECT 1
+						FROM post_selected_users audience
+						WHERE audience.post_id = p.id AND audience.user_id = ?
+					)
+				)
+			)
+		)
+	)
+`
+
+const postFromAndViewerJoin = `
+	FROM posts p
+	JOIN users u ON u.id = p.author_user_id
+	LEFT JOIN follows viewer_follow
+		ON viewer_follow.follower_user_id = ?
+		AND viewer_follow.followed_user_id = p.author_user_id
+		AND viewer_follow.status = 'accepted'
+`
+
+func (r *PostRepo) Create(ctx context.Context, post *domain.Post) (int64, error) {
+	if r == nil || r.db == nil || post == nil || post.AuthorUserID <= 0 || post.Text == "" || !post.Privacy.Valid() || post.CreatedAt.IsZero() {
+		return 0, fmt.Errorf("invalid post")
+	}
+	result, err := r.db.ExecContext(ctx, `
+		INSERT INTO posts (author_user_id, text, privacy, media_id, created_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, post.AuthorUserID, post.Text, post.Privacy, post.MediaID, timeToUnix(post.CreatedAt))
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (r *PostRepo) AddSelectedUsers(ctx context.Context, postID int64, userIDs []int64) error {
+	if r == nil || r.db == nil || postID <= 0 {
+		return fmt.Errorf("invalid post audience")
+	}
+	for _, userID := range userIDs {
+		if userID <= 0 {
+			return fmt.Errorf("invalid post audience user")
+		}
+		if _, err := r.db.ExecContext(ctx, `
+			INSERT INTO post_selected_users (post_id, user_id)
+			VALUES (?, ?)
+		`, postID, userID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *PostRepo) GetByID(ctx context.Context, postID int64) (*domain.Post, error) {
+	if r == nil || r.db == nil || postID <= 0 {
+		return nil, repo.ErrNotFound
+	}
+	query := `SELECT ` + postSelectColumns + `
+		FROM posts p
+		JOIN users u ON u.id = p.author_user_id
+		WHERE p.id = ?`
+	return scanPost(r.db.QueryRowContext(ctx, query, postID))
+}
+
+func (r *PostRepo) GetAccessibleByID(ctx context.Context, viewerUserID, postID int64) (*domain.Post, error) {
+	if r == nil || r.db == nil || viewerUserID <= 0 || postID <= 0 {
+		return nil, repo.ErrNotFound
+	}
+	query := `SELECT ` + postSelectColumns + postFromAndViewerJoin + `
+		WHERE p.id = ? AND ` + postAccessPredicate
+	return scanPost(r.db.QueryRowContext(ctx, query, viewerUserID, postID, viewerUserID, viewerUserID))
+}
+
+func (r *PostRepo) ListFeed(
+	ctx context.Context,
+	viewerUserID int64,
+	cursor *domain.PostCursor,
+	limit int,
+) ([]*domain.Post, error) {
+	if r == nil || r.db == nil || viewerUserID <= 0 || limit <= 0 {
+		return []*domain.Post{}, nil
+	}
+	query := `SELECT ` + postSelectColumns + postFromAndViewerJoin + `
+		WHERE (p.author_user_id = ? OR viewer_follow.id IS NOT NULL)
+		AND ` + postAccessPredicate
+	args := []any{viewerUserID, viewerUserID, viewerUserID, viewerUserID}
+	query, args = appendPostCursor(query, args, cursor)
+	query += ` ORDER BY p.created_at DESC, p.id DESC LIMIT ?`
+	args = append(args, limit)
+	return r.list(ctx, query, args...)
+}
+
+func (r *PostRepo) ListByAuthor(
+	ctx context.Context,
+	viewerUserID, authorUserID int64,
+	cursor *domain.PostCursor,
+	limit int,
+) ([]*domain.Post, error) {
+	if r == nil || r.db == nil || viewerUserID <= 0 || authorUserID <= 0 || limit <= 0 {
+		return []*domain.Post{}, nil
+	}
+	query := `SELECT ` + postSelectColumns + postFromAndViewerJoin + `
+		WHERE p.author_user_id = ? AND ` + postAccessPredicate
+	args := []any{viewerUserID, authorUserID, viewerUserID, viewerUserID}
+	query, args = appendPostCursor(query, args, cursor)
+	query += ` ORDER BY p.created_at DESC, p.id DESC LIMIT ?`
+	args = append(args, limit)
+	return r.list(ctx, query, args...)
+}
+
+func appendPostCursor(query string, args []any, cursor *domain.PostCursor) (string, []any) {
+	if cursor == nil {
+		return query, args
+	}
+	timestamp := timeToUnix(cursor.CreatedAt)
+	query += ` AND (p.created_at < ? OR (p.created_at = ? AND p.id < ?))`
+	return query, append(args, timestamp, timestamp, cursor.ID)
+}
+
+func (r *PostRepo) list(ctx context.Context, query string, args ...any) ([]*domain.Post, error) {
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	posts := make([]*domain.Post, 0)
+	for rows.Next() {
+		post, err := scanPost(rows)
+		if err != nil {
+			return nil, err
+		}
+		posts = append(posts, post)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return posts, nil
+}
+
+func scanPost(row rowScanner) (*domain.Post, error) {
+	var (
+		post          domain.Post
+		author        domain.User
+		privacy       string
+		mediaID       sql.NullInt64
+		createdAt     int64
+		gender        sql.NullString
+		nickname      sql.NullString
+		avatarMediaID sql.NullInt64
+		isPrivate     int
+	)
+	if err := row.Scan(
+		&post.ID,
+		&post.AuthorUserID,
+		&post.Text,
+		&privacy,
+		&mediaID,
+		&createdAt,
+		&author.ID,
+		&author.FirstName,
+		&author.LastName,
+		&gender,
+		&nickname,
+		&avatarMediaID,
+		&isPrivate,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, repo.ErrNotFound
+		}
+		return nil, err
+	}
+
+	post.Privacy = domain.PostPrivacy(privacy)
+	if !post.Privacy.Valid() {
+		return nil, fmt.Errorf("invalid post privacy: %q", privacy)
+	}
+	if mediaID.Valid {
+		value := mediaID.Int64
+		post.MediaID = &value
+	}
+	post.CreatedAt = unixToTime(createdAt)
+
+	parsedGender, err := genderFromNullString(gender)
+	if err != nil {
+		return nil, err
+	}
+	author.Gender = parsedGender
+	author.Nickname = stringFromNullString(nickname)
+	if avatarMediaID.Valid {
+		value := avatarMediaID.Int64
+		author.AvatarMediaID = &value
+	}
+	if isPrivate != 0 && isPrivate != 1 {
+		return nil, fmt.Errorf("invalid is_private value: %d", isPrivate)
+	}
+	author.IsPrivate = isPrivate == 1
+	post.Author = &author
+	return &post, nil
+}
