@@ -129,11 +129,11 @@ func (s *FollowService) RejectRequest(ctx context.Context, currentUserID, reques
 	})
 }
 
-func (s *FollowService) ListFollowers(ctx context.Context, currentUserID, targetUserID int64) ([]*domain.User, error) {
+func (s *FollowService) ListFollowers(ctx context.Context, currentUserID, targetUserID int64) ([]*domain.RelatedUser, error) {
 	return s.listFollowUsers(ctx, currentUserID, targetUserID, true)
 }
 
-func (s *FollowService) ListFollowing(ctx context.Context, currentUserID, targetUserID int64) ([]*domain.User, error) {
+func (s *FollowService) ListFollowing(ctx context.Context, currentUserID, targetUserID int64) ([]*domain.RelatedUser, error) {
 	return s.listFollowUsers(ctx, currentUserID, targetUserID, false)
 }
 
@@ -169,21 +169,21 @@ func (s *FollowService) listFollowUsers(
 	ctx context.Context,
 	currentUserID, targetUserID int64,
 	followers bool,
-) ([]*domain.User, error) {
+) ([]*domain.RelatedUser, error) {
 	if s == nil || s.transactions == nil || currentUserID <= 0 || targetUserID <= 0 {
 		return nil, ErrInvalidInput
 	}
 
-	var users []*domain.User
+	var users []*domain.RelatedUser
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
 		if _, err := authorizeProfileRead(ctx, repositories.Users(), repositories.Follows(), currentUserID, targetUserID); err != nil {
 			return err
 		}
 		var err error
 		if followers {
-			users, err = repositories.Follows().ListFollowers(ctx, targetUserID)
+			users, err = repositories.Follows().ListFollowers(ctx, targetUserID, currentUserID)
 		} else {
-			users, err = repositories.Follows().ListFollowing(ctx, targetUserID)
+			users, err = repositories.Follows().ListFollowing(ctx, targetUserID, currentUserID)
 		}
 		return err
 	})

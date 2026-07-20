@@ -75,7 +75,7 @@ func (h *Handler) handleFollowUserList(w http.ResponseWriter, r *http.Request, f
 	current, _ := CurrentUserFromContext(r.Context())
 
 	var (
-		users []*domain.User
+		users []*domain.RelatedUser
 		err   error
 	)
 	if followers {
@@ -86,9 +86,9 @@ func (h *Handler) handleFollowUserList(w http.ResponseWriter, r *http.Request, f
 	if h.handleFollowServiceError(w, err) {
 		return
 	}
-	items := make([]userSummaryResponse, 0, len(users))
+	items := make([]relatedUserSummaryResponse, 0, len(users))
 	for _, user := range users {
-		items = append(items, newUserSummaryResponse(user))
+		items = append(items, newRelatedUserSummaryResponse(user))
 	}
 	writeJSON(w, http.StatusOK, userListResponse{Users: items})
 }
@@ -212,6 +212,11 @@ type userSummaryResponse struct {
 	IsPrivate bool    `json:"is_private"`
 }
 
+type relatedUserSummaryResponse struct {
+	userSummaryResponse
+	Relationship relationshipResponse `json:"relationship"`
+}
+
 func newUserSummaryResponse(user *domain.User) userSummaryResponse {
 	if user == nil {
 		return userSummaryResponse{}
@@ -226,8 +231,25 @@ func newUserSummaryResponse(user *domain.User) userSummaryResponse {
 	}
 }
 
+func newRelatedUserSummaryResponse(user *domain.RelatedUser) relatedUserSummaryResponse {
+	if user == nil {
+		return relatedUserSummaryResponse{Relationship: relationshipResponse{Status: service.RelationshipNone}}
+	}
+	status := service.RelationshipNone
+	if user.Status != nil {
+		status = relationshipStatusResponse(*user.Status)
+	}
+	return relatedUserSummaryResponse{
+		userSummaryResponse: newUserSummaryResponse(user.User),
+		Relationship: relationshipResponse{
+			Status:    status,
+			FollowsMe: user.FollowsMe,
+		},
+	}
+}
+
 type userListResponse struct {
-	Users []userSummaryResponse `json:"users"`
+	Users []relatedUserSummaryResponse `json:"users"`
 }
 
 type followRequestResponse struct {

@@ -73,3 +73,8 @@ type User struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
+
+type UserCursor struct {
+	CreatedAt time.Time
+	ID        int64
+}

@@ -145,6 +145,26 @@ func (r *PostRepo) ListByAuthor(
 	return r.list(ctx, query, args...)
 }
 
+func (r *PostRepo) CountAccessibleByAuthor(ctx context.Context, viewerUserID, authorUserID int64) (int64, error) {
+	if r == nil || r.db == nil || viewerUserID <= 0 || authorUserID <= 0 {
+		return 0, nil
+	}
+	query := `SELECT COUNT(*)` + postFromAndViewerJoin + `
+		WHERE p.author_user_id = ? AND ` + postAccessPredicate
+	var count int64
+	if err := r.db.QueryRowContext(
+		ctx,
+		query,
+		viewerUserID,
+		authorUserID,
+		viewerUserID,
+		viewerUserID,
+	).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func appendPostCursor(query string, args []any, cursor *domain.PostCursor) (string, []any) {
 	if cursor == nil {
 		return query, args

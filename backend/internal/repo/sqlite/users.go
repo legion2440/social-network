@@ -182,6 +182,61 @@ func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*domain.User, 
 	return scanUser(row)
 }
 
+func (r *UserRepo) ListDirectory(
+	ctx context.Context,
+	viewerUserID int64,
+	cursor *domain.UserCursor,
+	limit int,
+) ([]*domain.RelatedUser, error) {
+	if viewerUserID <= 0 || limit <= 0 {
+		return []*domain.RelatedUser{}, nil
+	}
+	query := `
+		SELECT
+			u.id, u.email, u.password_hash, u.first_name, u.last_name,
+			u.date_of_birth, u.gender, u.nickname, u.about_me,
+			u.avatar_media_id, u.is_private, u.created_at, u.updated_at,
+			viewer_out.status,
+			CASE WHEN viewer_in.id IS NULL THEN 0 ELSE 1 END
+		FROM users u
+		LEFT JOIN follows viewer_out
+			ON viewer_out.follower_user_id = ?
+			AND viewer_out.followed_user_id = u.id
+		LEFT JOIN follows viewer_in
+			ON viewer_in.follower_user_id = u.id
+			AND viewer_in.followed_user_id = ?
+			AND viewer_in.status = 'accepted'
+		WHERE u.id != ?
+	`
+	args := []any{viewerUserID, viewerUserID, viewerUserID}
+	if cursor != nil {
+		timestamp := timeToUnix(cursor.CreatedAt)
+		query += ` AND (u.created_at < ? OR (u.created_at = ? AND u.id < ?))`
+		args = append(args, timestamp, timestamp, cursor.ID)
+	}
+	query += ` ORDER BY u.created_at DESC, u.id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	users := make([]*domain.RelatedUser, 0)
+	for rows.Next() {
+		user, err := scanRelatedUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -238,6 +293,72 @@ func scanUser(row rowScanner) (*domain.User, error) {
 	user.CreatedAt = unixToTime(createdAt)
 	user.UpdatedAt = unixToTime(updatedAt)
 	return &user, nil
+}
+
+func scanRelatedUser(row rowScanner) (*domain.RelatedUser, error) {
+	var (
+		user                       domain.User
+		createdAt, updatedAt       int64
+		isPrivate, followsMe       int
+		gender, nickname, aboutMe  sql.NullString
+		avatarMediaID              sql.NullInt64
+		outgoingRelationshipStatus sql.NullString
+	)
+	if err := row.Scan(
+		&user.ID,
+		&user.Email,
+		&user.PasswordHash,
+		&user.FirstName,
+		&user.LastName,
+		&user.DateOfBirth,
+		&gender,
+		&nickname,
+		&aboutMe,
+		&avatarMediaID,
+		&isPrivate,
+		&createdAt,
+		&updatedAt,
+		&outgoingRelationshipStatus,
+		&followsMe,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, repo.ErrNotFound
+		}
+		return nil, err
+	}
+
+	user.FirstName = strings.TrimSpace(user.FirstName)
+	user.LastName = strings.TrimSpace(user.LastName)
+	if !domain.ValidDateOfBirth(user.DateOfBirth) {
+		return nil, fmt.Errorf("%w: %q", domain.ErrInvalidDateOfBirth, user.DateOfBirth)
+	}
+	parsedGender, err := genderFromNullString(gender)
+	if err != nil {
+		return nil, err
+	}
+	user.Gender = parsedGender
+	user.Nickname = stringFromNullString(nickname)
+	user.AboutMe = stringFromNullString(aboutMe)
+	if isPrivate != 0 && isPrivate != 1 {
+		return nil, fmt.Errorf("invalid is_private value: %d", isPrivate)
+	}
+	user.IsPrivate = isPrivate == 1
+	if avatarMediaID.Valid {
+		value := avatarMediaID.Int64
+		user.AvatarMediaID = &value
+	}
+	user.CreatedAt = unixToTime(createdAt)
+	user.UpdatedAt = unixToTime(updatedAt)
+
+	related := &domain.RelatedUser{User: &user, FollowsMe: followsMe != 0}
+	if outgoingRelationshipStatus.Valid {
+		status := domain.FollowStatus(outgoingRelationshipStatus.String)
+		if !status.Valid() {
+			return nil, fmt.Errorf("invalid follow status: %q", outgoingRelationshipStatus.String)
+		}
+		related.Status = &status
+	}
+	return related, nil
 }
 
 func nullableGender(gender *domain.Gender) (any, error) {

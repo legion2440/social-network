@@ -227,7 +227,7 @@
             <article style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;animation:fadeUp .45s ease both;animation-delay:{{p.delay}}">
               <div style="display:flex;gap:12px;align-items:center">
                 <div onclick="{{p.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{p.user.color}};overflow:hidden">
-                  <sc-if value="{{p.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{p.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                  <sc-if value="{{p.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{p.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
                   <sc-if value="{{p.user.noAvatar}}" hint-placeholder-val="{{true}}">{{p.user.initials}}</sc-if>
                 </div>
                 <div style="flex:1;min-width:0">
@@ -251,6 +251,21 @@
     </div>
     </sc-if>
 
+    <sc-if value="{{isProfileLoading}}" hint-placeholder-val="{{false}}">
+    <div data-screen-label="Profile loading" style="max-width:640px;margin:0 auto;animation:screenIn .3s ease both">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:44px 24px;text-align:center;font:600 13.5px 'Manrope',sans-serif;color:var(--text3)">Loading profile…</div>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{isProfileError}}" hint-placeholder-val="{{false}}">
+    <div data-screen-label="Profile error" style="max-width:640px;margin:0 auto;animation:screenIn .3s ease both">
+      <div role="alert" style="background:var(--surface);border:1px solid color-mix(in oklab,var(--danger) 35%,var(--border));border-radius:var(--r);box-shadow:var(--shadow);padding:36px 24px;text-align:center;color:var(--danger);font:650 13.5px/1.5 'Manrope',sans-serif">
+        {{profileError}}
+        <button onclick="{{retryProfile}}" style="display:block;margin:16px auto 0;padding:9px 20px;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 13px 'Manrope',sans-serif;cursor:pointer">Retry</button>
+      </div>
+    </div>
+    </sc-if>
+
     <sc-if value="{{isProfile}}" hint-placeholder-val="{{false}}">
     <div data-screen-label="Profile" style="max-width:640px;margin:0 auto;animation:screenIn .3s ease both">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;margin-bottom:18px">
@@ -258,7 +273,7 @@
         <div style="padding:0 22px 20px">
           <div style="display:flex;align-items:flex-end;gap:16px;margin-top:-34px;flex-wrap:wrap">
             <div style="width:84px;height:84px;flex:none;border-radius:50%;display:grid;place-items:center;color:#fff;font:800 26px 'Manrope',sans-serif;border:4px solid var(--surface);background:{{pUser.color}};overflow:hidden">
-              <sc-if value="{{pUser.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{pUser.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+              <sc-if value="{{pUser.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{pUser.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
               <sc-if value="{{pUser.noAvatar}}" hint-placeholder-val="{{true}}">{{pUser.initials}}</sc-if>
             </div>
             <div style="margin-left:auto;padding-bottom:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -275,7 +290,7 @@
                 </div>
               </sc-if>
               <sc-if value="{{pOther}}" hint-placeholder-val="{{false}}">
-                <button onclick="{{onFollow}}" style="padding:9px 22px;border-radius:999px;cursor:pointer;font:800 13.5px 'Manrope',sans-serif;border:1.5px solid {{followBd}};background:{{followBg}};color:{{followColor}};transition:all .2s" style-active="transform:scale(.97)">{{followLabel}}</button>
+                <button onclick="{{onFollow}}" disabled="{{followDisabled}}" style="padding:9px 22px;border-radius:999px;cursor:pointer;font:800 13.5px 'Manrope',sans-serif;border:1.5px solid {{followBd}};background:{{followBg}};color:{{followColor}};transition:all .2s" style-active="transform:scale(.97)">{{followLabel}}</button>
                 <button onclick="{{msgProfile}}" title="Message" style="width:38px;height:38px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--surface2)">
                   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-3-.4-4.2-1.1L3 21l2.1-5.3A8.5 8.5 0 1 1 21 11.5Z"></path></svg>
                 </button>
@@ -284,6 +299,9 @@
           </div>
           <sc-if value="{{profilePrivacyHasError}}" hint-placeholder-val="{{false}}">
             <div role="alert" style="margin:8px 0 0;text-align:right;font:600 12px/1.4 'Manrope',sans-serif;color:#c24141">{{profilePrivacyError}}</div>
+          </sc-if>
+          <sc-if value="{{followHasError}}" hint-placeholder-val="{{false}}">
+            <div role="alert" style="margin:8px 0 0;text-align:right;font:600 12px/1.4 'Manrope',sans-serif;color:#c24141">{{followError}}</div>
           </sc-if>
           <div style="display:flex;align-items:center;gap:8px;margin-top:12px">
             <h1 style="font:800 21px 'Manrope',sans-serif;margin:0">{{pUser.name}}</h1>
@@ -298,7 +316,7 @@
               <span><b style="color:var(--text);font-weight:800">{{pStatFollowing}}</b> following</span>
             </div>
             <div style="display:flex;gap:18px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font:600 12.5px 'Manrope',sans-serif;color:var(--text3);flex-wrap:wrap">
-              <span style="display:flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6.5h17v12h-17zM3.5 7l8.5 6 8.5-6"></path></svg>{{pUser.email}}</span>
+              <sc-if value="{{pShowEmail}}" hint-placeholder-val="{{false}}"><span style="display:flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6.5h17v12h-17zM3.5 7l8.5 6 8.5-6"></path></svg>{{pUser.email}}</span></sc-if>
               <span style="display:flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v3m8-3v3M3.5 9h17m-15-3.5h13a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z"></path></svg>Born {{pUser.dob}}</span>
             </div>
           </sc-if>
@@ -372,6 +390,8 @@
             <button onclick="{{pt.pick}}" style="padding:11px 16px;border:none;background:transparent;cursor:pointer;font:800 13.5px 'Manrope',sans-serif;color:{{pt.color}};border-bottom:2.5px solid {{pt.bd}};margin-bottom:-1px;transition:color .2s">{{pt.label}}</button>
           </sc-for>
         </div>
+        <sc-if value="{{pListsLoading}}" hint-placeholder-val="{{false}}"><div style="padding:10px 4px 16px;font:600 12.5px 'Manrope',sans-serif;color:var(--text3)">Loading followers…</div></sc-if>
+        <sc-if value="{{pListsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="padding:10px 12px;margin-bottom:14px;border-radius:12px;color:var(--danger);font:600 12.5px 'Manrope',sans-serif">{{pListsError}}</div></sc-if>
         <sc-if value="{{pTabPosts}}" hint-placeholder-val="{{true}}">
           <div style="display:flex;flex-direction:column;gap:18px">
             <sc-if value="{{pPostsLoading}}" hint-placeholder-val="{{false}}"><div style="padding:28px;text-align:center;font:600 13.5px 'Manrope',sans-serif;color:var(--text3)">Loading posts…</div></sc-if>
@@ -380,7 +400,7 @@
               <article style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;animation:fadeUp .4s ease both">
                 <div style="display:flex;gap:12px;align-items:center">
                   <div style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;background:{{p.user.color}};overflow:hidden">
-                    <sc-if value="{{p.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{p.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                    <sc-if value="{{p.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{p.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
                     <sc-if value="{{p.user.noAvatar}}" hint-placeholder-val="{{true}}">{{p.user.initials}}</sc-if>
                   </div>
                   <div style="flex:1"><span style="font:700 14.5px 'Manrope',sans-serif">{{p.user.name}}</span><div style="font:600 12.5px 'Manrope',sans-serif;color:var(--text3)">{{p.time}}</div></div>
@@ -406,7 +426,7 @@
             <sc-for list="{{pFollowers}}" as="f" hint-placeholder-count="3">
               <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px 16px">
                 <div onclick="{{f.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{f.user.color}};overflow:hidden">
-                  <sc-if value="{{f.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{f.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                  <sc-if value="{{f.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{f.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
                   <sc-if value="{{f.user.noAvatar}}" hint-placeholder-val="{{true}}">{{f.user.initials}}</sc-if>
                 </div>
                 <div onclick="{{f.goProfile}}" style="flex:1;min-width:0;cursor:pointer">
@@ -414,7 +434,7 @@
                   <div style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">{{f.user.handle}}</div>
                 </div>
                 <sc-if value="{{f.showBtn}}" hint-placeholder-val="{{false}}">
-                  <button onclick="{{f.onBtn}}" style="padding:8px 18px;border-radius:999px;cursor:pointer;font:800 12.5px 'Manrope',sans-serif;border:1.5px solid {{f.btnBd}};background:{{f.btnBg}};color:{{f.btnColor}};transition:all .2s">{{f.btnLabel}}</button>
+                  <button onclick="{{f.onBtn}}" disabled="{{f.btnDisabled}}" style="padding:8px 18px;border-radius:999px;cursor:pointer;font:800 12.5px 'Manrope',sans-serif;border:1.5px solid {{f.btnBd}};background:{{f.btnBg}};color:{{f.btnColor}};transition:all .2s">{{f.btnLabel}}</button>
                 </sc-if>
               </div>
             </sc-for>
@@ -425,7 +445,7 @@
             <sc-for list="{{pFollowing}}" as="f" hint-placeholder-count="3">
               <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px 16px">
                 <div onclick="{{f.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{f.user.color}};overflow:hidden">
-                  <sc-if value="{{f.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{f.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                  <sc-if value="{{f.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{f.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
                   <sc-if value="{{f.user.noAvatar}}" hint-placeholder-val="{{true}}">{{f.user.initials}}</sc-if>
                 </div>
                 <div onclick="{{f.goProfile}}" style="flex:1;min-width:0;cursor:pointer">
@@ -433,7 +453,7 @@
                   <div style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">{{f.user.handle}}</div>
                 </div>
                 <sc-if value="{{f.showBtn}}" hint-placeholder-val="{{false}}">
-                  <button onclick="{{f.onBtn}}" style="padding:8px 18px;border-radius:999px;cursor:pointer;font:800 12.5px 'Manrope',sans-serif;border:1.5px solid {{f.btnBd}};background:{{f.btnBg}};color:{{f.btnColor}};transition:all .2s">{{f.btnLabel}}</button>
+                  <button onclick="{{f.onBtn}}" disabled="{{f.btnDisabled}}" style="padding:8px 18px;border-radius:999px;cursor:pointer;font:800 12.5px 'Manrope',sans-serif;border:1.5px solid {{f.btnBd}};background:{{f.btnBg}};color:{{f.btnColor}};transition:all .2s">{{f.btnLabel}}</button>
                 </sc-if>
               </div>
             </sc-for>
@@ -787,12 +807,13 @@
         <h1 style="font:800 22px 'Manrope',sans-serif;margin:0">Notifications</h1>
         <button onclick="{{markAllRead}}" style="margin-left:auto;padding:8px 16px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text2);font:700 12.5px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">Mark all as read</button>
       </div>
+      <sc-if value="{{followRequestsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="margin-bottom:12px;padding:11px 13px;border:1px solid color-mix(in oklab,var(--danger) 35%,var(--border));border-radius:12px;color:var(--danger);font:600 12.5px 'Manrope',sans-serif">{{followRequestsError}}</div></sc-if>
       <div style="display:flex;flex-direction:column;gap:10px">
         <sc-for list="{{notifItems}}" as="nt" hint-placeholder-count="4">
           <div style="display:flex;gap:13px;align-items:flex-start;border:1px solid var(--border);border-radius:var(--r);padding:15px 17px;background:{{nt.bg}};animation:fadeUp .4s ease both;animation-delay:{{nt.delay}};transition:background .3s">
             <div style="position:relative;flex:none">
               <div onclick="{{nt.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{nt.user.color}};overflow:hidden">
-                <sc-if value="{{nt.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{nt.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                <sc-if value="{{nt.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{nt.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
                 <sc-if value="{{nt.user.noAvatar}}" hint-placeholder-val="{{true}}">{{nt.user.initials}}</sc-if>
               </div>
               <span style="position:absolute;bottom:-3px;right:-3px;width:20px;height:20px;border-radius:50%;background:var(--surface);border:1px solid var(--border);display:grid;place-items:center">
@@ -804,8 +825,8 @@
               <div style="font:600 11.5px 'Manrope',sans-serif;color:var(--text3);margin-top:3px">{{nt.time}}</div>
               <sc-if value="{{nt.pending}}" hint-placeholder-val="{{false}}">
                 <div style="display:flex;gap:8px;margin-top:11px">
-                  <button onclick="{{nt.accept}}" style="padding:8px 20px;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 12.5px 'Manrope',sans-serif;cursor:pointer" style-active="transform:scale(.96)">Accept</button>
-                  <button onclick="{{nt.decline}}" style="padding:8px 20px;border-radius:999px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font:800 12.5px 'Manrope',sans-serif;cursor:pointer" style-active="transform:scale(.96)">Decline</button>
+                  <button onclick="{{nt.accept}}" disabled="{{nt.disabled}}" style="padding:8px 20px;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 12.5px 'Manrope',sans-serif;cursor:pointer" style-active="transform:scale(.96)">Accept</button>
+                  <button onclick="{{nt.decline}}" disabled="{{nt.disabled}}" style="padding:8px 20px;border-radius:999px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font:800 12.5px 'Manrope',sans-serif;cursor:pointer" style-active="transform:scale(.96)">Decline</button>
                 </div>
               </sc-if>
               <sc-if value="{{nt.done}}" hint-placeholder-val="{{false}}">
@@ -828,10 +849,11 @@
   <aside style="width:300px;flex:none;position:sticky;top:0;height:100vh;overflow-y:auto;padding:24px 4px 24px 0;display:flex;flex-direction:column;gap:16px">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 18px 12px">
       <div style="font:800 14px 'Manrope',sans-serif;margin-bottom:14px">Suggested for you</div>
+      <sc-if value="{{suggestionsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="padding:8px 0 14px;color:var(--danger);font:600 11.5px/1.4 'Manrope',sans-serif">{{suggestionsError}}</div></sc-if>
       <sc-for list="{{suggestions}}" as="sg" hint-placeholder-count="2">
         <div style="display:flex;align-items:center;gap:11px;padding:7px 0 13px">
           <div onclick="{{sg.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{sg.user.color}};overflow:hidden">
-            <sc-if value="{{sg.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{sg.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+            <sc-if value="{{sg.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{sg.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
             <sc-if value="{{sg.user.noAvatar}}" hint-placeholder-val="{{true}}">{{sg.user.initials}}</sc-if>
           </div>
           <div onclick="{{sg.goProfile}}" style="flex:1;min-width:0;cursor:pointer">
@@ -840,7 +862,7 @@
             </div>
             <div style="font:600 11.5px 'Manrope',sans-serif;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{sg.user.bio}}</div>
           </div>
-          <button onclick="{{sg.onBtn}}" style="padding:7px 15px;border-radius:999px;cursor:pointer;font:800 12px 'Manrope',sans-serif;border:1.5px solid {{sg.btnBd}};background:{{sg.btnBg}};color:{{sg.btnColor}};transition:all .2s;flex:none" style-active="transform:scale(.96)">{{sg.btnLabel}}</button>
+          <button onclick="{{sg.onBtn}}" disabled="{{sg.btnDisabled}}" style="padding:7px 15px;border-radius:999px;cursor:pointer;font:800 12px 'Manrope',sans-serif;border:1.5px solid {{sg.btnBd}};background:{{sg.btnBg}};color:{{sg.btnColor}};transition:all .2s;flex:none" style-active="transform:scale(.96)">{{sg.btnLabel}}</button>
         </div>
       </sc-for>
     </div>
@@ -871,6 +893,7 @@
 </x-dc>
 <script src="js/avatar-url.js"></script>
 <script src="js/post-model.js"></script>
+<script src="js/user-model.js"></script>
 <script type="text/x-dc" data-dc-script="" data-props="{&quot;accent&quot;: {&quot;editor&quot;: &quot;color&quot;, &quot;default&quot;: &quot;#5661d8&quot;, &quot;options&quot;: [&quot;#5661d8&quot;, &quot;#0e8577&quot;, &quot;#c14f70&quot;, &quot;#a06b23&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Theme&quot;}, &quot;radius&quot;: {&quot;editor&quot;: &quot;range&quot;, &quot;default&quot;: 18, &quot;min&quot;: 6, &quot;max&quot;: 26, &quot;step&quot;: 2, &quot;unit&quot;: &quot;px&quot;, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Theme&quot;}, &quot;defaultTheme&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;light&quot;, &quot;dark&quot;], &quot;default&quot;: &quot;light&quot;, &quot;tsType&quot;: &quot;'light' | 'dark'&quot;, &quot;section&quot;: &quot;Theme&quot;}}" data-src="js/app.js"></script>
 <script src="js/app-loader.js"></script>
 

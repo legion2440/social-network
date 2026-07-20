@@ -122,6 +122,7 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 	)
 	profile := service.NewProfileService(transactions, fixedClock{}, avatarStager, nil)
 	follows := service.NewFollowService(users, sqlite.NewFollowRepo(db), transactions, fixedClock{})
+	userProfiles := service.NewUserService(transactions)
 	avatarDelivery := service.NewAvatarDeliveryService(transactions, uploadDir)
 	postStager, err := service.NewMediaStager(ids, uploadDir, service.MaxMediaBytes)
 	if err != nil {
@@ -132,7 +133,7 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 
 	return &testEnvironment{
 		db:        db,
-		handler:   NewHandler(db, sessions, media, auth, profile, follows, avatarDelivery, posts, postMedia, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
+		handler:   NewHandler(db, sessions, media, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
 		users:     users,
 		sessions:  sessions,
 		follows:   follows,
@@ -278,6 +279,7 @@ func newSessionFailureHandlerWithFrontend(store *failingSessionRepo, frontendDir
 		sessions,
 		nil,
 		auth,
+		nil,
 		nil,
 		nil,
 		nil,
@@ -1578,5 +1580,222 @@ func TestMalformedAndMissingMediaIDsReturnNotFoundForOwner(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("%s: expected 404, got %d", path, rec.Code)
 		}
+	}
+}
+
+func TestUserProfileReadUsesCurrentPrivacyAndAccessiblePostCounts(t *testing.T) {
+	env := newTestEnvironment(t)
+	ownerID, ownerToken := env.createUserAndSession(t, "profile-read-owner@example.com")
+	acceptedID, acceptedToken := env.createUserAndSession(t, "profile-read-accepted@example.com")
+	_, pendingToken := env.createUserAndSession(t, "profile-read-pending@example.com")
+	_, outsiderToken := env.createUserAndSession(t, "profile-read-outsider@example.com")
+
+	if _, err := env.follows.Follow(context.Background(), acceptedID, ownerID); err != nil {
+		t.Fatalf("create accepted follow: %v", err)
+	}
+	setProfilePrivacy(t, env, ownerToken, true)
+	pendingID, err := env.users.GetByEmail(context.Background(), "profile-read-pending@example.com")
+	if err != nil {
+		t.Fatalf("get pending user: %v", err)
+	}
+	if _, err := env.follows.Follow(context.Background(), pendingID.ID, ownerID); err != nil {
+		t.Fatalf("create pending follow: %v", err)
+	}
+
+	for _, input := range []service.CreatePostInput{
+		{Text: "public profile post", Privacy: domain.PostPublic},
+		{Text: "followers profile post", Privacy: domain.PostFollowers},
+		{Text: "selected profile post", Privacy: domain.PostSelected, SelectedUserIDs: []int64{acceptedID}},
+	} {
+		if _, err := env.posts.Create(context.Background(), ownerID, input); err != nil {
+			t.Fatalf("create profile post: %v", err)
+		}
+	}
+
+	path := "/api/users/" + strconv.FormatInt(ownerID, 10)
+	readProfile := func(label, token string, wantCode int) (*userProfileResponse, map[string]json.RawMessage) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		env.handler.ServeHTTP(rec, authenticatedRequest(http.MethodGet, path, token, nil))
+		if rec.Code != wantCode {
+			t.Fatalf("%s: want status %d, got %d body=%q", label, wantCode, rec.Code, rec.Body.String())
+		}
+		if wantCode != http.StatusOK {
+			return nil, nil
+		}
+		var response userProfileResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatalf("%s: decode profile: %v", label, err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
+			t.Fatalf("%s: decode profile fields: %v", label, err)
+		}
+		if _, leaked := fields["email"]; leaked {
+			t.Fatalf("%s: profile leaked email: %s", label, rec.Body.Bytes())
+		}
+		return &response, fields
+	}
+
+	for _, viewer := range []struct {
+		label string
+		token string
+	}{
+		{label: "owner", token: ownerToken},
+		{label: "accepted", token: acceptedToken},
+	} {
+		response, fields := readProfile(viewer.label, viewer.token, http.StatusOK)
+		if !response.CanViewProfile || response.DateOfBirth == nil || response.PostsCount == nil || *response.PostsCount != 3 {
+			t.Fatalf("%s: unexpected full profile: %+v", viewer.label, response)
+		}
+		for _, field := range []string{"gender", "about_me", "followers_count", "following_count"} {
+			if _, exists := fields[field]; !exists {
+				t.Fatalf("%s: visible profile omitted %q: %s", viewer.label, field, fields)
+			}
+		}
+	}
+
+	for _, viewer := range []struct {
+		label string
+		token string
+	}{
+		{label: "pending", token: pendingToken},
+		{label: "outsider", token: outsiderToken},
+	} {
+		response, fields := readProfile(viewer.label, viewer.token, http.StatusOK)
+		if response.CanViewProfile {
+			t.Fatalf("%s unexpectedly received full private profile", viewer.label)
+		}
+		for _, field := range []string{"date_of_birth", "gender", "about_me", "posts_count", "followers_count", "following_count"} {
+			if _, exists := fields[field]; exists {
+				t.Fatalf("%s: locked profile leaked %q: %s", viewer.label, field, fields)
+			}
+		}
+	}
+
+	setProfilePrivacy(t, env, ownerToken, false)
+	publicOutsider, _ := readProfile("public outsider", outsiderToken, http.StatusOK)
+	if !publicOutsider.CanViewProfile || publicOutsider.PostsCount == nil || *publicOutsider.PostsCount != 1 {
+		t.Fatalf("public outsider count must use post access policy: %+v", publicOutsider)
+	}
+	publicAccepted, _ := readProfile("public accepted", acceptedToken, http.StatusOK)
+	if publicAccepted.PostsCount == nil || *publicAccepted.PostsCount != 3 {
+		t.Fatalf("accepted follower lost accessible posts: %+v", publicAccepted)
+	}
+
+	missing := httptest.NewRecorder()
+	env.handler.ServeHTTP(missing, authenticatedRequest(http.MethodGet, "/api/users/999999", outsiderToken, nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("unknown profile: want 404, got %d body=%q", missing.Code, missing.Body.String())
+	}
+}
+
+func TestUserDirectoryPaginatesAndReturnsViewerRelationships(t *testing.T) {
+	env := newTestEnvironment(t)
+	viewerID, viewerToken := env.createUserAndSession(t, "directory-viewer@example.com")
+	acceptedID, _ := env.createUserAndSession(t, "directory-accepted@example.com")
+	pendingID, pendingToken := env.createUserAndSession(t, "directory-pending@example.com")
+	followsMeID, _ := env.createUserAndSession(t, "directory-follows-me@example.com")
+	noneID, _ := env.createUserAndSession(t, "directory-none@example.com")
+
+	if _, err := env.follows.Follow(context.Background(), viewerID, acceptedID); err != nil {
+		t.Fatalf("create directory accepted relation: %v", err)
+	}
+	setProfilePrivacy(t, env, pendingToken, true)
+	if _, err := env.follows.Follow(context.Background(), viewerID, pendingID); err != nil {
+		t.Fatalf("create directory pending relation: %v", err)
+	}
+	if _, err := env.follows.Follow(context.Background(), followsMeID, viewerID); err != nil {
+		t.Fatalf("create reverse directory relation: %v", err)
+	}
+
+	requestPage := func(path string, wantCode int) userDirectoryResponse {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		env.handler.ServeHTTP(rec, authenticatedRequest(http.MethodGet, path, viewerToken, nil))
+		if rec.Code != wantCode {
+			t.Fatalf("%s: want %d, got %d body=%q", path, wantCode, rec.Code, rec.Body.String())
+		}
+		var response userDirectoryResponse
+		if wantCode == http.StatusOK {
+			if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+				t.Fatalf("decode directory page: %v", err)
+			}
+		}
+		return response
+	}
+
+	first := requestPage("/api/users?limit=2", http.StatusOK)
+	if len(first.Users) != 2 || first.Users[0].ID != noneID || first.Users[1].ID != followsMeID || first.NextCursor == nil {
+		t.Fatalf("unexpected first directory page: %+v", first)
+	}
+	if first.Users[0].Relationship.Status != service.RelationshipNone || first.Users[0].Relationship.FollowsMe {
+		t.Fatalf("unexpected none relationship: %+v", first.Users[0].Relationship)
+	}
+	if !first.Users[1].Relationship.FollowsMe {
+		t.Fatalf("reverse accepted relation missing: %+v", first.Users[1].Relationship)
+	}
+
+	second := requestPage("/api/users?limit=2&cursor="+url.QueryEscape(*first.NextCursor), http.StatusOK)
+	if len(second.Users) != 2 || second.Users[0].ID != pendingID || second.Users[1].ID != acceptedID || second.NextCursor != nil {
+		t.Fatalf("unexpected second directory page: %+v", second)
+	}
+	if second.Users[0].Relationship.Status != service.RelationshipPending || second.Users[1].Relationship.Status != service.RelationshipAccepted {
+		t.Fatalf("directory returned wrong relationship vocabulary: %+v", second.Users)
+	}
+	for _, page := range []userDirectoryResponse{first, second} {
+		for _, item := range page.Users {
+			if item.ID == viewerID {
+				t.Fatal("directory included current user")
+			}
+		}
+	}
+
+	for _, path := range []string{
+		"/api/users?limit=0",
+		"/api/users?limit=51",
+		"/api/users?limit=1&limit=2",
+		"/api/users?cursor=broken",
+		"/api/users?unknown=1",
+	} {
+		requestPage(path, http.StatusBadRequest)
+	}
+}
+
+func TestFollowListsEmbedViewerRelationshipWithoutExtraRequests(t *testing.T) {
+	env := newTestEnvironment(t)
+	ownerID, _ := env.createUserAndSession(t, "related-list-owner@example.com")
+	listedID, _ := env.createUserAndSession(t, "related-list-user@example.com")
+	viewerID, viewerToken := env.createUserAndSession(t, "related-list-viewer@example.com")
+
+	for _, relation := range [][2]int64{
+		{listedID, ownerID},
+		{viewerID, listedID},
+		{listedID, viewerID},
+	} {
+		if _, err := env.follows.Follow(context.Background(), relation[0], relation[1]); err != nil {
+			t.Fatalf("create list relation %v: %v", relation, err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	env.handler.ServeHTTP(rec, authenticatedRequest(
+		http.MethodGet,
+		"/api/users/"+strconv.FormatInt(ownerID, 10)+"/followers",
+		viewerToken,
+		nil,
+	))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list related followers: status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	var response userListResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode related followers: %v", err)
+	}
+	if len(response.Users) != 1 || response.Users[0].ID != listedID {
+		t.Fatalf("unexpected related follower list: %+v", response.Users)
+	}
+	if response.Users[0].Relationship.Status != service.RelationshipAccepted || !response.Users[0].Relationship.FollowsMe {
+		t.Fatalf("viewer relationship missing from list row: %+v", response.Users[0].Relationship)
 	}
 }

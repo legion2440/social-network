@@ -175,3 +175,47 @@ test('posts client sends multipart unchanged and builds cursor requests', async 
   assert.equal(calls[3].path, '/api/users/7/followers');
   assert.ok(calls.every(call => call.options.credentials === 'same-origin'));
 });
+
+test('users and follow clients use backend IDs and exact endpoint contracts', async () => {
+  const calls = [];
+  const api = createAuthAPI(async (path, options) => {
+    calls.push({ path, options });
+    if (options.method === 'DELETE') return noContentResponse();
+    if (path === '/api/follow-requests/41/accept') return jsonResponse(200, { status: 'accepted' });
+    return jsonResponse(200, {});
+  });
+
+  await api.users('user cursor', 20);
+  await api.userProfile(7);
+  await api.relationship(7);
+  await api.follow(7);
+  await api.unfollow(7);
+  await api.followers(7);
+  await api.following(7);
+  await api.followRequests();
+  await api.acceptFollowRequest(41);
+  await api.rejectFollowRequest(41);
+
+  assert.deepEqual(calls.map(call => [call.path, call.options.method]), [
+    ['/api/users?cursor=user%20cursor&limit=20', 'GET'],
+    ['/api/users/7', 'GET'],
+    ['/api/users/7/follow', 'GET'],
+    ['/api/users/7/follow', 'PUT'],
+    ['/api/users/7/follow', 'DELETE'],
+    ['/api/users/7/followers', 'GET'],
+    ['/api/users/7/following', 'GET'],
+    ['/api/follow-requests', 'GET'],
+    ['/api/follow-requests/41/accept', 'POST'],
+    ['/api/follow-requests/41', 'DELETE']
+  ]);
+  assert.ok(calls.every(call => call.options.credentials === 'same-origin'));
+});
+
+test('follow mutations preserve exact backend errors', async () => {
+  const api = createAuthAPI(async () => jsonResponse(500, { error: 'internal server error' }));
+  await assert.rejects(api.follow(9), (error) => {
+    assert.ok(error instanceof APIError);
+    assert.equal(error.status, 500);
+    return true;
+  });
+});

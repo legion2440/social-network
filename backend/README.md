@@ -157,12 +157,30 @@ idempotent.
 `GET /api/users/{id}/follow` returns the current relation as `none`, `pending`,
 or `accepted`, plus `follows_me` for the accepted reverse relation.
 `GET /api/users/{id}/followers` and `/following` list accepted relations only.
+Every list row also contains the current viewer's `relationship` to that row,
+so the frontend can render follow controls without an N+1 request pattern.
 Lists for a public profile are available to every authenticated user. Lists for
 a private profile are available only to its owner and accepted followers;
 pending followers and outsiders receive `403`. Pending requests are available
 to their target through `GET /api/follow-requests`; the owner accepts one with
 `POST /api/follow-requests/{id}/accept` or rejects it with
 `DELETE /api/follow-requests/{id}`. Pending relations never count as followers.
+
+## User profiles and directory
+
+`GET /api/users/{id}` returns an authenticated user's safe profile card and
+never exposes email. Public profiles, owners, and accepted followers receive
+`can_view_profile: true`, the full profile fields, accepted follower/following
+counts, and a post count filtered through the same current post access policy
+used by profile posts. Pending followers and outsiders still receive the basic
+card for a private profile, but `can_view_profile` is false and sensitive
+fields and counts are omitted. Unknown users return `404`.
+
+`GET /api/users` is the authenticated discovery directory. It excludes the
+current user, orders by `(created_at DESC, id DESC)`, and returns viewer-aware
+user summaries plus an opaque `next_cursor`. The default limit is 20 and the
+maximum is 50. This endpoint is a directory for the current frontend step; it
+does not implement text search.
 
 ## Posts
 
@@ -222,6 +240,8 @@ Implemented endpoints:
 - `PATCH /api/profile` (authenticated partial JSON update)
 - `PUT /api/profile/avatar` (authenticated multipart upload, field name `avatar`)
 - `DELETE /api/profile/avatar` (authenticated, idempotent)
+- `GET /api/users` (authenticated cursor-paginated directory)
+- `GET /api/users/{id}` (authenticated privacy-aware profile card)
 - `GET|PUT|DELETE /api/users/{id}/follow` (relationship, follow, unfollow)
 - `GET /api/users/{id}/followers`
 - `GET /api/users/{id}/following`
@@ -241,7 +261,10 @@ Implemented endpoints:
 
 All other reserved API groups currently return JSON `501 Not Implemented`.
 
-Frontend follower controls are intentionally not implemented yet.
+The frontend feed, profiles, suggestions, follow controls, requests, follower
+lists, following lists, and profile posts use backend user IDs and live API
+state. Mock identities remain isolated to the not-yet-integrated groups and
+chats sections.
 
 The local frontend file server does not replace the planned Docker topology.
 The final setup keeps the backend private and serves the frontend through a

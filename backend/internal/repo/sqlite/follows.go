@@ -112,30 +112,48 @@ func (r *FollowRepo) Reject(ctx context.Context, id, followedUserID int64) error
 	return requireOneRow(result)
 }
 
-func (r *FollowRepo) ListFollowers(ctx context.Context, userID int64) ([]*domain.User, error) {
+func (r *FollowRepo) ListFollowers(ctx context.Context, userID, viewerUserID int64) ([]*domain.RelatedUser, error) {
 	return r.listUsers(ctx, `
 		SELECT
 			u.id, u.email, u.password_hash, u.first_name, u.last_name,
 			u.date_of_birth, u.gender, u.nickname, u.about_me,
-			u.avatar_media_id, u.is_private, u.created_at, u.updated_at
+			u.avatar_media_id, u.is_private, u.created_at, u.updated_at,
+			viewer_out.status,
+			CASE WHEN viewer_in.id IS NULL THEN 0 ELSE 1 END
 		FROM follows f
 		JOIN users u ON u.id = f.follower_user_id
+		LEFT JOIN follows viewer_out
+			ON viewer_out.follower_user_id = ?
+			AND viewer_out.followed_user_id = u.id
+		LEFT JOIN follows viewer_in
+			ON viewer_in.follower_user_id = u.id
+			AND viewer_in.followed_user_id = ?
+			AND viewer_in.status = 'accepted'
 		WHERE f.followed_user_id = ? AND f.status = 'accepted'
 		ORDER BY f.updated_at DESC, f.id DESC
-	`, userID)
+	`, userID, viewerUserID)
 }
 
-func (r *FollowRepo) ListFollowing(ctx context.Context, userID int64) ([]*domain.User, error) {
+func (r *FollowRepo) ListFollowing(ctx context.Context, userID, viewerUserID int64) ([]*domain.RelatedUser, error) {
 	return r.listUsers(ctx, `
 		SELECT
 			u.id, u.email, u.password_hash, u.first_name, u.last_name,
 			u.date_of_birth, u.gender, u.nickname, u.about_me,
-			u.avatar_media_id, u.is_private, u.created_at, u.updated_at
+			u.avatar_media_id, u.is_private, u.created_at, u.updated_at,
+			viewer_out.status,
+			CASE WHEN viewer_in.id IS NULL THEN 0 ELSE 1 END
 		FROM follows f
 		JOIN users u ON u.id = f.followed_user_id
+		LEFT JOIN follows viewer_out
+			ON viewer_out.follower_user_id = ?
+			AND viewer_out.followed_user_id = u.id
+		LEFT JOIN follows viewer_in
+			ON viewer_in.follower_user_id = u.id
+			AND viewer_in.followed_user_id = ?
+			AND viewer_in.status = 'accepted'
 		WHERE f.follower_user_id = ? AND f.status = 'accepted'
 		ORDER BY f.updated_at DESC, f.id DESC
-	`, userID)
+	`, userID, viewerUserID)
 }
 
 func (r *FollowRepo) ListPendingRequests(ctx context.Context, followedUserID int64) ([]*domain.FollowRequest, error) {
@@ -186,19 +204,42 @@ func (r *FollowRepo) IsAccepted(ctx context.Context, followerUserID, followedUse
 	return accepted, nil
 }
 
-func (r *FollowRepo) listUsers(ctx context.Context, query string, userID int64) ([]*domain.User, error) {
+func (r *FollowRepo) CountFollowers(ctx context.Context, userID int64) (int64, error) {
+	return r.countAccepted(ctx, "followed_user_id", userID)
+}
+
+func (r *FollowRepo) CountFollowing(ctx context.Context, userID int64) (int64, error) {
+	return r.countAccepted(ctx, "follower_user_id", userID)
+}
+
+func (r *FollowRepo) countAccepted(ctx context.Context, column string, userID int64) (int64, error) {
 	if userID <= 0 {
-		return []*domain.User{}, nil
+		return 0, nil
 	}
-	rows, err := r.db.QueryContext(ctx, query, userID)
+	var count int64
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM follows
+		WHERE `+column+` = ? AND status = 'accepted'
+	`, userID).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (r *FollowRepo) listUsers(ctx context.Context, query string, userID, viewerUserID int64) ([]*domain.RelatedUser, error) {
+	if userID <= 0 || viewerUserID <= 0 {
+		return []*domain.RelatedUser{}, nil
+	}
+	rows, err := r.db.QueryContext(ctx, query, viewerUserID, viewerUserID, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	users := make([]*domain.User, 0)
+	users := make([]*domain.RelatedUser, 0)
 	for rows.Next() {
-		user, err := scanUser(rows)
+		user, err := scanRelatedUser(rows)
 		if err != nil {
 			return nil, err
 		}

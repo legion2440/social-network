@@ -17,6 +17,7 @@ type Handler struct {
 	auth         *service.AuthService
 	profile      *service.ProfileService
 	follows      *service.FollowService
+	users        *service.UserService
 	avatars      *service.AvatarDeliveryService
 	posts        *service.PostService
 	postMedia    *service.PostMediaDeliveryService
@@ -33,6 +34,7 @@ func NewHandler(
 	auth *service.AuthService,
 	profile *service.ProfileService,
 	follows *service.FollowService,
+	users *service.UserService,
 	avatars *service.AvatarDeliveryService,
 	posts *service.PostService,
 	postMedia *service.PostMediaDeliveryService,
@@ -54,6 +56,7 @@ func NewHandler(
 		auth:         auth,
 		profile:      profile,
 		follows:      follows,
+		users:        users,
 		avatars:      avatars,
 		posts:        posts,
 		postMedia:    postMedia,
@@ -87,6 +90,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/profile", protected(h.handleProfile))
 	mux.Handle("/api/profile/avatar", protected(h.handleProfileAvatar))
 	mux.Handle("/api/profile/", protected(h.handleNotImplemented))
+	mux.Handle("/api/users", protected(h.handleUsers))
+	mux.Handle("/api/users/{id}", protected(h.handleUserProfile))
 	mux.Handle("/api/users/{id}/follow", protected(h.handleFollow))
 	mux.Handle("/api/users/{id}/followers", protected(h.handleFollowers))
 	mux.Handle("/api/users/{id}/following", protected(h.handleFollowing))
@@ -107,7 +112,6 @@ func (h *Handler) Routes() http.Handler {
 
 	for _, group := range []string{
 		"/api/auth",
-		"/api/users",
 		"/api/follow",
 		"/api/groups",
 		"/api/events",

@@ -116,6 +116,7 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 	)
 	profile := service.NewProfileService(transactions, appClock, avatarStager, log.Default())
 	follows := service.NewFollowService(users, sqlite.NewFollowRepo(db), transactions, appClock)
+	userProfiles := service.NewUserService(transactions)
 	avatarDelivery := service.NewAvatarDeliveryService(transactions, cfg.UploadDir)
 	posts := service.NewPostService(transactions, appClock, postStager)
 	postMedia := service.NewPostMediaDeliveryService(transactions, cfg.UploadDir)
@@ -126,6 +127,7 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		auth,
 		profile,
 		follows,
+		userProfiles,
 		avatarDelivery,
 		posts,
 		postMedia,

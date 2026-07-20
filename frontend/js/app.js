@@ -22,14 +22,6 @@ const USERS = {
   sara:  { id: 'sara', name: 'Sara Bishop', handle: '@sarab', initials: 'SB', color: '#8f6cc9', bio: 'Illustrator and printmaker.', email: 'sara@bishop.ink', dob: 'Apr 17, 1995', private: false }
 };
 
-const FOLLOWING_MAP = {
-  mei: ['me', 'david', 'nina'], david: ['me', 'mei'], nina: ['me', 'mei', 'sara'],
-  tom: ['sara'], sara: ['nina', 'tom']
-};
-const FOLLOWERS_MAP = {
-  mei: ['me', 'david', 'nina', 'sara'], david: ['me', 'mei'], nina: ['me', 'mei'],
-  tom: ['sara'], sara: ['nina']
-};
 const REPLIES = ['Totally agree \ud83d\ude04', 'Ha! Send it over', 'Let\u2019s sync tomorrow?', '\ud83d\udc40 looking now', 'Love that \u2728', 'Okay that\u2019s actually great'];
 const EMOJIS = ['\ud83d\ude00', '\ud83d\ude02', '\ud83d\ude0d', '\ud83d\udd25', '\ud83d\udc4d', '\ud83c\udf89', '\ud83d\ude2e', '\ud83d\ude22', '\u2764\ufe0f', '\ud83d\udc40', '\u2728', '\ud83d\ude4c'];
 const GROUP_COLORS = ['#6b62c9', '#b3813f', '#3f9a85', '#c25a83', '#4d84c4', '#8f6cc9'];
@@ -84,10 +76,13 @@ class Component extends DCLogic {
       selectedFollowers: {}, postFollowers: [], postFollowersLoading: false,
       openComments: { p1: true }, drafts: {},
       posts: [],
-      follow: { mei: 'following', david: 'following', nina: 'following', tom: 'none', sara: 'none' },
-      myFollowers: ['mei', 'david', 'nina', 'sara'],
+      mockFollow: { mei: 'accepted', david: 'accepted', nina: 'accepted', tom: 'none', sara: 'none' },
+      apiUsersByID: {}, directoryUserIDs: [], directoryNextCursor: null, directoryLoading: false, directoryError: '',
+      followPendingByID: {}, followErrorByID: {},
+      followRequests: [], followRequestsLoading: false, followRequestsError: '', followRequestPendingByID: {},
       myPrivacy: 'public', profilePrivacyPending: false, profilePrivacyError: '',
-      profileId: 'me', profileTab: 'posts',
+      profileId: null, profileTab: 'posts', profileLoading: false, profileReady: false, profileError: '',
+      profileFollowers: [], profileFollowing: [], profileListsLoading: false, profileListsError: '',
       profilePosts: [], profilePostsLoading: false, profilePostsPending: false,
       profilePostsError: '', profilePostsNextCursor: null,
       groups: [
@@ -124,7 +119,6 @@ class Component extends DCLogic {
       ],
       convoId: 'c1', chatDraft: '', emojiOpen: false,
       notifs: [
-        { id: 'n1', type: 'follow', uid: 'tom', time: '2h', read: false, status: 'pending' },
         { id: 'n2', type: 'invite', uid: 'tom', gid: 'g2', time: '6h', read: false, status: 'pending' },
         { id: 'n3', type: 'request', uid: 'sara', gid: 'g1', time: '1d', read: false, status: 'pending' },
         { id: 'n4', type: 'event', uid: 'mei', gid: 'g1', time: '2d', read: true, status: 'info', extra: 'Tokens naming workshop' }
@@ -135,6 +129,7 @@ class Component extends DCLogic {
       ...emptyProfileEditor()
     };
     this.msgEl = null;
+    this.profileGate = UserModel.createRequestGate();
   }
 
   componentDidMount() {
@@ -152,34 +147,30 @@ class Component extends DCLogic {
     el.style.setProperty('--r', (this.props.radius != null ? this.props.radius : 18) + 'px');
   }
 
-  applyAuthUser(user) {
-    const firstName = user.first_name || '';
-    const lastName = user.last_name || '';
-    const nickname = (user.nickname || '').trim();
-    const initials = ((firstName.charAt(0) || '') + (lastName.charAt(0) || '')).toUpperCase() || '?';
-    USERS.me = decorateUser({
-      id: 'me', apiId: user.id,
-      firstName, lastName, nickname,
-      name: (firstName + ' ' + lastName).trim(),
-      handle: nickname ? (nickname.charAt(0) === '@' ? nickname : '@' + nickname) : user.email,
-      initials, color: '#6b62c9',
-      bio: user.about_me || '', aboutMe: user.about_me || '', email: user.email, dob: user.date_of_birth,
-      gender: user.gender, avatarUrl: user.avatar_url, private: user.is_private === true
-    });
+  mergeAPIUsers(rawUsers, baseStore) {
+    const currentUserID = USERS.me && USERS.me.apiId;
+    const base = Object.assign({}, baseStore || this.state.apiUsersByID);
+    if (currentUserID) base[String(currentUserID)] = USERS.me;
+    const next = UserModel.mergeUsers(base, rawUsers, currentUserID);
+    Object.keys(next).forEach(id => decorateUser(next[id]));
+    return next;
   }
 
-  postUserFromSummary(summary) {
-    const firstName = summary.firstName || '';
-    const lastName = summary.lastName || '';
-    const nickname = (summary.nickname || '').trim();
-    const initials = ((firstName.charAt(0) || '') + (lastName.charAt(0) || '')).toUpperCase() || '?';
-    return decorateUser({
-      id: 'api-' + summary.apiId, apiId: summary.apiId,
-      firstName, lastName, nickname,
-      name: (firstName + ' ' + lastName).trim(),
-      handle: nickname ? (nickname.charAt(0) === '@' ? nickname : '@' + nickname) : 'user-' + summary.apiId,
-      initials, color: '#5661d8', bio: '',
-      avatarUrl: summary.avatarUrl || '', private: summary.isPrivate === true
+  applyAuthUser(user, baseStore) {
+    const next = UserModel.mergeUsers(baseStore || this.state.apiUsersByID, [user], user.id);
+    const me = decorateUser(next[String(user.id)]);
+    USERS.me = me;
+    next[String(user.id)] = me;
+    return next;
+  }
+
+  apiUser(userID) {
+    const id = String(Number(userID));
+    if (USERS.me && String(USERS.me.apiId) === id) return USERS.me;
+    return this.state.apiUsersByID[id] || decorateUser({
+      id, apiId: Number(id), name: 'User ' + id, handle: 'user-' + id,
+      initials: '?', color: '#5661d8', bio: '', private: false,
+      relationship: { status: 'none', follows_me: false }
     });
   }
 
@@ -188,7 +179,6 @@ class Component extends DCLogic {
     return {
       id: normalized.id,
       real: true,
-      user: normalized.isOwn ? USERS.me : this.postUserFromSummary(normalized.author),
       apiAuthorID: normalized.apiAuthorID,
       text: normalized.text,
       privacy: normalized.privacy,
@@ -216,8 +206,10 @@ class Component extends DCLogic {
     try {
       const page = await AuthAPI.feed(cursor, 20);
       const mapped = (page.posts || []).map(post => this.mapAPIPost(post));
+      const apiUsersByID = this.mergeAPIUsers((page.posts || []).map(post => post.author));
       this.setState({
         posts: reset ? mapped : this.state.posts.concat(mapped),
+        apiUsersByID,
         feedLoading: false, feedPending: false,
         feedNextCursor: page.next_cursor || null, feedError: ''
       });
@@ -234,11 +226,14 @@ class Component extends DCLogic {
     this.setState({ postFollowersLoading: true });
     try {
       const response = await AuthAPI.followers(USERS.me.apiId);
-      const followers = (response.users || []).map(user => this.postUserFromSummary({
-        apiId: Number(user.id), firstName: user.first_name, lastName: user.last_name,
-        nickname: user.nickname, avatarUrl: user.avatar_url, isPrivate: user.is_private
-      }));
-      this.setState({ postFollowers: followers, postFollowersLoading: false });
+      const apiUsersByID = this.mergeAPIUsers(response.users || []);
+      const followers = (response.users || []).map(user => apiUsersByID[String(user.id)]);
+      this.setState({
+        apiUsersByID,
+        postFollowers: followers,
+        postFollowersLoading: false,
+        selectedFollowers: UserModel.pruneSelected(this.state.selectedFollowers, followers)
+      });
     } catch (error) {
       this.setState({
         postFollowersLoading: false,
@@ -247,20 +242,105 @@ class Component extends DCLogic {
     }
   };
 
-  loadProfilePosts = async (reset) => {
-    if (!USERS.me.apiId || this.state.profilePostsPending) return;
+  loadDirectory = async () => {
+    if (this.state.directoryLoading) return;
+    this.setState({ directoryLoading: true, directoryError: '' });
+    try {
+      const response = await AuthAPI.users(null, 20);
+      const apiUsersByID = this.mergeAPIUsers(response.users || []);
+      this.setState({
+        apiUsersByID,
+        directoryUserIDs: (response.users || []).map(user => Number(user.id)),
+        directoryNextCursor: response.next_cursor || null,
+        directoryLoading: false, directoryError: ''
+      });
+    } catch (error) {
+      this.setState({
+        directoryLoading: false,
+        directoryError: requestErrorMessage(error, 'Could not load user suggestions.')
+      });
+    }
+  };
+
+  loadFollowRequests = async () => {
+    if (this.state.followRequestsLoading) return;
+    this.setState({ followRequestsLoading: true, followRequestsError: '' });
+    try {
+      const response = await AuthAPI.followRequests();
+      const requests = response.requests || [];
+      const apiUsersByID = this.mergeAPIUsers(requests.map(request => request.user));
+      this.setState({ apiUsersByID, followRequests: requests, followRequestsLoading: false });
+    } catch (error) {
+      this.setState({
+        followRequestsLoading: false,
+        followRequestsError: requestErrorMessage(error, 'Could not load follow requests.')
+      });
+    }
+  };
+
+  loadProfileConnections = async (targetUserID, generation) => {
+    targetUserID = Number(targetUserID);
+    generation = generation || this.profileGate.current();
+    this.setState({ profileListsLoading: true, profileListsError: '' });
+    try {
+      const responses = await Promise.all([
+        AuthAPI.followers(targetUserID),
+        AuthAPI.following(targetUserID)
+      ]);
+      if (!this.profileGate.isCurrent(generation) || Number(this.state.profileId) !== targetUserID) return;
+      const followers = responses[0].users || [];
+      const following = responses[1].users || [];
+      const apiUsersByID = this.mergeAPIUsers(following, this.mergeAPIUsers(followers));
+      this.setState({
+        apiUsersByID,
+        profileFollowers: followers.map(user => Number(user.id)),
+        profileFollowing: following.map(user => Number(user.id)),
+        profileListsLoading: false, profileListsError: ''
+      });
+    } catch (error) {
+      if (!this.profileGate.isCurrent(generation) || Number(this.state.profileId) !== targetUserID) return;
+      if (error && error.status === 403) {
+        this.setState({ profileFollowers: [], profileFollowing: [], profileListsLoading: false, profileListsError: '' });
+        return;
+      }
+      this.setState({
+        profileListsLoading: false,
+        profileListsError: requestErrorMessage(error, 'Could not load followers and following.')
+      });
+    }
+  };
+
+  loadProfilePosts = async (targetUserID, reset, generation) => {
+    targetUserID = Number(targetUserID || this.state.profileId);
+    generation = generation || this.profileGate.current();
+    if (!targetUserID || (!reset && this.state.profilePostsPending)) return;
     const cursor = reset ? null : this.state.profilePostsNextCursor;
     if (!reset && !cursor) return;
     this.setState({ profilePostsPending: true, profilePostsLoading: !!reset, profilePostsError: '' });
     try {
-      const page = await AuthAPI.userPosts(USERS.me.apiId, cursor, 20);
+      const page = await AuthAPI.userPosts(targetUserID, cursor, 20);
+      if (!this.profileGate.isCurrent(generation) || Number(this.state.profileId) !== targetUserID) return;
       const mapped = (page.posts || []).map(post => this.mapAPIPost(post));
+      const apiUsersByID = this.mergeAPIUsers((page.posts || []).map(post => post.author));
       this.setState({
         profilePosts: reset ? mapped : this.state.profilePosts.concat(mapped),
+        apiUsersByID,
         profilePostsLoading: false, profilePostsPending: false,
         profilePostsNextCursor: page.next_cursor || null, profilePostsError: ''
       });
     } catch (error) {
+      if (!this.profileGate.isCurrent(generation) || Number(this.state.profileId) !== targetUserID) return;
+      if (error && error.status === 403) {
+        const user = this.apiUser(targetUserID);
+        user.canViewProfile = false;
+        user.bio = ''; user.dob = ''; user.postsCount = 0;
+        this.setState({
+          apiUsersByID: Object.assign({}, this.state.apiUsersByID, { [String(targetUserID)]: user }),
+          profilePosts: [], profileFollowers: [], profileFollowing: [],
+          profilePostsLoading: false, profilePostsPending: false, profilePostsError: ''
+        });
+        return;
+      }
       this.setState({
         profilePostsLoading: false, profilePostsPending: false,
         profilePostsError: requestErrorMessage(error, 'Could not load profile posts. Please try again.')
@@ -272,14 +352,17 @@ class Component extends DCLogic {
     this.setState({ authStatus: 'checking', bootstrapError: '', appError: '' });
     try {
       const user = await AuthAPI.me();
-      this.applyAuthUser(user);
+      const apiUsersByID = this.applyAuthUser(user);
       this.setState({
         authStatus: 'authenticated', screen: 'feed',
+        apiUsersByID,
         myPrivacy: user.is_private === true ? 'private' : 'public',
         profilePrivacyPending: false, profilePrivacyError: ''
       });
       this.loadFeed(true);
       this.loadPostFollowers();
+      this.loadDirectory();
+      this.loadFollowRequests();
     } catch (error) {
       if (error && error.status === 401) {
         this.setState({ authStatus: 'anonymous', screen: 'auth', bootstrapError: '' });
@@ -328,10 +411,11 @@ class Component extends DCLogic {
         user = await AuthAPI.register(form);
       }
 
-      this.applyAuthUser(user);
+      const apiUsersByID = this.applyAuthUser(user);
       const authenticatedState = {
         authStatus: 'authenticated', authPending: false, authError: '',
         authPassword: '', screen: 'feed',
+        apiUsersByID,
         myPrivacy: user.is_private === true ? 'private' : 'public',
         profilePrivacyPending: false, profilePrivacyError: ''
       };
@@ -340,6 +424,8 @@ class Component extends DCLogic {
       this.setState(authenticatedState);
       this.loadFeed(true);
       this.loadPostFollowers();
+      this.loadDirectory();
+      this.loadFollowRequests();
     } catch (error) {
       this.setState({
         authPending: false,
@@ -361,6 +447,11 @@ class Component extends DCLogic {
         profilePosts: [], profilePostsLoading: false, profilePostsPending: false,
         profilePostsError: '', profilePostsNextCursor: null,
         postFollowers: [], postFollowersLoading: false, selectedFollowers: {},
+        apiUsersByID: {}, directoryUserIDs: [], directoryNextCursor: null,
+        directoryLoading: false, directoryError: '', followPendingByID: {}, followErrorByID: {},
+        followRequests: [], followRequestsLoading: false, followRequestsError: '', followRequestPendingByID: {},
+        profileId: null, profileReady: false, profileLoading: false, profileError: '',
+        profileFollowers: [], profileFollowing: [], profileListsLoading: false, profileListsError: '',
         composerText: '', composerFile: null, composerFileName: '', composerError: '', composerPending: false,
         privacy: 'public', privacyOpen: false
       }, emptyRegistrationForm(), emptyProfileEditor()));
@@ -372,14 +463,48 @@ class Component extends DCLogic {
     }
   };
 
-  go = (screen) => this.setState({ screen, privacyOpen: false, emojiOpen: false });
-  openProfile = (uid) => {
+  go = (screen) => {
+    this.setState({ screen, privacyOpen: false, emojiOpen: false });
+    if (screen === 'notifications') this.loadFollowRequests();
+  };
+  openProfile = async (targetUserID) => {
+    if (targetUserID === 'me') targetUserID = USERS.me.apiId;
+    targetUserID = Number(targetUserID);
+    if (!Number.isInteger(targetUserID) || targetUserID <= 0) return;
+    const generation = this.profileGate.begin();
+    const isMe = targetUserID === USERS.me.apiId;
     this.setState({
-      screen: 'profile', profileId: uid, profileTab: 'posts',
-      profileEditOpen: uid === 'me' ? this.state.profileEditOpen : false,
-      profileEditError: uid === 'me' ? this.state.profileEditError : ''
+      screen: 'profile', profileId: targetUserID, profileTab: 'posts',
+      profileLoading: true, profileReady: false, profileError: '',
+      profilePosts: [], profilePostsLoading: false, profilePostsPending: false,
+      profilePostsError: '', profilePostsNextCursor: null,
+      profileFollowers: [], profileFollowing: [], profileListsLoading: false, profileListsError: '',
+      profileEditOpen: isMe ? this.state.profileEditOpen : false,
+      profileEditError: isMe ? this.state.profileEditError : ''
     });
-    if (uid === 'me') this.loadProfilePosts(true);
+    try {
+      const results = await Promise.all([
+        AuthAPI.userProfile(targetUserID),
+        isMe ? Promise.resolve({ status: 'none', follows_me: false }) : AuthAPI.relationship(targetUserID)
+      ]);
+      if (!this.profileGate.isCurrent(generation)) return;
+      const rawUser = Object.assign({}, results[0], { relationship: results[1] });
+      const apiUsersByID = this.mergeAPIUsers([rawUser]);
+      const profileUser = apiUsersByID[String(targetUserID)];
+      this.setState({ apiUsersByID, profileLoading: false, profileReady: true, profileError: '' });
+      if (profileUser.canViewProfile) {
+        this.loadProfilePosts(targetUserID, true, generation);
+        this.loadProfileConnections(targetUserID, generation);
+      }
+    } catch (error) {
+      if (!this.profileGate.isCurrent(generation)) return;
+      this.setState({
+        profileLoading: false, profileReady: false,
+        profileError: error && error.status === 404
+          ? 'User not found.'
+          : requestErrorMessage(error, 'Could not load this profile.')
+      });
+    }
   };
 
   openProfileEdit = () => {
@@ -409,8 +534,9 @@ class Component extends DCLogic {
         nickname: s.editNickname,
         about_me: s.editAboutMe
       });
-      this.applyAuthUser(user);
+      const apiUsersByID = this.applyAuthUser(user);
       this.setState(Object.assign({
+        apiUsersByID,
         myPrivacy: user.is_private === true ? 'private' : 'public'
       }, emptyProfileEditor()));
     } catch (error) {
@@ -439,10 +565,11 @@ class Component extends DCLogic {
       const form = new FormData();
       form.append('avatar', avatar, avatar.name);
       const user = await AuthAPI.replaceAvatar(form);
-      this.applyAuthUser(user);
+      const apiUsersByID = this.applyAuthUser(user);
       const input = document.getElementById('profile-avatar');
       if (input) input.value = '';
       this.setState({
+        apiUsersByID,
         profileAvatarPending: false, editAvatar: null, editAvatarName: '',
         myPrivacy: user.is_private === true ? 'private' : 'public'
       });
@@ -459,10 +586,11 @@ class Component extends DCLogic {
     this.setState({ profileAvatarPending: true, profileEditError: '' });
     try {
       const user = await AuthAPI.deleteAvatar();
-      this.applyAuthUser(user);
+      const apiUsersByID = this.applyAuthUser(user);
       const input = document.getElementById('profile-avatar');
       if (input) input.value = '';
       this.setState({
+        apiUsersByID,
         profileAvatarPending: false, editAvatar: null, editAvatarName: '',
         myPrivacy: user.is_private === true ? 'private' : 'public'
       });
@@ -485,8 +613,9 @@ class Component extends DCLogic {
     this.setState({ profilePrivacyPending: true, profilePrivacyError: '' });
     try {
       const user = await AuthAPI.updateProfile({ is_private: isPrivate });
-      this.applyAuthUser(user);
+      const apiUsersByID = this.applyAuthUser(user);
       this.setState({
+        apiUsersByID,
         myPrivacy: user.is_private === true ? 'private' : 'public',
         profilePrivacyPending: false,
         profilePrivacyError: ''
@@ -518,13 +647,46 @@ class Component extends DCLogic {
     } else apply();
   };
 
-  toggleFollow = (uid) => {
-    const cur = this.state.follow[uid] || 'none';
-    const u = USERS[uid];
-    let next;
-    if (cur === 'following' || cur === 'requested') next = 'none';
-    else next = u.private ? 'requested' : 'following';
-    this.setState({ follow: Object.assign({}, this.state.follow, { [uid]: next }) });
+  toggleFollow = async (targetUserID) => {
+    targetUserID = Number(targetUserID);
+    if (!Number.isInteger(targetUserID) || targetUserID <= 0 || targetUserID === USERS.me.apiId) return;
+    const key = String(targetUserID);
+    if (this.state.followPendingByID[key]) return;
+    const user = this.apiUser(targetUserID);
+    const status = UserModel.normalizeStatus(user.relationship && user.relationship.status);
+    this.setState({
+      followPendingByID: Object.assign({}, this.state.followPendingByID, { [key]: true }),
+      followErrorByID: Object.assign({}, this.state.followErrorByID, { [key]: '' }),
+      appError: ''
+    });
+    try {
+      const response = status === 'none'
+        ? await AuthAPI.follow(targetUserID)
+        : (await AuthAPI.unfollow(targetUserID), { status: 'none' });
+      const apiUsersByID = this.mergeAPIUsers([{
+        id: targetUserID,
+        relationship: {
+          status: response.status,
+          follows_me: user.relationship && user.relationship.follows_me === true
+        }
+      }]);
+      const pending = Object.assign({}, this.state.followPendingByID);
+      delete pending[key];
+      this.setState({ apiUsersByID, followPendingByID: pending });
+
+      this.loadDirectory();
+      this.loadFeed(true);
+      if (this.state.screen === 'profile' && Number(this.state.profileId) === targetUserID) this.openProfile(targetUserID);
+    } catch (error) {
+      const pending = Object.assign({}, this.state.followPendingByID);
+      delete pending[key];
+      const message = requestErrorMessage(error, 'Could not update follow status.');
+      this.setState({
+        followPendingByID: pending,
+        followErrorByID: Object.assign({}, this.state.followErrorByID, { [key]: message }),
+        appError: message
+      });
+    }
   };
 
   likePost = (pid) => {
@@ -570,11 +732,17 @@ class Component extends DCLogic {
       }, FormData);
       const response = await AuthAPI.createPost(form);
       const post = this.mapAPIPost(response);
+      const apiUsersByID = this.mergeAPIUsers([response.author]);
+      const me = apiUsersByID[String(USERS.me.apiId)];
+      if (me) me.postsCount = (me.postsCount || 0) + 1;
       const input = document.getElementById('post-media');
       if (input) input.value = '';
       this.setState({
+        apiUsersByID,
         posts: [post].concat(this.state.posts.filter(item => item.id !== post.id)),
-        profilePosts: [post].concat(this.state.profilePosts.filter(item => item.id !== post.id)),
+        profilePosts: Number(this.state.profileId) === USERS.me.apiId
+          ? [post].concat(this.state.profilePosts.filter(item => item.id !== post.id))
+          : this.state.profilePosts,
         composerText: '', composerFile: null, composerFileName: '',
         composerError: '', composerPending: false,
         privacy: 'public', privacyOpen: false, selectedFollowers: {}
@@ -674,10 +842,75 @@ class Component extends DCLogic {
     }
   };
 
+  acceptFollowRequest = async (requestID) => {
+    const key = String(requestID);
+    if (this.state.followRequestPendingByID[key]) return;
+    const request = this.state.followRequests.find(item => String(item.id) === key);
+    if (!request) return;
+    this.setState({
+      followRequestPendingByID: Object.assign({}, this.state.followRequestPendingByID, { [key]: true }),
+      followRequestsError: ''
+    });
+    try {
+      await AuthAPI.acceptFollowRequest(requestID);
+      const user = this.apiUser(request.user.id);
+      const apiUsersByID = this.mergeAPIUsers([{
+        id: request.user.id,
+        relationship: {
+          status: user.relationship.status,
+          follows_me: true
+        }
+      }]);
+      const pending = Object.assign({}, this.state.followRequestPendingByID);
+      delete pending[key];
+      this.setState({
+        apiUsersByID,
+        followRequests: this.state.followRequests.filter(item => String(item.id) !== key),
+        followRequestPendingByID: pending
+      });
+      this.loadPostFollowers();
+      this.loadDirectory();
+      if (this.state.screen === 'profile' && Number(this.state.profileId) === USERS.me.apiId) this.openProfile(USERS.me.apiId);
+    } catch (error) {
+      const pending = Object.assign({}, this.state.followRequestPendingByID);
+      delete pending[key];
+      this.setState({
+        followRequestPendingByID: pending,
+        followRequestsError: requestErrorMessage(error, 'Could not accept follow request.')
+      });
+    }
+  };
+
+  rejectFollowRequest = async (requestID) => {
+    const key = String(requestID);
+    if (this.state.followRequestPendingByID[key]) return;
+    if (!this.state.followRequests.some(item => String(item.id) === key)) return;
+    this.setState({
+      followRequestPendingByID: Object.assign({}, this.state.followRequestPendingByID, { [key]: true }),
+      followRequestsError: ''
+    });
+    try {
+      await AuthAPI.rejectFollowRequest(requestID);
+      const pending = Object.assign({}, this.state.followRequestPendingByID);
+      delete pending[key];
+      this.setState({
+        followRequests: this.state.followRequests.filter(item => String(item.id) !== key),
+        followRequestPendingByID: pending
+      });
+      this.loadDirectory();
+    } catch (error) {
+      const pending = Object.assign({}, this.state.followRequestPendingByID);
+      delete pending[key];
+      this.setState({
+        followRequestPendingByID: pending,
+        followRequestsError: requestErrorMessage(error, 'Could not reject follow request.')
+      });
+    }
+  };
+
   acceptNotif = (nid) => {
     const n = this.state.notifs.find(x => x.id === nid);
     if (!n) return;
-    if (n.type === 'follow') this.setState({ myFollowers: this.state.myFollowers.indexOf(n.uid) < 0 ? this.state.myFollowers.concat([n.uid]) : this.state.myFollowers });
     if (n.type === 'invite') this.acceptInvite(n.gid);
     if (n.type === 'request') this.handleRequest(n.gid, n.uid, true);
     this.setState({ notifs: this.state.notifs.map(x => x.id === nid ? Object.assign({}, x, { status: 'accepted', read: true }) : x) });
@@ -690,11 +923,12 @@ class Component extends DCLogic {
     this.setState({ notifs: this.state.notifs.map(x => x.id === nid ? Object.assign({}, x, { status: 'declined', read: true }) : x) });
   };
 
-  followBtn(uid) {
-    const st = this.state.follow[uid] || 'none';
-    if (st === 'following') return { label: 'Following', bg: 'var(--surface2)', color: 'var(--text2)', bd: 'transparent' };
-    if (st === 'requested') return { label: 'Requested', bg: 'var(--soft)', color: 'var(--accent)', bd: 'transparent' };
-    return { label: USERS[uid].private ? 'Request' : 'Follow', bg: 'var(--accent)', color: '#fff', bd: 'transparent' };
+  followBtn(userID) {
+    const user = this.apiUser(userID);
+    const model = UserModel.followButton(user, this.state.followPendingByID[String(userID)]);
+    if (model.tone === 'muted') return { label: model.label, bg: 'var(--surface2)', color: 'var(--text2)', bd: 'transparent', disabled: model.disabled };
+    if (model.tone === 'soft') return { label: model.label, bg: 'var(--soft)', color: 'var(--accent)', bd: 'transparent', disabled: model.disabled };
+    return { label: model.label, bg: 'var(--accent)', color: '#fff', bd: 'transparent', disabled: model.disabled };
   }
 
   mapPost(p, inGroup) {
@@ -704,7 +938,7 @@ class Component extends DCLogic {
     const pm = privacyMeta[p.privacy] || privacyMeta.public;
     const comments = p.comments || [];
     const likes = p.likes || 0;
-    const user = p.user || USERS[p.uid] || USERS.me;
+    const user = p.real ? this.apiUser(p.apiAuthorID) : (p.user || USERS[p.uid] || USERS.me);
     return Object.assign({}, p, {
       user,
       privacyIcon: pm.icon, privacyLabel: pm.label,
@@ -725,14 +959,14 @@ class Component extends DCLogic {
       onDraft: (e) => this.setState({ drafts: Object.assign({}, this.state.drafts, { [key]: e.target.value }) }),
       onKey: (e) => { if (e.key === 'Enter') { inGroup ? this.addGroupComment(s.groupId, p.id) : this.addComment(p.id); } },
       onSendComment: () => inGroup ? this.addGroupComment(s.groupId, p.id) : this.addComment(p.id),
-      goProfile: () => { if (!p.real || p.apiAuthorID === USERS.me.apiId) this.openProfile(p.real ? 'me' : p.uid); }
+      goProfile: () => { if (p.real) this.openProfile(p.apiAuthorID); }
     });
   }
 
   renderVals() {
     const s = this.state;
     const me = USERS.me;
-    const notifUnread = s.notifs.filter(n => !n.read).length;
+    const notifUnread = s.notifs.filter(n => !n.read).length + s.followRequests.length;
     const chatUnread = s.convos.reduce((a, c) => a + c.unread, 0);
 
     const navDefs = [
@@ -742,16 +976,16 @@ class Component extends DCLogic {
       { k: 'chat', label: 'Messages', icon: IC.chat, badge: chatUnread },
       { k: 'notifications', label: 'Notifications', icon: IC.bell, badge: notifUnread }
     ];
-    const activeKey = s.screen === 'group' ? 'groups' : (s.screen === 'profile' && s.profileId !== 'me' ? '' : s.screen);
+    const activeKey = s.screen === 'group' ? 'groups' : (s.screen === 'profile' && Number(s.profileId) !== me.apiId ? '' : s.screen);
     const navItems = navDefs.map(n => {
-      const on = n.k === activeKey && !(n.k === 'profile' && s.profileId !== 'me');
+      const on = n.k === activeKey && !(n.k === 'profile' && Number(s.profileId) !== me.apiId);
       return {
         icon: n.icon, label: n.label,
         bg: on ? 'var(--soft)' : 'transparent',
         color: on ? 'var(--accent)' : 'var(--text2)',
         w: on ? '800' : '600',
         hasBadge: n.badge > 0, badge: num(n.badge),
-        go: () => { if (n.k === 'profile') this.openProfile('me'); else this.go(n.k); }
+        go: () => { if (n.k === 'profile') this.openProfile(me.apiId); else this.go(n.k); }
       };
     });
 
@@ -766,7 +1000,10 @@ class Component extends DCLogic {
       label: o.label, desc: o.desc, icon: o.icon,
       isOn: s.privacy === o.k,
       bg: s.privacy === o.k ? 'var(--soft)' : 'transparent',
-      pick: () => this.setState({ privacy: o.k, privacyOpen: false })
+      pick: () => {
+        this.setState({ privacy: o.k, privacyOpen: false });
+        if (o.k === 'selected') this.loadPostFollowers();
+      }
     }));
     const followerChips = s.postFollowers.map(u => {
       const uid = String(u.apiId);
@@ -782,34 +1019,34 @@ class Component extends DCLogic {
     const composerAudienceReady = s.privacy !== 'selected' || Object.keys(s.selectedFollowers).some(id => s.selectedFollowers[id]);
 
     // profile
-    const pUser = USERS[s.profileId];
-    const pIsMe = s.profileId === 'me';
-    const followSt = s.follow[s.profileId] || 'none';
-    const pCanView = pIsMe || !pUser.private || followSt === 'following';
-    const pPostsRaw = pIsMe ? s.profilePosts : [];
-    const followerIds = pIsMe ? s.myFollowers : (FOLLOWERS_MAP[s.profileId] || []);
-    const followingIds = pIsMe ? Object.keys(s.follow).filter(k => s.follow[k] === 'following') : (FOLLOWING_MAP[s.profileId] || []);
-    const mkUserRow = (uid) => {
-      const u = USERS[uid];
-      const b = this.followBtn(uid);
+    const pUser = this.apiUser(s.profileId || me.apiId);
+    const pIsMe = Number(s.profileId) === me.apiId;
+    const pCanView = s.profileReady && pUser.canViewProfile !== false;
+    const pPostsRaw = s.profilePosts;
+    const followerIds = s.profileFollowers;
+    const followingIds = s.profileFollowing;
+    const mkUserRow = (userID) => {
+      const u = this.apiUser(userID);
+      const b = this.followBtn(userID);
       return {
-        user: u, showBtn: uid !== 'me',
+        user: u, showBtn: Number(userID) !== me.apiId,
         btnLabel: b.label, btnBg: b.bg, btnColor: b.color, btnBd: b.bd,
-        onBtn: () => this.toggleFollow(uid),
-        goProfile: () => this.openProfile(uid)
+        btnDisabled: b.disabled,
+        onBtn: () => this.toggleFollow(userID),
+        goProfile: () => this.openProfile(userID)
       };
     };
     const pTabs = [
       { k: 'posts', label: 'Posts' },
-      { k: 'followers', label: 'Followers · ' + followerIds.length },
-      { k: 'following', label: 'Following · ' + followingIds.length }
+      { k: 'followers', label: 'Followers · ' + (pUser.followersCount || 0) },
+      { k: 'following', label: 'Following · ' + (pUser.followingCount || 0) }
     ].map(t => ({
       label: t.label,
       color: s.profileTab === t.k ? 'var(--text)' : 'var(--text3)',
       bd: s.profileTab === t.k ? 'var(--accent)' : 'transparent',
       pick: () => this.setState({ profileTab: t.k })
     }));
-    const fb = this.followBtn(s.profileId);
+    const fb = this.followBtn(s.profileId || 0);
     const privacySeg = [
       { k: 'public', label: 'Public', icon: IC.globe },
       { k: 'private', label: 'Private', icon: IC.lock }
@@ -861,7 +1098,7 @@ class Component extends DCLogic {
       setGoing: () => this.rsvp(g.id, ev.id, 'going'),
       setNot: () => this.rsvp(g.id, ev.id, 'not')
     }));
-    const gMembers = g.memberIds.map(uid => ({ user: USERS[uid], isOwner: uid === g.owner, goProfile: () => this.openProfile(uid) }));
+    const gMembers = g.memberIds.map(uid => ({ user: USERS[uid], isOwner: uid === g.owner, goProfile: () => {} }));
     const gRequests = (gIsOwner ? g.requests : []).map(r => ({
       user: USERS[r.uid],
       pending: r.status === 'pending', done: r.status !== 'pending',
@@ -869,7 +1106,7 @@ class Component extends DCLogic {
       accept: () => this.handleRequest(g.id, r.uid, true),
       decline: () => this.handleRequest(g.id, r.uid, false)
     }));
-    const inviteChips = Object.keys(s.follow).filter(uid => s.follow[uid] === 'following' && g.memberIds.indexOf(uid) < 0).map(uid => {
+    const inviteChips = Object.keys(s.mockFollow).filter(uid => s.mockFollow[uid] === 'accepted' && g.memberIds.indexOf(uid) < 0).map(uid => {
       const u = USERS[uid];
       const on = !!s.invited[g.id + ':' + uid];
       return {
@@ -918,9 +1155,8 @@ class Component extends DCLogic {
 
     // notifications
     const gName = (gid) => { const gr = s.groups.find(x => x.id === gid); return gr ? gr.name : ''; };
-    const notifItems = s.notifs.map((n, i) => {
+    const mockNotifItems = s.notifs.map((n, i) => {
       const meta = {
-        follow: { icon: IC.user, text: 'requested to follow you', accepted: 'Follow request accepted', declined: 'Request declined' },
         invite: { icon: IC.users, text: 'invited you to join ' + gName(n.gid), accepted: 'Joined ' + gName(n.gid), declined: 'Invite declined' },
         request: { icon: IC.plus, text: 'asked to join your group ' + gName(n.gid), accepted: 'Added to the group', declined: 'Request declined' },
         event: { icon: IC.cal, text: 'created the event \u201c' + (n.extra || '') + '\u201d in ' + gName(n.gid), accepted: '', declined: '' }
@@ -935,16 +1171,35 @@ class Component extends DCLogic {
         doneLabel: n.status === 'accepted' ? meta.accepted : meta.declined,
         accept: () => this.acceptNotif(n.id),
         decline: () => this.declineNotif(n.id),
-        goProfile: () => this.openProfile(n.uid)
+        disabled: false,
+        goProfile: () => {}
       };
     });
+    const followRequestItems = s.followRequests.map((request, i) => {
+      const pending = !!s.followRequestPendingByID[String(request.id)];
+      return {
+        user: this.apiUser(request.user.id), icon: IC.user, text: 'requested to follow you',
+        time: this.formatPostTime(request.created_at), delay: (i * 0.06).toFixed(2) + 's',
+        bg: 'color-mix(in oklab, var(--accent) 5%, var(--surface))', unreadDot: true,
+        pending: true, done: false, doneLabel: '', disabled: pending,
+        accept: () => this.acceptFollowRequest(request.id),
+        decline: () => this.rejectFollowRequest(request.id),
+        goProfile: () => this.openProfile(request.user.id)
+      };
+    });
+    const notifItems = followRequestItems.concat(mockNotifItems);
 
     // right rail
-    const suggestions = Object.keys(USERS).filter(uid => uid !== 'me' && s.follow[uid] !== 'following').map(uid => {
-      const u = USERS[uid];
-      const b = this.followBtn(uid);
-      return { user: u, isPrivate: u.private, btnLabel: b.label, btnBg: b.bg, btnColor: b.color, btnBd: b.bd, onBtn: () => this.toggleFollow(uid), goProfile: () => this.openProfile(uid) };
-    });
+    const suggestions = s.directoryUserIDs.map(userID => this.apiUser(userID))
+      .filter(user => !user.relationship || user.relationship.status !== 'accepted')
+      .map(user => {
+        const b = this.followBtn(user.apiId);
+        return {
+          user, isPrivate: user.private,
+          btnLabel: b.label, btnBg: b.bg, btnColor: b.color, btnBd: b.bd, btnDisabled: b.disabled,
+          onBtn: () => this.toggleFollow(user.apiId), goProfile: () => this.openProfile(user.apiId)
+        };
+      });
     const railEvents = [];
     s.groups.forEach(gr => { if (gr.state === 'joined') gr.events.forEach(ev => railEvents.push({ title: ev.title, day: ev.day, mon: ev.mon, group: gr.name, open: () => this.setState({ screen: 'group', groupId: gr.id, groupTab: 'events' }) })); });
 
@@ -963,7 +1218,13 @@ class Component extends DCLogic {
       // shell
       isAuthChecking: s.authStatus === 'checking', isAuthStartupError: s.authStatus === 'error',
       isAuth: s.authStatus === 'anonymous', isApp: s.authStatus === 'authenticated',
-      isFeed: s.screen === 'feed', isProfile: s.screen === 'profile', isGroups: s.screen === 'groups',
+      isFeed: s.screen === 'feed',
+      isProfile: s.screen === 'profile' && s.profileReady,
+      isProfileLoading: s.screen === 'profile' && s.profileLoading,
+      isProfileError: s.screen === 'profile' && !s.profileLoading && !s.profileReady && !!s.profileError,
+      profileError: s.profileError,
+      retryProfile: () => this.openProfile(s.profileId),
+      isGroups: s.screen === 'groups',
       isGroup: s.screen === 'group', isChat: s.screen === 'chat', isNotifs: s.screen === 'notifications',
       rightRail: ['feed', 'profile', 'groups', 'notifications'].indexOf(s.screen) >= 0,
       navItems, me,
@@ -971,7 +1232,7 @@ class Component extends DCLogic {
       themeLabel: s.theme === 'light' ? 'Dark mode' : 'Light mode',
       toggleTheme: this.toggleTheme,
       goHome: () => this.go('feed'),
-      goMyProfile: () => this.openProfile('me'),
+      goMyProfile: () => this.openProfile(me.apiId),
       goLogout: this.logout,
       logoutDisabled: s.logoutPending,
       appHasError: !!s.appError, appError: s.appError,
@@ -1029,30 +1290,32 @@ class Component extends DCLogic {
       pCover: cover(pUser.color),
       pShowLock: pUser.private || (pIsMe && s.myPrivacy === 'private'),
       pCanView, pLocked: !pCanView,
-      pStatPosts: num(pPostsRaw.length), pStatFollowers: num(followerIds.length), pStatFollowing: num(followingIds.length),
+      pShowEmail: pIsMe && !!pUser.email,
+      pStatPosts: num(pUser.postsCount || 0),
+      pStatFollowers: num(pUser.followersCount || 0),
+      pStatFollowing: num(pUser.followingCount || 0),
       pTabs,
       pTabPosts: s.profileTab === 'posts', pTabFollowers: s.profileTab === 'followers', pTabFollowing: s.profileTab === 'following',
       pPosts: pPostsRaw.map(p => this.mapPost(p, false)),
-      pNoPosts: pIsMe && !s.profilePostsLoading && !s.profilePostsError && pPostsRaw.length === 0,
-      pPostsLoading: pIsMe && s.profilePostsLoading,
-      pPostsHasError: pIsMe && !!s.profilePostsError,
+      pNoPosts: !s.profilePostsLoading && !s.profilePostsError && pPostsRaw.length === 0,
+      pPostsLoading: s.profilePostsLoading,
+      pPostsHasError: !!s.profilePostsError,
       pPostsError: s.profilePostsError,
-      retryProfilePosts: () => this.loadProfilePosts(true),
-      pPostsHasMore: pIsMe && !!s.profilePostsNextCursor,
-      loadMoreProfilePosts: () => this.loadProfilePosts(false),
+      retryProfilePosts: () => this.loadProfilePosts(s.profileId, true),
+      pPostsHasMore: !!s.profilePostsNextCursor,
+      loadMoreProfilePosts: () => this.loadProfilePosts(s.profileId, false),
       profileLoadMoreLabel: s.profilePostsPending && !s.profilePostsLoading ? 'Loading…' : 'Load more',
       profileLoadMoreDisabled: s.profilePostsPending,
       pFollowers: followerIds.map(mkUserRow), pFollowing: followingIds.map(mkUserRow),
+      pListsLoading: s.profileListsLoading,
+      pListsHasError: !!s.profileListsError,
+      pListsError: s.profileListsError,
       followLabel: fb.label, followBg: fb.bg, followColor: fb.color, followBd: fb.bd,
+      followDisabled: fb.disabled,
+      followHasError: !!s.followErrorByID[String(s.profileId)],
+      followError: s.followErrorByID[String(s.profileId)] || '',
       onFollow: () => this.toggleFollow(s.profileId),
-      msgProfile: () => {
-        const existing = s.convos.find(c => c.kind === 'dm' && c.uid === s.profileId);
-        if (existing) { this.setState({ screen: 'chat', convoId: existing.id }); }
-        else {
-          const c = { id: 'c' + Date.now(), kind: 'dm', uid: s.profileId, unread: 0, typing: false, online: false, messages: [] };
-          this.setState({ convos: s.convos.concat([c]), screen: 'chat', convoId: c.id });
-        }
-      },
+      msgProfile: () => this.setState({ appError: 'Messages are not connected to backend users yet.' }),
       privacySeg,
       profilePrivacyHasError: pIsMe && !!s.profilePrivacyError,
       profilePrivacyError: s.profilePrivacyError,
@@ -1121,9 +1384,13 @@ class Component extends DCLogic {
       msgRef: (el) => { this.msgEl = el; },
       // notifications
       notifItems,
+      followRequestsHasError: !!s.followRequestsError,
+      followRequestsError: s.followRequestsError,
       markAllRead: () => this.setState({ notifs: s.notifs.map(n => Object.assign({}, n, { read: true })) }),
       // rail
-      suggestions, railEvents
+      suggestions, railEvents,
+      suggestionsHasError: !!s.directoryError,
+      suggestionsError: s.directoryError
     };
   }
 }

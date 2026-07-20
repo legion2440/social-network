@@ -11,6 +11,7 @@ type UserRepo interface {
 	Create(ctx context.Context, user *domain.User) (int64, error)
 	GetByID(ctx context.Context, id int64) (*domain.User, error)
 	GetByEmail(ctx context.Context, email string) (*domain.User, error)
+	ListDirectory(ctx context.Context, viewerUserID int64, cursor *domain.UserCursor, limit int) ([]*domain.RelatedUser, error)
 	UpdateProfile(ctx context.Context, user *domain.User) error
 	SetAvatarMediaID(ctx context.Context, userID int64, mediaID *int64, updatedAt time.Time) error
 }
@@ -34,10 +35,12 @@ type FollowRepo interface {
 	Accept(ctx context.Context, id, followedUserID int64, now time.Time) (*domain.Follow, error)
 	Delete(ctx context.Context, followerUserID, followedUserID int64) error
 	Reject(ctx context.Context, id, followedUserID int64) error
-	ListFollowers(ctx context.Context, userID int64) ([]*domain.User, error)
-	ListFollowing(ctx context.Context, userID int64) ([]*domain.User, error)
+	ListFollowers(ctx context.Context, userID, viewerUserID int64) ([]*domain.RelatedUser, error)
+	ListFollowing(ctx context.Context, userID, viewerUserID int64) ([]*domain.RelatedUser, error)
 	ListPendingRequests(ctx context.Context, followedUserID int64) ([]*domain.FollowRequest, error)
 	IsAccepted(ctx context.Context, followerUserID, followedUserID int64) (bool, error)
+	CountFollowers(ctx context.Context, userID int64) (int64, error)
+	CountFollowing(ctx context.Context, userID int64) (int64, error)
 }
 
 type PostRepo interface {
@@ -47,6 +50,7 @@ type PostRepo interface {
 	GetAccessibleByID(ctx context.Context, viewerUserID, postID int64) (*domain.Post, error)
 	ListFeed(ctx context.Context, viewerUserID int64, cursor *domain.PostCursor, limit int) ([]*domain.Post, error)
 	ListByAuthor(ctx context.Context, viewerUserID, authorUserID int64, cursor *domain.PostCursor, limit int) ([]*domain.Post, error)
+	CountAccessibleByAuthor(ctx context.Context, viewerUserID, authorUserID int64) (int64, error)
 }
 
 type TransactionRepositories interface {

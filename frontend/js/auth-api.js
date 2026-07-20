@@ -144,10 +144,64 @@
           expectedStatus: 200
         });
       },
+      users: function (cursor, limit) {
+        return request(pagePath('/api/users', cursor, limit), {
+          method: 'GET',
+          expectedStatus: 200
+        });
+      },
+      userProfile: function (userID) {
+        return request('/api/users/' + encodeURIComponent(String(userID)), {
+          method: 'GET',
+          expectedStatus: 200
+        });
+      },
+      relationship: function (userID) {
+        return request('/api/users/' + encodeURIComponent(String(userID)) + '/follow', {
+          method: 'GET',
+          expectedStatus: 200
+        });
+      },
+      follow: function (userID) {
+        return request('/api/users/' + encodeURIComponent(String(userID)) + '/follow', {
+          method: 'PUT',
+          expectedStatus: 200
+        });
+      },
+      unfollow: function (userID) {
+        return request('/api/users/' + encodeURIComponent(String(userID)) + '/follow', {
+          method: 'DELETE',
+          expectedStatus: 204
+        });
+      },
       followers: function (userID) {
         return request('/api/users/' + encodeURIComponent(String(userID)) + '/followers', {
           method: 'GET',
           expectedStatus: 200
+        });
+      },
+      following: function (userID) {
+        return request('/api/users/' + encodeURIComponent(String(userID)) + '/following', {
+          method: 'GET',
+          expectedStatus: 200
+        });
+      },
+      followRequests: function () {
+        return request('/api/follow-requests', {
+          method: 'GET',
+          expectedStatus: 200
+        });
+      },
+      acceptFollowRequest: function (requestID) {
+        return request('/api/follow-requests/' + encodeURIComponent(String(requestID)) + '/accept', {
+          method: 'POST',
+          expectedStatus: 200
+        });
+      },
+      rejectFollowRequest: function (requestID) {
+        return request('/api/follow-requests/' + encodeURIComponent(String(requestID)), {
+          method: 'DELETE',
+          expectedStatus: 204
         });
       }
     };

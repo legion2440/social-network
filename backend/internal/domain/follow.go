@@ -26,3 +26,12 @@ type FollowRequest struct {
 	Follow *Follow
 	User   *User
 }
+
+// RelatedUser carries the relationship between the current viewer and User.
+// A nil Status is the external "none" state; pending and accepted reuse the
+// persisted follow vocabulary.
+type RelatedUser struct {
+	User      *User
+	Status    *FollowStatus
+	FollowsMe bool
+}
