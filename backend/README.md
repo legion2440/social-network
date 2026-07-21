@@ -46,6 +46,7 @@ Current migrations:
 - `000006_create_follows`
 - `000007_create_posts`
 - `000008_create_post_comments`
+- `000009_create_groups`
 
 To inspect the current version with the SQLite CLI:
 
@@ -240,6 +241,42 @@ a failed commit leaves no comment row. Comment responses contain only a safe
 author summary; editing, deletion, replies, likes, and realtime delivery are
 outside this step.
 
+## Groups
+
+Groups are discoverable by every authenticated user. `POST /api/groups`
+accepts strict JSON with exactly one `title` and one `description`; both values
+are trimmed and required. Titles contain at most 100 Unicode code points and
+descriptions at most 2000. The request body is limited to 64 KiB. Group creation
+and the creator's `owner` membership are committed in one SQLite transaction.
+
+`group_memberships` stores one state per group/user pair: `owner`, `member`,
+`invited`, or `requested`. The external `viewer_status` additionally uses
+`none`. Membership changes use conditional updates or deletes against the
+expected current state. A repeated or stale transition returns `409`; owner-only
+management attempted by another user returns `403`. Owners cannot leave because
+group deletion and ownership transfer are outside this step.
+
+The group catalog is ordered by `(created_at DESC, id DESC)`. Members are
+ordered by `(owner_rank ASC, updated_at ASC, user_id ASC)`, with the owner first.
+Join requests and sent invitations use `(created_at ASC, user_id ASC)`. The
+current user's invitation inbox uses `(created_at ASC, group_id ASC)`. All lists
+use opaque cursors, default to 20 items, and enforce a maximum of 50.
+
+Catalog, group detail, and member lists are available to every authenticated
+user. Join requests and sent invitations are owner-only. Invitations may target
+any existing user; follow relationships are irrelevant. Group membership does
+not expand access to private custom avatars: safe owner/member summaries emit a
+static gender placeholder whenever the viewer could not open the controlled
+avatar route under the existing profile privacy rules.
+
+The frontend uses these endpoints for creation, discovery, invitations, join
+requests, owner management, and leaving. Its group directory has a global
+request generation, group detail/members/requests/sent invitations use a
+per-group generation, and the invitation inbox has a separate generation.
+Successful mutations invalidate older reads and apply the returned group as the
+authoritative state. Group posts, comments, events, chat, and notifications are
+explicitly not implemented and no longer use mock group data.
+
 Supported environment variables:
 
 - `SOCIAL_NETWORK_HTTP_ADDR`
@@ -276,6 +313,18 @@ Implemented endpoints:
 - `GET /api/posts/{id}/media` (authenticated and privacy-controlled)
 - `GET /api/posts/{id}/comments` (authenticated privacy-controlled pagination)
 - `POST /api/posts/{id}/comments` (authenticated strict JSON creation)
+- `GET|POST /api/groups` (authenticated cursor catalog and strict JSON creation)
+- `GET /api/groups/{id}`
+- `GET /api/groups/{id}/members`
+- `POST|DELETE /api/groups/{id}/join-request`
+- `GET /api/groups/{id}/join-requests` (owner-only)
+- `POST /api/groups/{id}/join-requests/{userID}/accept` (owner-only)
+- `DELETE /api/groups/{id}/join-requests/{userID}` (owner-only)
+- `GET|POST /api/groups/{id}/invitations` (owner-only)
+- `POST /api/groups/{id}/invitation/accept`
+- `DELETE /api/groups/{id}/invitation`
+- `DELETE /api/groups/{id}/membership`
+- `GET /api/group-invitations`
 - `GET /static/avatars/{male,female,neutral}.svg`
 - `GET /` and frontend assets (local development and browser smoke only)
 
@@ -286,7 +335,8 @@ lists, following lists, profile posts, and post comments use backend user IDs
 and live API state. Comments load lazily per opened post, paginate with the
 backend cursor, keep drafts on failures, and ignore stale responses across
 logout or access changes. Mock identities remain isolated to the
-not-yet-integrated groups and chats sections.
+not-yet-integrated direct-message section. Group-dependent mock posts,
+comments, events, chat, notifications, and right-rail events have been removed.
 
 The local frontend file server does not replace the planned Docker topology.
 The final setup keeps the backend private and serves the frontend through a

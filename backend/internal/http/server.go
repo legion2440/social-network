@@ -22,6 +22,7 @@ type Handler struct {
 	posts        *service.PostService
 	postMedia    *service.PostMediaDeliveryService
 	comments     *service.CommentService
+	groups       *service.GroupService
 	sessionToken SessionTokenExtractor
 	cookieSecure bool
 	frontend     http.Handler
@@ -40,6 +41,7 @@ func NewHandler(
 	posts *service.PostService,
 	postMedia *service.PostMediaDeliveryService,
 	comments *service.CommentService,
+	groups *service.GroupService,
 	sessionToken SessionTokenExtractor,
 	cookieSecure bool,
 	frontendDir string,
@@ -63,6 +65,7 @@ func NewHandler(
 		posts:        posts,
 		postMedia:    postMedia,
 		comments:     comments,
+		groups:       groups,
 		sessionToken: sessionToken,
 		cookieSecure: cookieSecure,
 		frontend:     newFrontendHandler(frontendDir),
@@ -110,6 +113,18 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/posts/feed", protected(h.handlePostFeed))
 	mux.Handle("/api/posts/{id}/media", protected(h.handlePostMedia))
 	mux.Handle("/api/posts/{id}/comments", protected(h.handlePostComments))
+	mux.Handle("/api/groups", protected(h.handleGroups))
+	mux.Handle("/api/groups/{id}", protected(h.handleGroupDetail))
+	mux.Handle("/api/groups/{id}/members", protected(h.handleGroupMembers))
+	mux.Handle("/api/groups/{id}/join-request", protected(h.handleGroupJoinRequest))
+	mux.Handle("/api/groups/{id}/join-requests", protected(h.handleGroupJoinRequests))
+	mux.Handle("/api/groups/{id}/join-requests/{user_id}/accept", protected(h.handleGroupJoinRequestAccept))
+	mux.Handle("/api/groups/{id}/join-requests/{user_id}", protected(h.handleGroupJoinRequestReject))
+	mux.Handle("/api/groups/{id}/invitations", protected(h.handleGroupInvitations))
+	mux.Handle("/api/groups/{id}/invitation/accept", protected(h.handleGroupInvitationAccept))
+	mux.Handle("/api/groups/{id}/invitation", protected(h.handleGroupInvitationDecline))
+	mux.Handle("/api/groups/{id}/membership", protected(h.handleGroupMembership))
+	mux.Handle("/api/group-invitations", protected(h.handleGroupInvitationInbox))
 	mux.HandleFunc("/api/posts/", h.handleNotImplemented)
 	mux.Handle("/uploads/", protected(h.handleMediaDownload))
 	mux.Handle("/static/avatars/", http.FileServer(http.FS(avatarPlaceholderFiles)))
@@ -117,7 +132,6 @@ func (h *Handler) Routes() http.Handler {
 	for _, group := range []string{
 		"/api/auth",
 		"/api/follow",
-		"/api/groups",
 		"/api/events",
 		"/api/chats",
 		"/api/notifications",

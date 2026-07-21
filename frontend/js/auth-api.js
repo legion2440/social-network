@@ -217,6 +217,87 @@
           method: 'DELETE',
           expectedStatus: 204
         });
+      },
+      groups: function (cursor, limit) {
+        return request(pagePath('/api/groups', cursor, limit), {
+          method: 'GET', expectedStatus: 200
+        });
+      },
+      createGroup: function (title, description) {
+        return request('/api/groups', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: title, description: description }),
+          expectedStatus: 201
+        });
+      },
+      group: function (groupID) {
+        return request('/api/groups/' + encodeURIComponent(String(groupID)), {
+          method: 'GET', expectedStatus: 200
+        });
+      },
+      groupMembers: function (groupID, cursor, limit) {
+        return request(pagePath('/api/groups/' + encodeURIComponent(String(groupID)) + '/members', cursor, limit), {
+          method: 'GET', expectedStatus: 200
+        });
+      },
+      requestGroupJoin: function (groupID) {
+        return request('/api/groups/' + encodeURIComponent(String(groupID)) + '/join-request', {
+          method: 'POST', expectedStatus: 200
+        });
+      },
+      cancelGroupJoin: function (groupID) {
+        return request('/api/groups/' + encodeURIComponent(String(groupID)) + '/join-request', {
+          method: 'DELETE', expectedStatus: 200
+        });
+      },
+      groupJoinRequests: function (groupID, cursor, limit) {
+        return request(pagePath('/api/groups/' + encodeURIComponent(String(groupID)) + '/join-requests', cursor, limit), {
+          method: 'GET', expectedStatus: 200
+        });
+      },
+      acceptGroupJoinRequest: function (groupID, userID) {
+        return request('/api/groups/' + encodeURIComponent(String(groupID)) + '/join-requests/' + encodeURIComponent(String(userID)) + '/accept', {
+          method: 'POST', expectedStatus: 200
+        });
+      },
+      rejectGroupJoinRequest: function (groupID, userID) {
+        return request('/api/groups/' + encodeURIComponent(String(groupID)) + '/join-requests/' + encodeURIComponent(String(userID)), {
+          method: 'DELETE', expectedStatus: 200
+        });
+      },
+      groupInvitations: function (groupID, cursor, limit) {
+        return request(pagePath('/api/groups/' + encodeURIComponent(String(groupID)) + '/invitations', cursor, limit), {
+          method: 'GET', expectedStatus: 200
+        });
+      },
+      inviteToGroup: function (groupID, userID) {
+        return request('/api/groups/' + encodeURIComponent(String(groupID)) + '/invitations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userID }),
+          expectedStatus: 200
+        });
+      },
+      groupInvitationInbox: function (cursor, limit) {
+        return request(pagePath('/api/group-invitations', cursor, limit), {
+          method: 'GET', expectedStatus: 200
+        });
+      },
+      acceptGroupInvitation: function (groupID) {
+        return request('/api/groups/' + encodeURIComponent(String(groupID)) + '/invitation/accept', {
+          method: 'POST', expectedStatus: 200
+        });
+      },
+      declineGroupInvitation: function (groupID) {
+        return request('/api/groups/' + encodeURIComponent(String(groupID)) + '/invitation', {
+          method: 'DELETE', expectedStatus: 200
+        });
+      },
+      leaveGroup: function (groupID) {
+        return request('/api/groups/' + encodeURIComponent(String(groupID)) + '/membership', {
+          method: 'DELETE', expectedStatus: 200
+        });
       }
     };
   }

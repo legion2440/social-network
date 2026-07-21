@@ -131,10 +131,11 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 	posts := service.NewPostService(transactions, fixedClock{}, postStager)
 	postMedia := service.NewPostMediaDeliveryService(transactions, uploadDir)
 	comments := service.NewCommentService(transactions, fixedClock{})
+	groups := service.NewGroupService(transactions, fixedClock{})
 
 	return &testEnvironment{
 		db:        db,
-		handler:   NewHandler(db, sessions, media, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
+		handler:   NewHandler(db, sessions, media, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, groups, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
 		users:     users,
 		sessions:  sessions,
 		follows:   follows,
@@ -280,6 +281,7 @@ func newSessionFailureHandlerWithFrontend(store *failingSessionRepo, frontendDir
 		sessions,
 		nil,
 		auth,
+		nil,
 		nil,
 		nil,
 		nil,

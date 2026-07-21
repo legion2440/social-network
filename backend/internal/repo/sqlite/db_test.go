@@ -45,7 +45,7 @@ func TestMigrationsRunAllTheWayDownAndBackUp(t *testing.T) {
 	if err := migrateDown(db); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
-	for _, table := range []string{"post_comments", "post_selected_users", "posts", "follows", "sessions", "media", "users"} {
+	for _, table := range []string{"group_memberships", "groups", "post_comments", "post_selected_users", "posts", "follows", "sessions", "media", "users"} {
 		if tableExists(t, db, table) {
 			t.Fatalf("table %s still exists after down migrations", table)
 		}
@@ -88,7 +88,7 @@ func TestOpenRejectsDisposableLegacyBootstrapDatabase(t *testing.T) {
 func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 
-	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "post_comments", "schema_migrations"} {
+	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "post_comments", "groups", "group_memberships", "schema_migrations"} {
 		if !tableExists(t, db, table) {
 			t.Fatalf("expected table %s", table)
 		}
@@ -143,6 +143,9 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 		{table: "sessions", column: "created_at"},
 		{table: "follows", column: "created_at"},
 		{table: "follows", column: "updated_at"},
+		{table: "groups", column: "created_at"},
+		{table: "group_memberships", column: "created_at"},
+		{table: "group_memberships", column: "updated_at"},
 	} {
 		definition := tableColumns(t, db, tableAndColumn.table)[tableAndColumn.column]
 		if definition.columnType != "INTEGER" {
@@ -187,6 +190,77 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "post_selected_users", "user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "post_comments", "post_id", "posts", "id", "CASCADE")
 	assertForeignKey(t, db, "post_comments", "author_user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "groups", "owner_user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "group_memberships", "group_id", "groups", "id", "CASCADE")
+	assertForeignKey(t, db, "group_memberships", "user_id", "users", "id", "CASCADE")
+}
+
+func TestGroupSchemaConstraintsIndexesAndCascades(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "social-network.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	insertUser := func(email string) int64 {
+		result, err := db.Exec(`
+			INSERT INTO users (email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
+			VALUES (?, 'hash', 'Group', 'User', '21-07-1992', 1, 1)
+		`, email)
+		if err != nil {
+			t.Fatalf("insert user %s: %v", email, err)
+		}
+		id, _ := result.LastInsertId()
+		return id
+	}
+	ownerID := insertUser("group-owner@example.com")
+	memberID := insertUser("group-member@example.com")
+	groupResult, err := db.Exec(`INSERT INTO groups (owner_user_id, title, description, created_at) VALUES (?, 'Group', 'Description', 1)`, ownerID)
+	if err != nil {
+		t.Fatalf("insert group: %v", err)
+	}
+	groupID, _ := groupResult.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO group_memberships (group_id, user_id, status, created_at, updated_at) VALUES (?, ?, 'owner', 1, 1)`, groupID, ownerID); err != nil {
+		t.Fatalf("insert owner membership: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO group_memberships (group_id, user_id, status, created_at, updated_at) VALUES (?, ?, 'member', 2, 2)`, groupID, memberID); err != nil {
+		t.Fatalf("insert member: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO group_memberships (group_id, user_id, status, created_at, updated_at) VALUES (?, ?, 'invited', 3, 3)`, groupID, memberID); err == nil {
+		t.Fatal("expected one membership state per group/user")
+	}
+	if _, err := db.Exec(`INSERT INTO group_memberships (group_id, user_id, status, created_at, updated_at) VALUES (?, ?, 'invalid', 3, 3)`, groupID, insertUser("group-invalid@example.com")); err == nil {
+		t.Fatal("expected membership status constraint")
+	}
+	for name, values := range map[string][2]string{
+		"blank title":           {"   ", "Description"},
+		"untrimmed title":       {" Group ", "Description"},
+		"blank description":     {"Group", "   "},
+		"untrimmed description": {"Group", " Description "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := db.Exec(`INSERT INTO groups (owner_user_id, title, description, created_at) VALUES (?, ?, ?, 2)`, ownerID, values[0], values[1]); err == nil {
+				t.Fatal("expected group text constraint")
+			}
+		})
+	}
+	for _, index := range []string{
+		"idx_groups_created",
+		"idx_group_memberships_group_status_updated",
+		"idx_group_memberships_user_status_updated",
+		"idx_group_memberships_user_status_created",
+	} {
+		if !schemaObjectExists(t, db, "index", index) {
+			t.Fatalf("missing group index %s", index)
+		}
+	}
+	if _, err := db.Exec(`DELETE FROM groups WHERE id = ?`, groupID); err != nil {
+		t.Fatalf("delete group: %v", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM group_memberships WHERE group_id = ?`, groupID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("group delete did not cascade memberships: count=%d err=%v", count, err)
+	}
 }
 
 func TestUserPrivacyAndFollowConstraints(t *testing.T) {

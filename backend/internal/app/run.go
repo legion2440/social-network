@@ -121,6 +121,7 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 	posts := service.NewPostService(transactions, appClock, postStager)
 	postMedia := service.NewPostMediaDeliveryService(transactions, cfg.UploadDir)
 	comments := service.NewCommentService(transactions, appClock)
+	groups := service.NewGroupService(transactions, appClock)
 	handler := httpserver.NewHandler(
 		db,
 		sessions,
@@ -133,6 +134,7 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		posts,
 		postMedia,
 		comments,
+		groups,
 		httpserver.NewCookieSessionTokenExtractor(config.SessionCookieName),
 		cfg.CookieSecure,
 		cfg.FrontendDir,

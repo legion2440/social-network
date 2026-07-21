@@ -152,6 +152,44 @@ test('profile avatar replace keeps FormData intact and delete expects 200', asyn
   assert.equal(calls[1].options.method, 'DELETE');
 });
 
+test('group API uses cursor pages, strict JSON mutations, and bodyless transitions', async () => {
+  const calls = [];
+  const api = createAuthAPI(async (path, options) => {
+    calls.push({ path, options });
+    return jsonResponse(options.method === 'POST' && path === '/api/groups' ? 201 : 200, { id: 12 });
+  });
+
+  await api.groups('next page', 20);
+  await api.createGroup('Readers', 'Long-form reading club');
+  await api.groupMembers(12, 'members cursor', 50);
+  await api.requestGroupJoin(12);
+  await api.cancelGroupJoin(12);
+  await api.groupJoinRequests(12, null, 20);
+  await api.acceptGroupJoinRequest(12, 7);
+  await api.rejectGroupJoinRequest(12, 7);
+  await api.groupInvitations(12, null, 20);
+  await api.inviteToGroup(12, 8);
+  await api.groupInvitationInbox('inbox cursor', 10);
+  await api.acceptGroupInvitation(12);
+  await api.declineGroupInvitation(12);
+  await api.leaveGroup(12);
+
+  assert.equal(calls[0].path, '/api/groups?cursor=next%20page&limit=20');
+  assert.equal(calls[1].path, '/api/groups');
+  assert.equal(calls[1].options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(calls[1].options.body), { title: 'Readers', description: 'Long-form reading club' });
+  assert.equal(calls[2].path, '/api/groups/12/members?cursor=members%20cursor&limit=50');
+  assert.equal(calls[3].options.headers['Content-Type'], undefined);
+  assert.equal(calls[4].options.method, 'DELETE');
+  assert.equal(calls[6].path, '/api/groups/12/join-requests/7/accept');
+  assert.equal(calls[7].options.method, 'DELETE');
+  assert.deepEqual(JSON.parse(calls[9].options.body), { user_id: 8 });
+  assert.equal(calls[10].path, '/api/group-invitations?cursor=inbox%20cursor&limit=10');
+  assert.equal(calls[13].path, '/api/groups/12/membership');
+  assert.equal(calls[13].options.method, 'DELETE');
+  calls.forEach(call => assert.equal(call.options.credentials, 'same-origin'));
+});
+
 test('posts client sends multipart unchanged and builds cursor requests', async () => {
   const calls = [];
   const formData = { kind: 'post-form-data-test-double' };

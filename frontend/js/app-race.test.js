@@ -74,6 +74,18 @@ function rawComment(id, postID, authorID, createdAt) {
   };
 }
 
+function rawGroup(id, status, members, ownerID) {
+  return {
+    id,
+    title: 'Group ' + id,
+    description: 'Description ' + id,
+    created_at: '2026-07-21T12:00:00Z',
+    members_count: members == null ? 1 : members,
+    viewer_status: status || 'none',
+    owner: rawUser(ownerID || 1)
+  };
+}
+
 function createComponent() {
   Object.keys(global.AuthAPI).forEach(key => delete global.AuthAPI[key]);
   const component = new Component({ defaultTheme: 'light' });
@@ -476,7 +488,7 @@ test('pending comment create cannot update state after logout', async () => {
   assert.deepEqual(component.state.posts, []);
 });
 
-test('real posts use backend comment handler while group posts keep mock handler', () => {
+test('group posts no longer retain a mock comment mutation', () => {
   const component = createComponent();
   let realCalls = 0;
   let mockCalls = 0;
@@ -487,7 +499,128 @@ test('real posts use backend comment handler while group posts keep mock handler
   component.mapPost({ id: 'group-post', uid: 'me', comments: [], privacy: 'public' }, true).onSendComment();
 
   assert.equal(realCalls, 1);
-  assert.equal(mockCalls, 1);
+  assert.equal(mockCalls, 0);
+});
+
+test('group mutation invalidates an older directory response', async () => {
+  const component = createComponent();
+  const staleDirectory = deferred();
+  global.AuthAPI.groups = () => staleDirectory.promise;
+  global.AuthAPI.requestGroupJoin = async () => rawGroup(5, 'requested', 1, 2);
+  component.state.apiGroupsByID = { '5': component.mapAPIGroup(rawGroup(5, 'none', 1, 2)) };
+  component.state.groupIDs = [5];
+
+  const staleLoad = component.loadGroups(true);
+  await component.requestGroupJoin(5);
+  staleDirectory.resolve({ groups: [rawGroup(5, 'none', 1, 2)], next_cursor: null });
+  await staleLoad;
+
+  assert.equal(component.state.apiGroupsByID['5'].state, 'requested');
+  assert.equal(component.state.groupMutationPendingByID['5'], false);
+});
+
+test('opening group B rejects the late detail and members responses for group A', async () => {
+  const component = createComponent();
+  const detailA = deferred();
+  const membersA = deferred();
+  global.AuthAPI.group = id => id === 10 ? detailA.promise : Promise.resolve(rawGroup(20, 'none', 1, 3));
+  global.AuthAPI.groupMembers = id => id === 10
+    ? membersA.promise
+    : Promise.resolve({ members: [{ user: rawUser(3), status: 'owner', created_at: '2026-07-21T12:00:00Z' }], next_cursor: null });
+
+  component.openGroup(10);
+  component.openGroup(20);
+  await Promise.resolve();
+  await Promise.resolve();
+  detailA.resolve(rawGroup(10, 'owner', 4, 1));
+  membersA.resolve({ members: [{ user: rawUser(2), status: 'member', created_at: '2026-07-21T12:00:00Z' }], next_cursor: null });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(component.state.groupId, 20);
+  assert.equal(component.state.apiGroupsByID['10'], undefined);
+  assert.deepEqual(component.state.groupMembers.map(member => member.userID), [3]);
+});
+
+test('accepted request cannot be resurrected by an older owner list response', async () => {
+  const component = createComponent();
+  const staleRequests = deferred();
+  let requestCalls = 0;
+  component.state.groupId = 5;
+  component.state.apiGroupsByID = { '5': component.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
+  global.AuthAPI.groupJoinRequests = () => (++requestCalls === 1
+    ? staleRequests.promise
+    : Promise.resolve({ requests: [], next_cursor: null }));
+  global.AuthAPI.acceptGroupJoinRequest = async () => rawGroup(5, 'owner', 2, 1);
+  global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
+  global.AuthAPI.groupInvitations = async () => ({ invitations: [], next_cursor: null });
+
+  const staleLoad = component.loadGroupRequests(5, true);
+  await component.acceptGroupRequest(5, 2);
+  staleRequests.resolve({ requests: [{ user: rawUser(2), created_at: '2026-07-21T12:00:00Z' }], next_cursor: null });
+  await staleLoad;
+
+  assert.equal(component.state.apiGroupsByID['5'].members, 2);
+  assert.deepEqual(component.state.groupRequests, []);
+});
+
+test('accepted invitation invalidates the old inbox response', async () => {
+  const component = createComponent();
+  const staleInbox = deferred();
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'invited', 1, 2)) };
+  component.state.groupIDs = [7];
+  global.AuthAPI.groupInvitationInbox = () => staleInbox.promise;
+  global.AuthAPI.acceptGroupInvitation = async () => rawGroup(7, 'member', 2, 2);
+
+  const staleLoad = component.loadGroupInvitationInbox(true);
+  const originalReload = component.loadGroupInvitationInbox;
+  component.loadGroupInvitationInbox = async () => {};
+  await component.acceptGroupInvitation(7);
+  staleInbox.resolve({ invitations: [{ group: rawGroup(7, 'invited', 1, 2), created_at: '2026-07-21T12:00:00Z' }], next_cursor: null });
+  await staleLoad;
+  component.loadGroupInvitationInbox = originalReload;
+
+  assert.equal(component.state.apiGroupsByID['7'].state, 'member');
+  assert.deepEqual(component.state.groupInvitationInbox, []);
+});
+
+test('group mutation is serialized and cannot update state after logout', async () => {
+  const component = createComponent();
+  const response = deferred();
+  let calls = 0;
+  component.state.apiGroupsByID = { '9': component.mapAPIGroup(rawGroup(9, 'none', 1, 2)) };
+  component.state.groupIDs = [9];
+  global.AuthAPI.requestGroupJoin = () => { calls += 1; return response.promise; };
+  global.AuthAPI.logout = async () => null;
+
+  const first = component.requestGroupJoin(9);
+  const duplicate = component.requestGroupJoin(9);
+  assert.equal(calls, 1);
+  await component.logout();
+  response.resolve(rawGroup(9, 'requested', 1, 2));
+  await Promise.all([first, duplicate]);
+
+  assert.equal(component.state.authStatus, 'anonymous');
+  assert.deepEqual(component.state.apiGroupsByID, {});
+  assert.deepEqual(component.state.groupMutationPendingByID, {});
+});
+
+test('failed group create and invitation preserve their form selections', async () => {
+  const component = createComponent();
+  component.state.ngName = 'Keep title';
+  component.state.ngDesc = 'Keep description';
+  global.AuthAPI.createGroup = async () => { throw new Error('create failed'); };
+  await component.createGroup();
+  assert.equal(component.state.ngName, 'Keep title');
+  assert.equal(component.state.ngDesc, 'Keep description');
+
+  component.state.groupId = 5;
+  component.state.groupInviteUserID = '2';
+  component.state.apiGroupsByID = { '5': component.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
+  global.AuthAPI.inviteToGroup = async () => { throw new Error('invite failed'); };
+  await component.inviteSelectedUser();
+  assert.equal(component.state.groupInviteUserID, '2');
+  assert.match(component.state.groupMutationErrorByID['5'], /invite failed/);
 });
 
 test('accept invalidates feed, directory, selected followers and current profile', async () => {

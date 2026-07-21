@@ -58,6 +58,19 @@ type CommentRepo interface {
 	ListByPost(ctx context.Context, postID int64, cursor *domain.CommentCursor, limit int) ([]*domain.Comment, error)
 }
 
+type GroupRepo interface {
+	Create(ctx context.Context, group *domain.Group) (int64, error)
+	Get(ctx context.Context, groupID, viewerUserID int64) (*domain.Group, error)
+	List(ctx context.Context, viewerUserID int64, cursor *domain.GroupCursor, limit int) ([]*domain.Group, error)
+	CreateMembership(ctx context.Context, membership *domain.GroupMembership) error
+	GetMembershipStatus(ctx context.Context, groupID, userID int64) (*domain.GroupMembershipStatus, error)
+	UpdateMembershipStatus(ctx context.Context, groupID, userID int64, expected, next domain.GroupMembershipStatus, now time.Time) error
+	DeleteMembership(ctx context.Context, groupID, userID int64, expected domain.GroupMembershipStatus) error
+	ListMembers(ctx context.Context, groupID, viewerUserID int64, cursor *domain.GroupMemberCursor, limit int) ([]*domain.GroupMembership, error)
+	ListMemberships(ctx context.Context, groupID, viewerUserID int64, status domain.GroupMembershipStatus, cursor *domain.GroupMembershipCursor, limit int) ([]*domain.GroupMembership, error)
+	ListInvitationInbox(ctx context.Context, userID int64, cursor *domain.GroupInvitationCursor, limit int) ([]*domain.GroupInvitation, error)
+}
+
 type TransactionRepositories interface {
 	Users() UserRepo
 	Sessions() SessionRepo
@@ -65,6 +78,7 @@ type TransactionRepositories interface {
 	Follows() FollowRepo
 	Posts() PostRepo
 	Comments() CommentRepo
+	Groups() GroupRepo
 }
 
 type TransactionManager interface {

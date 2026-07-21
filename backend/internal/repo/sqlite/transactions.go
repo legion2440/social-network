@@ -39,6 +39,7 @@ func (m *TransactionManager) WithinTransaction(ctx context.Context, fn func(repo
 		follows:  &FollowRepo{db: tx},
 		posts:    &PostRepo{db: tx},
 		comments: &CommentRepo{db: tx},
+		groups:   &GroupRepo{db: tx},
 	}
 	if err := fn(repositories); err != nil {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
@@ -61,6 +62,7 @@ type transactionRepositories struct {
 	follows  *FollowRepo
 	posts    *PostRepo
 	comments *CommentRepo
+	groups   *GroupRepo
 }
 
 func (r *transactionRepositories) Users() repo.UserRepo {
@@ -85,4 +87,8 @@ func (r *transactionRepositories) Posts() repo.PostRepo {
 
 func (r *transactionRepositories) Comments() repo.CommentRepo {
 	return r.comments
+}
+
+func (r *transactionRepositories) Groups() repo.GroupRepo {
+	return r.groups
 }

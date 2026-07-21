@@ -540,13 +540,33 @@
           New group
         </button>
       </div>
+      <sc-if value="{{groupsHasError}}" hint-placeholder-val="{{false}}">
+        <div role="alert" style="margin-bottom:14px;padding:12px 14px;border:1px solid color-mix(in oklab,var(--danger) 35%,var(--border));border-radius:14px;color:var(--danger);font:600 12.5px/1.4 'Manrope',sans-serif">
+          {{groupsError}} <button onclick="{{retryGroups}}" style="margin-left:8px;border:none;background:transparent;color:inherit;font-weight:800;cursor:pointer">Retry</button>
+        </div>
+      </sc-if>
+      <sc-if value="{{groupInboxHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="margin-bottom:12px;color:var(--danger);font:600 12.5px 'Manrope',sans-serif">{{groupInboxError}}</div></sc-if>
+      <sc-if value="{{groupInboxHasItems}}" hint-placeholder-val="{{false}}">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:15px 17px;margin-bottom:16px">
+          <div style="font:800 11.5px 'Manrope',sans-serif;color:var(--text3);letter-spacing:.06em;margin-bottom:10px">YOUR GROUP INVITATIONS</div>
+          <sc-for list="{{groupInboxCards}}" as="iv" hint-placeholder-count="1">
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 0">
+              <div onclick="{{iv.open}}" style="flex:1;cursor:pointer"><div style="font:800 14px 'Manrope',sans-serif">{{iv.name}}</div><div style="font:600 11.5px 'Manrope',sans-serif;color:var(--text3)">Owner: {{iv.owner.name}}</div></div>
+              <button onclick="{{iv.accept}}" disabled="{{iv.pending}}" style="padding:8px 15px;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 12px 'Manrope',sans-serif;cursor:pointer">Accept</button>
+              <button onclick="{{iv.decline}}" disabled="{{iv.pending}}" style="padding:8px 15px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--text2);font:800 12px 'Manrope',sans-serif;cursor:pointer">Decline</button>
+            </div>
+          </sc-for>
+          <sc-if value="{{groupInboxHasMore}}" hint-placeholder-val="{{false}}"><button onclick="{{loadMoreGroupInbox}}" style="width:100%;padding:8px;border:none;background:transparent;color:var(--accent);font:800 12px 'Manrope',sans-serif;cursor:pointer">Load more invitations</button></sc-if>
+        </div>
+      </sc-if>
       <sc-if value="{{createOpen}}" hint-placeholder-val="{{false}}">
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;margin-bottom:18px;display:flex;flex-direction:column;gap:12px;animation:drop .25s ease both">
           <input placeholder="Group name" value="{{ngName}}" onchange="{{onNgName}}" style="padding:12px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
           <input placeholder="What is this group about?" value="{{ngDesc}}" onchange="{{onNgDesc}}" style="padding:12px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
+          <sc-if value="{{groupCreateHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="color:var(--danger);font:600 12px 'Manrope',sans-serif">{{groupCreateError}}</div></sc-if>
           <div style="display:flex;gap:8px;justify-content:flex-end">
             <button onclick="{{toggleCreate}}" style="padding:9px 18px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text2);font:700 13px 'Manrope',sans-serif;cursor:pointer">Cancel</button>
-            <button onclick="{{createGroup}}" style="padding:9px 20px;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 13px 'Manrope',sans-serif;cursor:pointer">Create</button>
+            <button onclick="{{createGroup}}" disabled="{{groupCreatePending}}" style="padding:9px 20px;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 13px 'Manrope',sans-serif;cursor:pointer">Create</button>
           </div>
         </div>
       </sc-if>
@@ -557,26 +577,29 @@
             <div style="padding:14px 16px 16px;display:flex;flex-direction:column;gap:6px;flex:1">
               <div onclick="{{g.open}}" style="font:800 15.5px 'Manrope',sans-serif;cursor:pointer">{{g.name}}</div>
               <div style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">{{g.membersLabel}} members</div>
+              <div style="font:600 11.5px 'Manrope',sans-serif;color:var(--text3)">by {{g.owner.name}}</div>
               <p style="margin:2px 0 10px;font:500 13px/1.5 'Manrope',sans-serif;color:var(--text2);flex:1">{{g.desc}}</p>
               <sc-if value="{{g.isJoined}}" hint-placeholder-val="{{false}}">
-                <button onclick="{{g.open}}" style="padding:9px 0;border-radius:999px;border:none;background:var(--soft);color:var(--accent);font:800 13px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--soft2)">Open group</button>
+                <div style="display:flex;gap:8px"><button onclick="{{g.open}}" style="flex:1;padding:9px 0;border-radius:999px;border:none;background:var(--soft);color:var(--accent);font:800 13px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--soft2)">Open group</button><sc-if value="{{g.isMember}}" hint-placeholder-val="{{false}}"><button onclick="{{g.leave}}" disabled="{{g.pending}}" style="padding:9px 14px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text2);font:800 12px 'Manrope',sans-serif;cursor:pointer">Leave</button></sc-if></div>
               </sc-if>
+              <sc-if value="{{g.hasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="color:var(--danger);font:600 11.5px 'Manrope',sans-serif">{{g.error}}</div></sc-if>
               <sc-if value="{{g.isNone}}" hint-placeholder-val="{{false}}">
-                <button onclick="{{g.join}}" style="padding:9px 0;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 13px 'Manrope',sans-serif;cursor:pointer" style-active="transform:scale(.97)">Request to join</button>
+                <button onclick="{{g.join}}" disabled="{{g.pending}}" style="padding:9px 0;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 13px 'Manrope',sans-serif;cursor:pointer" style-active="transform:scale(.97)">Request to join</button>
               </sc-if>
               <sc-if value="{{g.isRequested}}" hint-placeholder-val="{{false}}">
-                <button onclick="{{g.join}}" style="padding:9px 0;border-radius:999px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font:800 13px 'Manrope',sans-serif;cursor:pointer" title="Click to cancel request">Requested ✓</button>
+                <button onclick="{{g.join}}" disabled="{{g.pending}}" style="padding:9px 0;border-radius:999px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font:800 13px 'Manrope',sans-serif;cursor:pointer" title="Click to cancel request">Requested ✓</button>
               </sc-if>
               <sc-if value="{{g.isInvited}}" hint-placeholder-val="{{false}}">
                 <div style="display:flex;gap:8px">
-                  <button onclick="{{g.acceptInvite}}" style="flex:1;padding:9px 0;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 13px 'Manrope',sans-serif;cursor:pointer">Accept invite</button>
-                  <button onclick="{{g.declineInvite}}" style="flex:1;padding:9px 0;border-radius:999px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font:800 13px 'Manrope',sans-serif;cursor:pointer">Decline</button>
+                  <button onclick="{{g.acceptInvite}}" disabled="{{g.pending}}" style="flex:1;padding:9px 0;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 13px 'Manrope',sans-serif;cursor:pointer">Accept invite</button>
+                  <button onclick="{{g.declineInvite}}" disabled="{{g.pending}}" style="flex:1;padding:9px 0;border-radius:999px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font:800 13px 'Manrope',sans-serif;cursor:pointer">Decline</button>
                 </div>
               </sc-if>
             </div>
           </div>
         </sc-for>
       </div>
+      <sc-if value="{{groupsHasMore}}" hint-placeholder-val="{{false}}"><button onclick="{{loadMoreGroups}}" style="display:block;margin:18px auto 0;padding:10px 24px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text2);font:800 12.5px 'Manrope',sans-serif;cursor:pointer">{{groupsLoadMoreLabel}}</button></sc-if>
     </div>
     </sc-if>
 
@@ -586,29 +609,39 @@
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg>
         All groups
       </button>
+      <sc-if value="{{groupHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="margin-bottom:12px;padding:12px 14px;border:1px solid color-mix(in oklab,var(--danger) 35%,var(--border));border-radius:14px;color:var(--danger);font:600 12.5px 'Manrope',sans-serif">{{groupError}} <button onclick="{{retryGroup}}" style="border:none;background:transparent;color:inherit;font-weight:800;cursor:pointer">Retry</button></div></sc-if>
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px">
         <div style="height:96px;background:{{gCover}}"></div>
         <div style="padding:16px 22px 14px">
           <div style="display:flex;align-items:center;gap:10px">
             <h1 style="font:800 20px 'Manrope',sans-serif;margin:0">{{gName}}</h1>
             <sc-if value="{{gIsOwner}}" hint-placeholder-val="{{false}}"><span style="padding:3px 10px;border-radius:999px;background:var(--soft);color:var(--accent);font:800 10.5px 'Manrope',sans-serif;letter-spacing:.04em">OWNER</span></sc-if>
-            <button onclick="{{toggleInvite}}" style="margin-left:auto;display:flex;align-items:center;gap:7px;padding:8px 16px;border-radius:999px;border:1.5px solid var(--border);background:transparent;color:var(--text);font:800 12.5px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
+            <sc-if value="{{gIsOwner}}" hint-placeholder-val="{{false}}"><button onclick="{{toggleInvite}}" style="margin-left:auto;display:flex;align-items:center;gap:7px;padding:8px 16px;border-radius:999px;border:1.5px solid var(--border);background:transparent;color:var(--text);font:800 12.5px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
               Invite
-            </button>
+            </button></sc-if>
           </div>
-          <div style="font:600 12.5px 'Manrope',sans-serif;color:var(--text3);margin-top:4px">{{gMembersLabel}} members · {{gDesc}}</div>
+          <div style="font:600 12.5px 'Manrope',sans-serif;color:var(--text3);margin-top:4px">{{gMembersLabel}} members · owned by {{gOwner.name}}</div>
+          <p style="margin:8px 0 0;font:500 13.5px/1.5 'Manrope',sans-serif;color:var(--text2)">{{gDesc}}</p>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <sc-if value="{{gIsNone}}" hint-placeholder-val="{{false}}"><button onclick="{{gRequestJoin}}" disabled="{{gMutationPending}}" style="padding:8px 16px;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 12px 'Manrope',sans-serif;cursor:pointer">Request to join</button></sc-if>
+            <sc-if value="{{gIsRequested}}" hint-placeholder-val="{{false}}"><button onclick="{{gRequestJoin}}" disabled="{{gMutationPending}}" style="padding:8px 16px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--text2);font:800 12px 'Manrope',sans-serif;cursor:pointer">Cancel request</button></sc-if>
+            <sc-if value="{{gIsInvited}}" hint-placeholder-val="{{false}}"><button onclick="{{gAcceptInvitation}}" disabled="{{gMutationPending}}" style="padding:8px 16px;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 12px 'Manrope',sans-serif;cursor:pointer">Accept invitation</button><button onclick="{{gDeclineInvitation}}" disabled="{{gMutationPending}}" style="padding:8px 16px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--text2);font:800 12px 'Manrope',sans-serif;cursor:pointer">Decline</button></sc-if>
+            <sc-if value="{{gIsMember}}" hint-placeholder-val="{{false}}"><button onclick="{{gLeave}}" disabled="{{gMutationPending}}" style="padding:8px 16px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--text2);font:800 12px 'Manrope',sans-serif;cursor:pointer">Leave group</button></sc-if>
+          </div>
+          <sc-if value="{{gMutationHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="margin-top:9px;color:var(--danger);font:600 12px 'Manrope',sans-serif">{{gMutationError}}</div></sc-if>
           <sc-if value="{{inviteOpen}}" hint-placeholder-val="{{false}}">
             <div style="margin-top:12px;padding:12px;border-radius:14px;background:var(--bg);border:1px solid var(--border);animation:drop .2s ease both">
-              <div style="font:700 12px 'Manrope',sans-serif;color:var(--text3);margin-bottom:8px">INVITE PEOPLE YOU FOLLOW</div>
+              <div style="font:700 12px 'Manrope',sans-serif;color:var(--text3);margin-bottom:8px">INVITE A USER</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <sc-for list="{{inviteChips}}" as="iv" hint-placeholder-count="2">
-                  <button onclick="{{iv.toggle}}" style="display:flex;align-items:center;gap:7px;padding:5px 12px 5px 6px;border-radius:999px;cursor:pointer;font:700 12px 'Manrope',sans-serif;border:1.5px solid {{iv.bd}};background:{{iv.bg}};color:{{iv.tc}};transition:all .15s">
+                <sc-for list="{{inviteCandidates}}" as="iv" hint-placeholder-count="2">
+                  <button onclick="{{iv.pick}}" style="display:flex;align-items:center;gap:7px;padding:5px 12px 5px 6px;border-radius:999px;cursor:pointer;font:700 12px 'Manrope',sans-serif;border:1.5px solid {{iv.bd}};background:{{iv.bg}};color:{{iv.tc}};transition:all .15s">
                     <span style="width:20px;height:20px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 9px 'Manrope',sans-serif;background:{{iv.color}}">{{iv.initials}}</span>
                     {{iv.label}}
                   </button>
                 </sc-for>
               </div>
+              <div style="display:flex;gap:8px;margin-top:10px"><button onclick="{{inviteSelectedUser}}" disabled="{{inviteSendDisabled}}" style="padding:8px 16px;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 12px 'Manrope',sans-serif;cursor:pointer">Send invitation</button><sc-if value="{{inviteHasMore}}" hint-placeholder-val="{{false}}"><button onclick="{{inviteLoadMore}}" disabled="{{inviteDirectoryLoading}}" style="padding:8px 16px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--text2);font:800 12px 'Manrope',sans-serif;cursor:pointer">More users</button></sc-if></div>
             </div>
           </sc-if>
         </div>
@@ -620,127 +653,22 @@
       </div>
 
       <sc-if value="{{gTabPosts}}" hint-placeholder-val="{{true}}">
-        <div style="display:flex;flex-direction:column;gap:16px">
-          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;display:flex;gap:10px;align-items:center">
-            <div style="width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 11px 'Manrope',sans-serif;flex:none;background:{{me.color}};overflow:hidden">
-              <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{me.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
-              <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
-            </div>
-            <input placeholder="Share something with the group…" value="{{gComposer}}" onchange="{{onGComposer}}" onkeydown="{{onGComposerKey}}" style="flex:1;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
-            <button onclick="{{gPost}}" style="width:38px;height:38px;border-radius:50%;border:none;background:var(--accent);color:#fff;cursor:pointer;display:grid;place-items:center" style-active="transform:scale(.94)">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2.5 10.8 13.2m10.7-10.7-6.8 19-3.9-8.3-8.3-3.9Z"></path></svg>
-            </button>
-          </div>
-          <sc-for list="{{gPosts}}" as="p" hint-placeholder-count="2">
-            <article style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;animation:fadeUp .4s ease both">
-              <div style="display:flex;gap:12px;align-items:center">
-                <div onclick="{{p.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;cursor:pointer;background:{{p.user.color}};overflow:hidden">
-                  <sc-if value="{{p.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{p.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
-                  <sc-if value="{{p.user.noAvatar}}" hint-placeholder-val="{{true}}">{{p.user.initials}}</sc-if>
-                </div>
-                <div style="flex:1"><span onclick="{{p.goProfile}}" style="font:700 14.5px 'Manrope',sans-serif;cursor:pointer">{{p.user.name}}</span><div style="font:600 12.5px 'Manrope',sans-serif;color:var(--text3)">{{p.time}}</div></div>
-              </div>
-              <p style="margin:12px 0 0;font:500 15px/1.55 'Manrope',sans-serif;text-wrap:pretty">{{p.text}}</p>
-              <div style="display:flex;gap:6px;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
-                <button onclick="{{p.onLike}}" style="display:flex;align-items:center;gap:7px;padding:7px 13px;border:none;border-radius:999px;background:transparent;color:{{p.likeColor}};font:700 13px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
-                  <sc-if value="{{p.liked}}" hint-placeholder-val="{{false}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="var(--danger)" stroke="var(--danger)" stroke-width="1.8" stroke-linejoin="round" style="animation:pop .4s ease both"><path d="M20.8 4.9a5.4 5.4 0 0 0-7.7 0l-1.1 1-1-1a5.4 5.4 0 1 0-7.7 7.7l8.7 8.7 8.8-8.7a5.4 5.4 0 0 0 0-7.7Z"></path></svg></sc-if>
-                  <sc-if value="{{p.notLiked}}" hint-placeholder-val="{{true}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M20.8 4.9a5.4 5.4 0 0 0-7.7 0l-1.1 1-1-1a5.4 5.4 0 1 0-7.7 7.7l8.7 8.7 8.8-8.7a5.4 5.4 0 0 0 0-7.7Z"></path></svg></sc-if>
-                  {{p.likes}}
-                </button>
-                <button onclick="{{p.onToggleComments}}" style="display:flex;align-items:center;gap:7px;padding:7px 13px;border:none;border-radius:999px;background:transparent;color:var(--text2);font:700 13px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>
-                  {{p.commentCount}}
-                </button>
-              </div>
-              <sc-if value="{{p.showComments}}" hint-placeholder-val="{{false}}">
-                <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px;animation:drop .25s ease both">
-                  <sc-for list="{{p.comments}}" as="c" hint-placeholder-count="1">
-                    <div style="display:flex;gap:10px">
-                      <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{c.user.color}};overflow:hidden">
-                        <sc-if value="{{c.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{c.user.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
-                        <sc-if value="{{c.user.noAvatar}}" hint-placeholder-val="{{true}}">{{c.user.initials}}</sc-if>
-                      </div>
-                      <div style="flex:1;background:var(--surface2);border-radius:4px 14px 14px 14px;padding:9px 13px">
-                        <span style="font:700 12.5px 'Manrope',sans-serif">{{c.user.name}}</span>
-                        <span style="font:600 11px 'Manrope',sans-serif;color:var(--text3)"> · {{c.time}}</span>
-                        <p style="margin:3px 0 0;font:500 13.5px/1.5 'Manrope',sans-serif">{{c.text}}</p>
-                      </div>
-                    </div>
-                  </sc-for>
-                  <div style="display:flex;gap:10px;align-items:center">
-                    <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{me.color}};overflow:hidden">
-                      <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{me.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
-                      <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
-                    </div>
-                    <input placeholder="Write a comment…" value="{{p.draft}}" onchange="{{p.onDraft}}" onkeydown="{{p.onKey}}" style="flex:1;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13.5px;outline-color:var(--accent)">
-                    <button onclick="{{p.onSendComment}}" style="width:36px;height:36px;border-radius:50%;border:none;background:var(--soft);color:var(--accent);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--soft2)">
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2.5 10.8 13.2m10.7-10.7-6.8 19-3.9-8.3-8.3-3.9Z"></path></svg>
-                    </button>
-                  </div>
-                </div>
-              </sc-if>
-            </article>
-          </sc-for>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:28px;text-align:center;color:var(--text3);font:700 13px/1.5 'Manrope',sans-serif">
+          Group posts are not implemented yet.
         </div>
       </sc-if>
 
       <sc-if value="{{gTabEvents}}" hint-placeholder-val="{{false}}">
-        <div style="display:flex;flex-direction:column;gap:16px;animation:fadeUp .3s ease both">
-          <button onclick="{{toggleNewEvent}}" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px 0;border-radius:var(--r);border:1.5px dashed var(--border);background:transparent;color:var(--text2);font:800 13.5px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface)">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-            Create an event
-          </button>
-          <sc-if value="{{newEventOpen}}" hint-placeholder-val="{{false}}">
-            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;display:flex;flex-direction:column;gap:12px;animation:drop .25s ease both">
-              <input placeholder="Event title" value="{{evTitle}}" onchange="{{onEvTitle}}" style="padding:12px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-                <input placeholder="Date · e.g. Jul 24" value="{{evDate}}" onchange="{{onEvDate}}" style="padding:12px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
-                <input placeholder="Time · e.g. 18:00" value="{{evTime}}" onchange="{{onEvTime}}" style="padding:12px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
-              </div>
-              <input placeholder="Description" value="{{evDesc}}" onchange="{{onEvDesc}}" style="padding:12px 15px;border-radius:13px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;outline-color:var(--accent)">
-              <div style="display:flex;gap:8px;justify-content:flex-end">
-                <button onclick="{{toggleNewEvent}}" style="padding:9px 18px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text2);font:700 13px 'Manrope',sans-serif;cursor:pointer">Cancel</button>
-                <button onclick="{{createEvent}}" style="padding:9px 20px;border-radius:999px;border:none;background:var(--accent);color:#fff;font:800 13px 'Manrope',sans-serif;cursor:pointer">Create event</button>
-              </div>
-            </div>
-          </sc-if>
-          <sc-for list="{{gEvents}}" as="ev" hint-placeholder-count="2">
-            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;display:flex;gap:16px;animation:fadeUp .35s ease both">
-              <div style="width:60px;height:64px;flex:none;border-radius:14px;background:var(--soft);color:var(--accent);display:flex;flex-direction:column;align-items:center;justify-content:center">
-                <span style="font:800 18px 'Manrope',sans-serif">{{ev.dateDay}}</span>
-                <span style="font:800 10.5px 'Manrope',sans-serif;letter-spacing:.08em">{{ev.dateMon}}</span>
-              </div>
-              <div style="flex:1;min-width:0">
-                <div style="font:800 15.5px 'Manrope',sans-serif">{{ev.title}}</div>
-                <div style="font:600 12.5px 'Manrope',sans-serif;color:var(--text3);margin-top:2px">{{ev.timeLabel}}</div>
-                <p style="margin:7px 0 0;font:500 13.5px/1.5 'Manrope',sans-serif;color:var(--text2)">{{ev.desc}}</p>
-                <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
-                  <button onclick="{{ev.setGoing}}" style="display:flex;align-items:center;gap:6px;padding:8px 16px;border-radius:999px;cursor:pointer;font:800 12.5px 'Manrope',sans-serif;border:1.5px solid {{ev.goBd}};background:{{ev.goBg}};color:{{ev.goColor}};transition:all .2s" style-active="transform:scale(.96)">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6.5 9.5 17 4 11.5"></path></svg>
-                    Going
-                  </button>
-                  <button onclick="{{ev.setNot}}" style="display:flex;align-items:center;gap:6px;padding:8px 16px;border-radius:999px;cursor:pointer;font:800 12.5px 'Manrope',sans-serif;border:1.5px solid {{ev.noBd}};background:{{ev.noBg}};color:{{ev.noColor}};transition:all .2s" style-active="transform:scale(.96)">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M17.5 6.5l-11 11m0-11 11 11"></path></svg>
-                    Can't go
-                  </button>
-                  <div style="display:flex;align-items:center;margin-left:auto">
-                    <sc-for list="{{ev.goingAvatars}}" as="ga" hint-placeholder-count="2">
-                      <span style="width:24px;height:24px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 8.5px 'Manrope',sans-serif;border:2px solid var(--surface);margin-left:-6px;background:{{ga.color}};overflow:hidden">
-                        <sc-if value="{{ga.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{ga.avatarUrl}}" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
-                        <sc-if value="{{ga.noAvatar}}" hint-placeholder-val="{{true}}">{{ga.initials}}</sc-if>
-                      </span>
-                    </sc-for>
-                    <span style="font:700 12px 'Manrope',sans-serif;color:var(--text3);margin-left:8px">{{ev.goingLabel}} going</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </sc-for>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:28px;text-align:center;color:var(--text3);font:700 13px/1.5 'Manrope',sans-serif;animation:fadeUp .3s ease both">
+          Group events are not implemented yet.
         </div>
       </sc-if>
 
       <sc-if value="{{gTabMembers}}" hint-placeholder-val="{{false}}">
         <div style="display:flex;flex-direction:column;gap:10px;animation:fadeUp .3s ease both">
+          <sc-if value="{{groupMembersHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="color:var(--danger);font:600 12px 'Manrope',sans-serif">{{groupMembersError}}</div></sc-if>
+          <sc-if value="{{groupRequestsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="color:var(--danger);font:600 12px 'Manrope',sans-serif">{{groupRequestsError}}</div></sc-if>
+          <sc-if value="{{groupInvitationsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="color:var(--danger);font:600 12px 'Manrope',sans-serif">{{groupInvitationsError}}</div></sc-if>
           <sc-if value="{{gHasRequests}}" hint-placeholder-val="{{false}}">
             <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px">
               <div style="font:800 11.5px 'Manrope',sans-serif;color:var(--text3);letter-spacing:.06em;margin-bottom:10px">PENDING JOIN REQUESTS</div>
@@ -765,6 +693,12 @@
               </sc-for>
             </div>
           </sc-if>
+          <sc-if value="{{gHasInvitations}}" hint-placeholder-val="{{false}}">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px">
+              <div style="font:800 11.5px 'Manrope',sans-serif;color:var(--text3);letter-spacing:.06em;margin-bottom:10px">SENT INVITATIONS</div>
+              <sc-for list="{{gInvitations}}" as="gi" hint-placeholder-count="1"><div style="display:flex;align-items:center;gap:10px;padding:7px 0"><div style="width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;background:{{gi.user.color}}">{{gi.user.initials}}</div><div style="font:700 13px 'Manrope',sans-serif">{{gi.user.name}}</div><span style="margin-left:auto;color:var(--text3);font:700 11px 'Manrope',sans-serif">Pending</span></div></sc-for>
+            </div>
+          </sc-if>
           <sc-for list="{{gMembers}}" as="m" hint-placeholder-count="4">
             <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px 16px">
               <div onclick="{{m.goProfile}}" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;cursor:pointer;background:{{m.user.color}};overflow:hidden">
@@ -778,6 +712,7 @@
               <sc-if value="{{m.isOwner}}" hint-placeholder-val="{{false}}"><span style="padding:4px 11px;border-radius:999px;background:var(--soft);color:var(--accent);font:800 10.5px 'Manrope',sans-serif;letter-spacing:.04em">OWNER</span></sc-if>
             </div>
           </sc-for>
+          <sc-if value="{{groupMembersHasMore}}" hint-placeholder-val="{{false}}"><button onclick="{{loadMoreGroupMembers}}" style="padding:9px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text2);font:800 12px 'Manrope',sans-serif;cursor:pointer">Load more members</button></sc-if>
         </div>
       </sc-if>
     </div>
