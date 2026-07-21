@@ -1297,7 +1297,7 @@ class Component extends DCLogic {
   runGroupMutation = async (groupID, operation, options) => {
     groupID = Number(groupID);
     const key = String(groupID);
-    if (!Number.isInteger(groupID) || groupID <= 0 || this.state.groupMutationPendingByID[key]) return;
+    if (!Number.isInteger(groupID) || groupID <= 0 || this.state.groupMutationPendingByID[key]) return false;
     const authGeneration = this.authGate.current();
     const accessGate = this.groupGeneration(groupID);
     const accessGeneration = accessGate.current();
@@ -1307,7 +1307,7 @@ class Component extends DCLogic {
     });
     try {
       const raw = await operation();
-      if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration)) return false;
       const group = this.applyAuthoritativeGroup(raw, options && options.invalidateInbox);
       if (Number(this.state.groupId) === groupID) {
         this.loadGroupMembers(groupID, true);
@@ -1317,14 +1317,16 @@ class Component extends DCLogic {
         }
       }
       if (options && options.invalidateInbox) this.loadGroupInvitationInbox(true);
+      return true;
     } catch (error) {
-      if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration)) return false;
       this.setState({
         groupMutationPendingByID: Object.assign({}, this.state.groupMutationPendingByID, { [key]: false }),
         groupMutationErrorByID: Object.assign({}, this.state.groupMutationErrorByID, {
           [key]: requestErrorMessage(error, 'Could not update group membership.')
         })
       });
+      return false;
     }
   };
 
@@ -1382,8 +1384,12 @@ class Component extends DCLogic {
     if (!Number.isInteger(groupID) || !Number.isInteger(userID) || userID <= 0) return;
     const mutation = this.runGroupMutation(groupID, () => AuthAPI.inviteToGroup(groupID, userID));
     if (!mutation || typeof mutation.then !== 'function') return mutation;
-    return mutation.then(() => {
-      if (!this.state.groupMutationErrorByID[String(groupID)]) this.setState({ groupInviteUserID: '' });
+    return mutation.then(applied => {
+      if (
+        applied && Number(this.state.groupId) === groupID &&
+        Number(this.state.groupInviteUserID) === userID
+      ) this.setState({ groupInviteUserID: '' });
+      return applied;
     });
   };
 
@@ -1969,8 +1975,12 @@ class Component extends DCLogic {
       loadMoreGroupMembers: () => this.loadGroupMembers(g.id, false),
       groupRequestsLoading: s.groupRequestsLoading,
       groupRequestsHasError: !!s.groupRequestsError, groupRequestsError: s.groupRequestsError,
+      groupRequestsHasMore: !!s.groupRequestsNextCursor,
+      loadMoreGroupRequests: () => this.loadGroupRequests(g.id, false),
       groupInvitationsLoading: s.groupInvitationsLoading,
       groupInvitationsHasError: !!s.groupInvitationsError, groupInvitationsError: s.groupInvitationsError,
+      groupInvitationsHasMore: !!s.groupInvitationsNextCursor,
+      loadMoreGroupInvitations: () => this.loadGroupInvitations(g.id, false),
       inviteOpen: s.inviteOpen && gIsOwner,
       toggleInvite: () => {
         const opening = !s.inviteOpen;

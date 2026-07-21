@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 global.localStorage = {
   getItem: () => null,
@@ -564,6 +566,57 @@ test('accepted request cannot be resurrected by an older owner list response', a
   assert.deepEqual(component.state.groupRequests, []);
 });
 
+test('owner request and invitation lists expose and load their second pages', async () => {
+  const component = createComponent();
+  component.state.groupId = 5;
+  component.state.screen = 'group';
+  component.state.apiGroupsByID = { '5': component.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
+  component.state.groupIDs = [5];
+  component.state.directoryUserIDs = [2, 3, 4, 5, 6];
+  component.state.apiUsersByID = component.mergeAPIUsers([rawUser(6)]);
+  const requestCursors = [];
+  const invitationCursors = [];
+  global.AuthAPI.groupJoinRequests = async (groupID, cursor) => {
+    assert.equal(groupID, 5);
+    requestCursors.push(cursor);
+    return cursor
+      ? { requests: [{ user: rawUser(3), created_at: '2026-07-21T12:01:00Z' }], next_cursor: null }
+      : { requests: [{ user: rawUser(2), created_at: '2026-07-21T12:00:00Z' }], next_cursor: 'requests-page-2' };
+  };
+  global.AuthAPI.groupInvitations = async (groupID, cursor) => {
+    assert.equal(groupID, 5);
+    invitationCursors.push(cursor);
+    return cursor
+      ? { invitations: [{ user: rawUser(5), created_at: '2026-07-21T12:03:00Z' }], next_cursor: null }
+      : { invitations: [{ user: rawUser(4), created_at: '2026-07-21T12:02:00Z' }], next_cursor: 'invitations-page-2' };
+  };
+
+  await Promise.all([component.loadGroupRequests(5, true), component.loadGroupInvitations(5, true)]);
+  let view = component.renderVals();
+  assert.equal(view.groupRequestsHasMore, true);
+  assert.equal(view.groupInvitationsHasMore, true);
+  assert.equal(typeof view.loadMoreGroupRequests, 'function');
+  assert.equal(typeof view.loadMoreGroupInvitations, 'function');
+
+  await Promise.all([view.loadMoreGroupRequests(), view.loadMoreGroupInvitations()]);
+  view = component.renderVals();
+  assert.deepEqual(requestCursors, [null, 'requests-page-2']);
+  assert.deepEqual(invitationCursors, [null, 'invitations-page-2']);
+  assert.deepEqual(component.state.groupRequests.map(item => item.userID), [2, 3]);
+  assert.deepEqual(component.state.groupInvitations.map(item => item.userID), [4, 5]);
+  assert.equal(view.groupRequestsHasMore, false);
+  assert.equal(view.groupInvitationsHasMore, false);
+  assert.deepEqual(view.inviteCandidates.map(item => item.user.apiId), [6]);
+
+  const template = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const requestsSection = template.indexOf('PENDING JOIN REQUESTS');
+  const requestsButton = template.indexOf('onclick="{{loadMoreGroupRequests}}"');
+  const invitationsSection = template.indexOf('SENT INVITATIONS');
+  const invitationsButton = template.indexOf('onclick="{{loadMoreGroupInvitations}}"');
+  assert.ok(requestsSection >= 0 && requestsButton > requestsSection && requestsButton < invitationsSection);
+  assert.ok(invitationsSection >= 0 && invitationsButton > invitationsSection);
+});
+
 test('accepted invitation invalidates the old inbox response', async () => {
   const component = createComponent();
   const staleInbox = deferred();
@@ -621,6 +674,56 @@ test('failed group create and invitation preserve their form selections', async 
   await component.inviteSelectedUser();
   assert.equal(component.state.groupInviteUserID, '2');
   assert.match(component.state.groupMutationErrorByID['5'], /invite failed/);
+});
+
+test('stale invitation from an old session cannot clear the new session selection', async () => {
+  const component = createComponent();
+  const oldInvitation = deferred();
+  component.state.groupId = 5;
+  component.state.groupInviteUserID = '2';
+  component.state.apiGroupsByID = { '5': component.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
+  global.AuthAPI.inviteToGroup = () => oldInvitation.promise;
+  global.AuthAPI.logout = async () => null;
+
+  const oldMutation = component.inviteSelectedUser();
+  await component.logout();
+  installEmptyAuthenticatedLoads();
+  global.AuthAPI.login = async () => rawUser(7);
+  component.state.authMode = 'login';
+  component.state.authEmail = 'new-session@example.test';
+  component.state.authPassword = 'password';
+  await component.submitAuth();
+  component.state.groupId = 8;
+  component.state.groupInviteUserID = '9';
+  component.state.apiGroupsByID = { '8': component.mapAPIGroup(rawGroup(8, 'owner', 1, 7)) };
+
+  oldInvitation.resolve(rawGroup(5, 'owner', 1, 1));
+  assert.equal(await oldMutation, false);
+  assert.equal(component.state.groupInviteUserID, '9');
+});
+
+test('duplicate pending invitation does not clear a newer selection', async () => {
+  const component = createComponent();
+  const invitation = deferred();
+  let calls = 0;
+  component.state.groupId = 5;
+  component.state.groupInviteUserID = '2';
+  component.state.apiGroupsByID = { '5': component.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
+  global.AuthAPI.inviteToGroup = () => { calls += 1; return invitation.promise; };
+  global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
+  global.AuthAPI.groupJoinRequests = async () => ({ requests: [], next_cursor: null });
+  global.AuthAPI.groupInvitations = async () => ({ invitations: [], next_cursor: null });
+
+  const first = component.inviteSelectedUser();
+  component.state.groupInviteUserID = '3';
+  const duplicate = component.inviteSelectedUser();
+  assert.equal(await duplicate, false);
+  assert.equal(calls, 1);
+  assert.equal(component.state.groupInviteUserID, '3');
+
+  invitation.resolve(rawGroup(5, 'owner', 1, 1));
+  assert.equal(await first, true);
+  assert.equal(component.state.groupInviteUserID, '3');
 });
 
 test('accept invalidates feed, directory, selected followers and current profile', async () => {
