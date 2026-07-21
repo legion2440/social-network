@@ -45,7 +45,7 @@ func TestMigrationsRunAllTheWayDownAndBackUp(t *testing.T) {
 	if err := migrateDown(db); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
-	for _, table := range []string{"post_selected_users", "posts", "follows", "sessions", "media", "users"} {
+	for _, table := range []string{"post_comments", "post_selected_users", "posts", "follows", "sessions", "media", "users"} {
 		if tableExists(t, db, table) {
 			t.Fatalf("table %s still exists after down migrations", table)
 		}
@@ -88,7 +88,7 @@ func TestOpenRejectsDisposableLegacyBootstrapDatabase(t *testing.T) {
 func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 
-	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "schema_migrations"} {
+	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "post_comments", "schema_migrations"} {
 		if !tableExists(t, db, table) {
 			t.Fatalf("expected table %s", table)
 		}
@@ -185,6 +185,8 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "posts", "media_id", "media", "id", "SET NULL")
 	assertForeignKey(t, db, "post_selected_users", "post_id", "posts", "id", "CASCADE")
 	assertForeignKey(t, db, "post_selected_users", "user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "post_comments", "post_id", "posts", "id", "CASCADE")
+	assertForeignKey(t, db, "post_comments", "author_user_id", "users", "id", "CASCADE")
 }
 
 func TestUserPrivacyAndFollowConstraints(t *testing.T) {
@@ -345,6 +347,63 @@ func TestPostSchemaConstraintsAndIndexes(t *testing.T) {
 	var audienceCount int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM post_selected_users WHERE post_id = ?`, postID).Scan(&audienceCount); err != nil || audienceCount != 0 {
 		t.Fatalf("post delete did not cascade audience: count=%d err=%v", audienceCount, err)
+	}
+}
+
+func TestPostCommentSchemaConstraintsIndexesAndCascades(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "social-network.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	columns := tableColumns(t, db, "post_comments")
+	for _, column := range []string{"id", "post_id", "author_user_id", "text", "created_at"} {
+		if _, exists := columns[column]; !exists {
+			t.Fatalf("post_comments.%s is missing", column)
+		}
+	}
+	if columns["text"].columnType != "TEXT" || columns["created_at"].columnType != "INTEGER" {
+		t.Fatalf("unexpected comment storage types: %+v", columns)
+	}
+	if !schemaObjectExists(t, db, "index", "idx_post_comments_post_created") {
+		t.Fatal("expected post comment pagination index")
+	}
+
+	insertUser := func(email string) int64 {
+		result, err := db.Exec(`
+			INSERT INTO users (email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
+			VALUES (?, 'hash', 'Comment', 'User', '21-07-1992', 1, 1)
+		`, email)
+		if err != nil {
+			t.Fatalf("insert user %s: %v", email, err)
+		}
+		id, _ := result.LastInsertId()
+		return id
+	}
+	authorID := insertUser("comment-schema-author@example.com")
+	commenterID := insertUser("comment-schema-commenter@example.com")
+	postResult, err := db.Exec(`INSERT INTO posts (author_user_id, text, privacy, created_at) VALUES (?, 'post', 'public', 1)`, authorID)
+	if err != nil {
+		t.Fatalf("insert post: %v", err)
+	}
+	postID, _ := postResult.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO post_comments (post_id, author_user_id, text, created_at) VALUES (?, ?, 'comment', 1)`, postID, commenterID); err != nil {
+		t.Fatalf("insert comment: %v", err)
+	}
+	for name, text := range map[string]string{"blank": "   ", "untrimmed": " comment "} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := db.Exec(`INSERT INTO post_comments (post_id, author_user_id, text, created_at) VALUES (?, ?, ?, 2)`, postID, commenterID, text); err == nil {
+				t.Fatal("expected comment text constraint failure")
+			}
+		})
+	}
+	if _, err := db.Exec(`DELETE FROM posts WHERE id = ?`, postID); err != nil {
+		t.Fatalf("delete post: %v", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM post_comments WHERE post_id = ?`, postID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("post delete did not cascade comments: count=%d err=%v", count, err)
 	}
 }
 

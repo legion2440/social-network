@@ -53,12 +53,18 @@ type PostRepo interface {
 	CountAccessibleByAuthor(ctx context.Context, viewerUserID, authorUserID int64) (int64, error)
 }
 
+type CommentRepo interface {
+	Create(ctx context.Context, comment *domain.Comment) (int64, error)
+	ListByPost(ctx context.Context, postID int64, cursor *domain.CommentCursor, limit int) ([]*domain.Comment, error)
+}
+
 type TransactionRepositories interface {
 	Users() UserRepo
 	Sessions() SessionRepo
 	Media() MediaRepo
 	Follows() FollowRepo
 	Posts() PostRepo
+	Comments() CommentRepo
 }
 
 type TransactionManager interface {

@@ -243,6 +243,40 @@
               <sc-if value="{{p.hasImage}}" hint-placeholder-val="{{false}}">
                 <img src="{{p.mediaUrl}}" alt="Post media" style="display:block;width:100%;max-height:440px;margin-top:13px;border-radius:14px;border:1px solid var(--border);object-fit:cover">
               </sc-if>
+              <div style="display:flex;gap:6px;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+                <button onclick="{{p.onToggleComments}}" style="display:flex;align-items:center;gap:7px;padding:7px 13px;border:none;border-radius:999px;background:transparent;color:var(--text2);font:700 13px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>
+                  {{p.commentCount}}
+                </button>
+              </div>
+              <sc-if value="{{p.showComments}}" hint-placeholder-val="{{false}}">
+                <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px;animation:drop .25s ease both">
+                  <sc-if value="{{p.commentsLoading}}" hint-placeholder-val="{{false}}"><div style="padding:8px;font:600 12px 'Manrope',sans-serif;color:var(--text3)">Loading comments…</div></sc-if>
+                  <sc-if value="{{p.commentsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="padding:8px;color:var(--danger);font:600 12px 'Manrope',sans-serif">{{p.commentsError}} <button onclick="{{p.retryComments}}" style="border:none;background:transparent;color:var(--accent);font:800 12px 'Manrope',sans-serif;cursor:pointer">Retry</button></div></sc-if>
+                  <sc-for list="{{p.comments}}" as="c" hint-placeholder-count="1">
+                    <div style="display:flex;gap:10px">
+                      <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{c.user.color}};overflow:hidden">
+                        <sc-if value="{{c.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{c.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                        <sc-if value="{{c.user.noAvatar}}" hint-placeholder-val="{{true}}">{{c.user.initials}}</sc-if>
+                      </div>
+                      <div style="flex:1;background:var(--surface2);border-radius:4px 14px 14px 14px;padding:9px 13px">
+                        <span style="font:700 12.5px 'Manrope',sans-serif">{{c.user.name}}</span><span style="font:600 11px 'Manrope',sans-serif;color:var(--text3)"> · {{c.time}}</span>
+                        <p style="margin:3px 0 0;font:500 13.5px/1.5 'Manrope',sans-serif">{{c.text}}</p>
+                      </div>
+                    </div>
+                  </sc-for>
+                  <sc-if value="{{p.commentsHasMore}}" hint-placeholder-val="{{false}}"><button onclick="{{p.loadMoreComments}}" disabled="{{p.commentsPending}}" style="align-self:flex-start;padding:7px 13px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text2);font:750 11.5px 'Manrope',sans-serif;cursor:pointer">Load more</button></sc-if>
+                  <sc-if value="{{p.commentCreateHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="color:var(--danger);font:600 12px 'Manrope',sans-serif">{{p.commentCreateError}}</div></sc-if>
+                  <div style="display:flex;gap:10px;align-items:center">
+                    <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{me.color}};overflow:hidden">
+                      <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{me.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                      <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
+                    </div>
+                    <input placeholder="Write a comment…" value="{{p.draft}}" onchange="{{p.onDraft}}" onkeydown="{{p.onKey}}" disabled="{{p.commentCreatePending}}" style="flex:1;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13.5px;outline-color:var(--accent)">
+                    <button onclick="{{p.onSendComment}}" disabled="{{p.commentSendDisabled}}" style="min-width:52px;height:36px;padding:0 12px;border-radius:999px;border:none;background:var(--soft);color:var(--accent);font:800 11.5px 'Manrope',sans-serif;cursor:pointer">{{p.commentSendLabel}}</button>
+                  </div>
+                </div>
+              </sc-if>
             </article>
           </sc-for>
           <sc-if value="{{feedHasMore}}" hint-placeholder-val="{{false}}"><button onclick="{{feedLoadMore}}" disabled="{{feedLoadMoreDisabled}}" style="align-self:center;padding:10px 20px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--text2);font:800 13px 'Manrope',sans-serif;cursor:pointer">{{feedLoadMoreLabel}}</button></sc-if>
@@ -412,6 +446,40 @@
                 <p style="margin:12px 0 0;font:500 15px/1.55 'Manrope',sans-serif;text-wrap:pretty">{{p.text}}</p>
                 <sc-if value="{{p.hasImage}}" hint-placeholder-val="{{false}}">
                   <img src="{{p.mediaUrl}}" alt="Post media" style="display:block;width:100%;max-height:440px;margin-top:13px;border-radius:14px;border:1px solid var(--border);object-fit:cover">
+                </sc-if>
+                <div style="display:flex;gap:6px;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+                  <button onclick="{{p.onToggleComments}}" style="display:flex;align-items:center;gap:7px;padding:7px 13px;border:none;border-radius:999px;background:transparent;color:var(--text2);font:700 13px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>
+                    {{p.commentCount}}
+                  </button>
+                </div>
+                <sc-if value="{{p.showComments}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px;animation:drop .25s ease both">
+                    <sc-if value="{{p.commentsLoading}}" hint-placeholder-val="{{false}}"><div style="padding:8px;font:600 12px 'Manrope',sans-serif;color:var(--text3)">Loading comments…</div></sc-if>
+                    <sc-if value="{{p.commentsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="padding:8px;color:var(--danger);font:600 12px 'Manrope',sans-serif">{{p.commentsError}} <button onclick="{{p.retryComments}}" style="border:none;background:transparent;color:var(--accent);font:800 12px 'Manrope',sans-serif;cursor:pointer">Retry</button></div></sc-if>
+                    <sc-for list="{{p.comments}}" as="c" hint-placeholder-count="1">
+                      <div style="display:flex;gap:10px">
+                        <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{c.user.color}};overflow:hidden">
+                          <sc-if value="{{c.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{c.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                          <sc-if value="{{c.user.noAvatar}}" hint-placeholder-val="{{true}}">{{c.user.initials}}</sc-if>
+                        </div>
+                        <div style="flex:1;background:var(--surface2);border-radius:4px 14px 14px 14px;padding:9px 13px">
+                          <span style="font:700 12.5px 'Manrope',sans-serif">{{c.user.name}}</span><span style="font:600 11px 'Manrope',sans-serif;color:var(--text3)"> · {{c.time}}</span>
+                          <p style="margin:3px 0 0;font:500 13.5px/1.5 'Manrope',sans-serif">{{c.text}}</p>
+                        </div>
+                      </div>
+                    </sc-for>
+                    <sc-if value="{{p.commentsHasMore}}" hint-placeholder-val="{{false}}"><button onclick="{{p.loadMoreComments}}" disabled="{{p.commentsPending}}" style="align-self:flex-start;padding:7px 13px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text2);font:750 11.5px 'Manrope',sans-serif;cursor:pointer">Load more</button></sc-if>
+                    <sc-if value="{{p.commentCreateHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="color:var(--danger);font:600 12px 'Manrope',sans-serif">{{p.commentCreateError}}</div></sc-if>
+                    <div style="display:flex;gap:10px;align-items:center">
+                      <div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{me.color}};overflow:hidden">
+                        <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{me.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+                        <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
+                      </div>
+                      <input placeholder="Write a comment…" value="{{p.draft}}" onchange="{{p.onDraft}}" onkeydown="{{p.onKey}}" disabled="{{p.commentCreatePending}}" style="flex:1;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13.5px;outline-color:var(--accent)">
+                      <button onclick="{{p.onSendComment}}" disabled="{{p.commentSendDisabled}}" style="min-width:52px;height:36px;padding:0 12px;border-radius:999px;border:none;background:var(--soft);color:var(--accent);font:800 11.5px 'Manrope',sans-serif;cursor:pointer">{{p.commentSendLabel}}</button>
+                    </div>
+                  </div>
                 </sc-if>
               </article>
             </sc-for>
@@ -892,6 +960,7 @@
 
 </x-dc>
 <script src="js/avatar-url.js"></script>
+<script src="js/comment-model.js"></script>
 <script src="js/post-model.js"></script>
 <script src="js/user-model.js"></script>
 <script type="text/x-dc" data-dc-script="" data-props="{&quot;accent&quot;: {&quot;editor&quot;: &quot;color&quot;, &quot;default&quot;: &quot;#5661d8&quot;, &quot;options&quot;: [&quot;#5661d8&quot;, &quot;#0e8577&quot;, &quot;#c14f70&quot;, &quot;#a06b23&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Theme&quot;}, &quot;radius&quot;: {&quot;editor&quot;: &quot;range&quot;, &quot;default&quot;: 18, &quot;min&quot;: 6, &quot;max&quot;: 26, &quot;step&quot;: 2, &quot;unit&quot;: &quot;px&quot;, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Theme&quot;}, &quot;defaultTheme&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;light&quot;, &quot;dark&quot;], &quot;default&quot;: &quot;light&quot;, &quot;tsType&quot;: &quot;'light' | 'dark'&quot;, &quot;section&quot;: &quot;Theme&quot;}}" data-src="js/app.js"></script>

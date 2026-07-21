@@ -287,12 +287,13 @@ func (h *Handler) handlePostMediaError(w http.ResponseWriter, err error) bool {
 }
 
 type postResponse struct {
-	ID        int64               `json:"id"`
-	Author    userSummaryResponse `json:"author"`
-	Text      string              `json:"text"`
-	Privacy   domain.PostPrivacy  `json:"privacy"`
-	MediaURL  *string             `json:"media_url"`
-	CreatedAt time.Time           `json:"created_at"`
+	ID            int64               `json:"id"`
+	Author        userSummaryResponse `json:"author"`
+	Text          string              `json:"text"`
+	Privacy       domain.PostPrivacy  `json:"privacy"`
+	MediaURL      *string             `json:"media_url"`
+	CommentsCount int64               `json:"comments_count"`
+	CreatedAt     time.Time           `json:"created_at"`
 }
 
 func newPostResponse(post *domain.Post) *postResponse {
@@ -300,12 +301,13 @@ func newPostResponse(post *domain.Post) *postResponse {
 		return nil
 	}
 	return &postResponse{
-		ID:        post.ID,
-		Author:    newUserSummaryResponse(post.Author),
-		Text:      post.Text,
-		Privacy:   post.Privacy,
-		MediaURL:  domain.PostMediaURL(post),
-		CreatedAt: post.CreatedAt,
+		ID:            post.ID,
+		Author:        newUserSummaryResponse(post.Author),
+		Text:          post.Text,
+		Privacy:       post.Privacy,
+		MediaURL:      domain.PostMediaURL(post),
+		CommentsCount: post.CommentsCount,
+		CreatedAt:     post.CreatedAt,
 	}
 }
 

@@ -164,6 +164,7 @@ test('posts client sends multipart unchanged and builds cursor requests', async 
   assert.deepEqual(await api.createPost(formData), { id: 42 });
   await api.feed('opaque+/=', 20);
   await api.userPosts(7, 'next cursor', 50);
+  await api.postComments(42, 'comment cursor', 20);
   await api.followers(7);
 
   assert.equal(calls[0].path, '/api/posts');
@@ -172,8 +173,24 @@ test('posts client sends multipart unchanged and builds cursor requests', async 
   assert.equal(calls[0].options.headers['Content-Type'], undefined);
   assert.equal(calls[1].path, '/api/posts/feed?cursor=opaque%2B%2F%3D&limit=20');
   assert.equal(calls[2].path, '/api/users/7/posts?cursor=next%20cursor&limit=50');
-  assert.equal(calls[3].path, '/api/users/7/followers');
+  assert.equal(calls[3].path, '/api/posts/42/comments?cursor=comment%20cursor&limit=20');
+  assert.equal(calls[4].path, '/api/users/7/followers');
   assert.ok(calls.every(call => call.options.credentials === 'same-origin'));
+});
+
+test('comment create sends strict JSON to the post comments endpoint', async () => {
+  let call;
+  const api = createAuthAPI(async (path, options) => {
+    call = { path, options };
+    return jsonResponse(201, { id: 15, post_id: 7, text: 'Hello' });
+  });
+
+  await api.createComment(7, 'Hello');
+  assert.equal(call.path, '/api/posts/7/comments');
+  assert.equal(call.options.method, 'POST');
+  assert.equal(call.options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(call.options.body), { text: 'Hello' });
+  assert.equal(call.options.credentials, 'same-origin');
 });
 
 test('users and follow clients use backend IDs and exact endpoint contracts', async () => {

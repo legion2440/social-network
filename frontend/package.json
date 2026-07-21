@@ -2,6 +2,6 @@
   "name": "social-network-frontend",
   "private": true,
   "scripts": {
-    "test": "node --test js/app-race.test.js js/auth-api.test.js js/avatar-url.test.js js/post-model.test.js js/user-model.test.js"
+    "test": "node --test js/app-race.test.js js/auth-api.test.js js/avatar-url.test.js js/comment-model.test.js js/post-model.test.js js/user-model.test.js"
   }
 }

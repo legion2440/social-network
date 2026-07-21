@@ -49,6 +49,7 @@ test('post response mapping keeps controlled media and author fields', () => {
     text: 'Mapped post',
     privacy: 'selected',
     media_url: '/api/posts/42/media',
+    comments_count: 8,
     created_at: '2026-07-18T10:00:00Z'
   }, 7);
 
@@ -56,6 +57,7 @@ test('post response mapping keeps controlled media and author fields', () => {
   assert.equal(mapped.isOwn, true);
   assert.equal(mapped.privacy, 'selected');
   assert.equal(mapped.mediaUrl, '/api/posts/42/media');
+  assert.equal(mapped.commentsCount, 8);
   assert.deepEqual(mapped.author, {
     apiId: 7,
     firstName: 'Ada',

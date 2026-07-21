@@ -18,7 +18,9 @@ func NewPostRepo(db *sql.DB) *PostRepo {
 }
 
 const postSelectColumns = `
-	p.id, p.author_user_id, p.text, p.privacy, p.media_id, p.created_at,
+	p.id, p.author_user_id, p.text, p.privacy, p.media_id,
+	(SELECT COUNT(*) FROM post_comments comment_count WHERE comment_count.post_id = p.id),
+	p.created_at,
 	u.id, u.first_name, u.last_name, u.gender, u.nickname,
 	u.avatar_media_id, u.is_private
 `
@@ -213,6 +215,7 @@ func scanPost(row rowScanner) (*domain.Post, error) {
 		&post.Text,
 		&privacy,
 		&mediaID,
+		&post.CommentsCount,
 		&createdAt,
 		&author.ID,
 		&author.FirstName,

@@ -36,6 +36,7 @@
       text: String(post.text || ''),
       privacy: post.privacy,
       mediaUrl: post.media_url || '',
+      commentsCount: Number(post.comments_count) || 0,
       createdAt: post.created_at,
       author: {
         apiId: authorID,

@@ -18,13 +18,14 @@ func (p PostPrivacy) Valid() bool {
 }
 
 type Post struct {
-	ID           int64
-	AuthorUserID int64
-	Author       *User
-	Text         string
-	Privacy      PostPrivacy
-	MediaID      *int64
-	CreatedAt    time.Time
+	ID            int64
+	AuthorUserID  int64
+	Author        *User
+	Text          string
+	Privacy       PostPrivacy
+	MediaID       *int64
+	CommentsCount int64
+	CreatedAt     time.Time
 }
 
 func PostMediaURL(post *Post) *string {

@@ -47,6 +47,13 @@ function emptyProfileEditor() {
   };
 }
 
+function emptyCommentState() {
+  return {
+    comments: [], loading: false, pending: false, error: '', nextCursor: null,
+    draft: '', createPending: false, createError: '', loaded: false
+  };
+}
+
 function decorateUser(user) {
   const safeAvatarURL = user.avatarUrl ? String(user.avatarUrl).replace(/["\\\r\n]/g, '') : '';
   user.avatarUrl = safeAvatarURL;
@@ -75,6 +82,7 @@ class Component extends DCLogic {
       privacy: 'public', privacyOpen: false,
       selectedFollowers: {}, postFollowers: [], postFollowersLoading: false,
       openComments: { p1: true }, drafts: {},
+      commentsByPostID: {},
       posts: [],
       mockFollow: { mei: 'accepted', david: 'accepted', nina: 'accepted', tom: 'none', sara: 'none' },
       apiUsersByID: {}, directoryUserIDs: [], directoryNextCursor: null, directoryLoading: false, directoryError: '',
@@ -134,6 +142,7 @@ class Component extends DCLogic {
     this.feedGate = UserModel.createRequestGate();
     this.directoryGate = UserModel.createRequestGate();
     this.postFollowersGate = UserModel.createRequestGate();
+    this.commentGatesByPostID = {};
   }
 
   componentDidMount() {
@@ -187,6 +196,7 @@ class Component extends DCLogic {
       text: normalized.text,
       privacy: normalized.privacy,
       mediaUrl: normalized.mediaUrl,
+      commentsCount: normalized.commentsCount,
       time: this.formatPostTime(normalized.createdAt)
     };
   }
@@ -201,6 +211,141 @@ class Component extends DCLogic {
     if (seconds < 604800) return Math.floor(seconds / 86400) + 'd';
     return created.toLocaleDateString();
   }
+
+  commentState(postID) {
+    return this.state.commentsByPostID[String(Number(postID))] || emptyCommentState();
+  }
+
+  commentGate(postID) {
+    const key = String(Number(postID));
+    if (!this.commentGatesByPostID[key]) this.commentGatesByPostID[key] = UserModel.createRequestGate();
+    return this.commentGatesByPostID[key];
+  }
+
+  patchCommentState(postID, patch) {
+    const key = String(Number(postID));
+    this.setState(state => {
+      const entries = Object.assign({}, state.commentsByPostID);
+      entries[key] = Object.assign({}, emptyCommentState(), entries[key] || {}, patch || {});
+      return { commentsByPostID: entries };
+    });
+  }
+
+  purgeCommentStates(postIDs) {
+    const removed = {};
+    (postIDs || []).forEach(postID => {
+      const key = String(Number(postID));
+      if (key !== 'NaN') {
+        removed[key] = true;
+        this.commentGate(key).begin();
+      }
+    });
+    if (!Object.keys(removed).length) return;
+    this.setState(state => {
+      const entries = Object.assign({}, state.commentsByPostID);
+      const openComments = Object.assign({}, state.openComments);
+      Object.keys(removed).forEach(key => {
+        delete entries[key];
+        delete openComments[key];
+      });
+      return { commentsByPostID: entries, openComments };
+    });
+  }
+
+  loadComments = async (postID, reset) => {
+    postID = Number(postID);
+    if (!Number.isInteger(postID) || postID <= 0) return;
+    const authGeneration = this.authGate.current();
+    const gate = this.commentGate(postID);
+    const generation = reset ? gate.begin() : gate.current();
+    const state = this.commentState(postID);
+    if (!reset && state.pending) return;
+    const cursor = reset ? null : state.nextCursor;
+    if (!reset && !cursor) return;
+    this.patchCommentState(postID, { pending: true, loading: !!reset, error: '' });
+    try {
+      const page = await AuthAPI.postComments(postID, cursor, 20);
+      if (!this.authGate.isCurrent(authGeneration) || !gate.isCurrent(generation)) return;
+      const rawComments = page.comments || [];
+      const incoming = rawComments.map(CommentModel.normalizeCommentResponse);
+      const apiUsersByID = this.mergeAPIUsers(rawComments.map(comment => comment.author));
+      const latest = this.commentState(postID);
+      this.setState({ apiUsersByID });
+      this.patchCommentState(postID, {
+        comments: CommentModel.mergeComments(latest.comments, incoming),
+        pending: false, loading: false, error: '', loaded: true,
+        nextCursor: page.next_cursor || null
+      });
+    } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration) || !gate.isCurrent(generation)) return;
+      if (error && (error.status === 403 || error.status === 404)) {
+        this.patchCommentState(postID, Object.assign(emptyCommentState(), {
+          error: error.status === 403 ? 'You no longer have access to these comments.' : 'Post not found.'
+        }));
+        return;
+      }
+      this.patchCommentState(postID, {
+        pending: false, loading: false,
+        error: requestErrorMessage(error, 'Could not load comments. Please try again.')
+      });
+    }
+  };
+
+  togglePostComments = (postID) => {
+    const key = String(Number(postID));
+    const opening = !this.state.openComments[key];
+    this.setState({ openComments: Object.assign({}, this.state.openComments, { [key]: opening }) });
+    const state = this.commentState(postID);
+    if (opening && !state.loaded && !state.pending) this.loadComments(postID, true);
+  };
+
+  setCommentDraft = (postID, value) => {
+    this.patchCommentState(postID, { draft: value, createError: '' });
+  };
+
+  createComment = async (postID) => {
+    postID = Number(postID);
+    const state = this.commentState(postID);
+    const text = state.draft.trim();
+    if (!text || state.createPending) return;
+    const authGeneration = this.authGate.current();
+    const gate = this.commentGate(postID);
+    const generation = gate.current();
+    this.patchCommentState(postID, { createPending: true, createError: '' });
+    try {
+      const response = await AuthAPI.createComment(postID, text);
+      if (!this.authGate.isCurrent(authGeneration) || !gate.isCurrent(generation)) return;
+      const comment = CommentModel.normalizeCommentResponse(response);
+      const apiUsersByID = this.mergeAPIUsers([response.author]);
+      const latest = this.commentState(postID);
+      this.setState(current => ({
+        apiUsersByID,
+        posts: current.posts.map(post => Number(post.id) === postID
+          ? Object.assign({}, post, { commentsCount: (post.commentsCount || 0) + 1 })
+          : post),
+        profilePosts: current.profilePosts.map(post => Number(post.id) === postID
+          ? Object.assign({}, post, { commentsCount: (post.commentsCount || 0) + 1 })
+          : post)
+      }));
+      this.patchCommentState(postID, {
+        comments: CommentModel.mergeComments(latest.comments, [comment]),
+        draft: '', createPending: false, createError: ''
+      });
+    } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration) || !gate.isCurrent(generation)) return;
+      if (error && (error.status === 403 || error.status === 404)) {
+        this.patchCommentState(postID, Object.assign(emptyCommentState(), {
+          draft: text,
+          createError: error.status === 403 ? 'You no longer have access to this post.' : 'Post not found.'
+        }));
+        return;
+      }
+      this.patchCommentState(postID, {
+        createPending: false,
+        createError: requestErrorMessage(error, 'Could not send the comment. Your draft was kept.')
+      });
+    }
+  };
 
   loadFeed = async (reset) => {
     const authGeneration = this.authGate.current();
@@ -488,6 +633,8 @@ class Component extends DCLogic {
       this.directoryGate.begin();
       this.postFollowersGate.begin();
       this.profileGate.begin();
+      Object.keys(this.commentGatesByPostID).forEach(key => this.commentGatesByPostID[key].begin());
+      this.commentGatesByPostID = {};
       this.setState(Object.assign({
         authStatus: 'anonymous', logoutPending: false, authMode: 'login',
         authError: '', screen: 'auth', myPrivacy: 'public',
@@ -496,6 +643,7 @@ class Component extends DCLogic {
         profilePosts: [], profilePostsLoading: false, profilePostsPending: false,
         profilePostsError: '', profilePostsNextCursor: null,
         postFollowers: [], postFollowersLoading: false, selectedFollowers: {},
+        commentsByPostID: {}, openComments: {},
         apiUsersByID: {}, directoryUserIDs: [], directoryNextCursor: null,
         directoryLoading: false, directoryError: '', followPendingByID: {}, followErrorByID: {},
         followRequests: [], followRequestsLoading: false, followRequestsError: '', followRequestPendingByID: {},
@@ -737,6 +885,10 @@ class Component extends DCLogic {
       }]);
       const pending = Object.assign({}, this.state.followPendingByID);
       delete pending[key];
+      const inaccessiblePostIDs = status === 'none' ? [] : this.state.posts.concat(this.state.profilePosts)
+        .filter(post => Number(post.apiAuthorID) === targetUserID)
+        .map(post => post.id);
+      this.purgeCommentStates(inaccessiblePostIDs);
       const posts = status === 'none'
         ? this.state.posts
         : this.state.posts.filter(post => Number(post.apiAuthorID) !== targetUserID);
@@ -1019,7 +1171,8 @@ class Component extends DCLogic {
     const key = inGroup ? s.groupId + ':' + p.id : p.id;
     const privacyMeta = { public: { icon: IC.globe, label: 'Public' }, followers: { icon: IC.users, label: 'Followers' }, selected: { icon: IC.lock, label: 'Selected' } };
     const pm = privacyMeta[p.privacy] || privacyMeta.public;
-    const comments = p.comments || [];
+    const commentState = p.real ? this.commentState(p.id) : null;
+    const comments = p.real ? commentState.comments : (p.comments || []);
     const likes = p.likes || 0;
     const user = p.real ? this.apiUser(p.apiAuthorID) : (p.user || USERS[p.uid] || USERS.me);
     return Object.assign({}, p, {
@@ -1032,16 +1185,38 @@ class Component extends DCLogic {
       showMockActions: !p.real,
       notLiked: !p.liked,
       likeColor: p.liked ? 'var(--danger)' : 'var(--text2)',
-      commentCount: num(comments.length),
+      commentCount: num(p.real ? (p.commentsCount || 0) : comments.length),
       likes: num(likes),
       showComments: !!s.openComments[key],
-      comments: comments.map(c => Object.assign({}, c, { user: USERS[c.uid] })),
-      draft: s.drafts[key] || '',
+      comments: comments.map(c => Object.assign({}, c, {
+        user: p.real ? this.apiUser(c.apiAuthorID) : USERS[c.uid],
+        time: p.real ? this.formatPostTime(c.createdAt) : c.time
+      })),
+      draft: p.real ? commentState.draft : (s.drafts[key] || ''),
+      commentsLoading: p.real && commentState.loading,
+      commentsPending: p.real && commentState.pending,
+      commentsHasError: p.real && !!commentState.error,
+      commentsError: p.real ? commentState.error : '',
+      commentsHasMore: p.real && !!commentState.nextCursor,
+      commentCreatePending: p.real && commentState.createPending,
+      commentCreateHasError: p.real && !!commentState.createError,
+      commentCreateError: p.real ? commentState.createError : '',
+      commentSendDisabled: p.real && (commentState.createPending || !commentState.draft.trim()),
+      commentSendLabel: p.real && commentState.createPending ? '…' : 'Send',
       onLike: () => inGroup ? this.likeGroupPost(s.groupId, p.id) : this.likePost(p.id),
-      onToggleComments: () => this.setState({ openComments: Object.assign({}, s.openComments, { [key]: !s.openComments[key] }) }),
-      onDraft: (e) => this.setState({ drafts: Object.assign({}, this.state.drafts, { [key]: e.target.value }) }),
-      onKey: (e) => { if (e.key === 'Enter') { inGroup ? this.addGroupComment(s.groupId, p.id) : this.addComment(p.id); } },
-      onSendComment: () => inGroup ? this.addGroupComment(s.groupId, p.id) : this.addComment(p.id),
+      onToggleComments: () => p.real
+        ? this.togglePostComments(p.id)
+        : this.setState({ openComments: Object.assign({}, s.openComments, { [key]: !s.openComments[key] }) }),
+      onDraft: (e) => p.real
+        ? this.setCommentDraft(p.id, e.target.value)
+        : this.setState({ drafts: Object.assign({}, this.state.drafts, { [key]: e.target.value }) }),
+      onKey: (e) => {
+        if (e.key !== 'Enter') return;
+        if (p.real) { e.preventDefault(); this.createComment(p.id); } else if (inGroup) this.addGroupComment(s.groupId, p.id);
+      },
+      onSendComment: () => p.real ? this.createComment(p.id) : this.addGroupComment(s.groupId, p.id),
+      loadMoreComments: () => this.loadComments(p.id, false),
+      retryComments: () => this.loadComments(p.id, true),
       goProfile: () => { if (p.real) this.openProfile(p.apiAuthorID); }
     });
   }

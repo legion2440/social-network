@@ -21,6 +21,7 @@ type Handler struct {
 	avatars      *service.AvatarDeliveryService
 	posts        *service.PostService
 	postMedia    *service.PostMediaDeliveryService
+	comments     *service.CommentService
 	sessionToken SessionTokenExtractor
 	cookieSecure bool
 	frontend     http.Handler
@@ -38,6 +39,7 @@ func NewHandler(
 	avatars *service.AvatarDeliveryService,
 	posts *service.PostService,
 	postMedia *service.PostMediaDeliveryService,
+	comments *service.CommentService,
 	sessionToken SessionTokenExtractor,
 	cookieSecure bool,
 	frontendDir string,
@@ -60,6 +62,7 @@ func NewHandler(
 		avatars:      avatars,
 		posts:        posts,
 		postMedia:    postMedia,
+		comments:     comments,
 		sessionToken: sessionToken,
 		cookieSecure: cookieSecure,
 		frontend:     newFrontendHandler(frontendDir),
@@ -106,6 +109,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/posts", protected(h.handlePosts))
 	mux.Handle("/api/posts/feed", protected(h.handlePostFeed))
 	mux.Handle("/api/posts/{id}/media", protected(h.handlePostMedia))
+	mux.Handle("/api/posts/{id}/comments", protected(h.handlePostComments))
 	mux.HandleFunc("/api/posts/", h.handleNotImplemented)
 	mux.Handle("/uploads/", protected(h.handleMediaDownload))
 	mux.Handle("/static/avatars/", http.FileServer(http.FS(avatarPlaceholderFiles)))

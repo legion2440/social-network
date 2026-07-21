@@ -40,16 +40,8 @@ func (s *PostMediaDeliveryService) Open(ctx context.Context, viewerUserID, postI
 	var media *domain.Media
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
 		var err error
-		post, err = repositories.Posts().GetByID(ctx, postID)
-		if errors.Is(err, repo.ErrNotFound) {
-			return ErrNotFound
-		}
+		post, err = authorizePostAccess(ctx, repositories, viewerUserID, postID)
 		if err != nil {
-			return err
-		}
-		if _, err := repositories.Posts().GetAccessibleByID(ctx, viewerUserID, postID); errors.Is(err, repo.ErrNotFound) {
-			return ErrForbidden
-		} else if err != nil {
 			return err
 		}
 		if post.MediaID == nil || *post.MediaID <= 0 {

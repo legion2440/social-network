@@ -144,6 +144,20 @@
           expectedStatus: 200
         });
       },
+      postComments: function (postID, cursor, limit) {
+        return request(pagePath('/api/posts/' + encodeURIComponent(String(postID)) + '/comments', cursor, limit), {
+          method: 'GET',
+          expectedStatus: 200
+        });
+      },
+      createComment: function (postID, text) {
+        return request('/api/posts/' + encodeURIComponent(String(postID)) + '/comments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text }),
+          expectedStatus: 201
+        });
+      },
       users: function (cursor, limit) {
         return request(pagePath('/api/users', cursor, limit), {
           method: 'GET',

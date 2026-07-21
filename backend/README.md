@@ -45,6 +45,7 @@ Current migrations:
 - `000005_add_user_privacy`
 - `000006_create_follows`
 - `000007_create_posts`
+- `000008_create_post_comments`
 
 To inspect the current version with the SQLite CLI:
 
@@ -215,12 +216,29 @@ rows survive unfollow, so access disappears immediately and returns after the
 accepted relation is restored.
 
 Every post response contains the post ID, safe author summary, trimmed text,
-privacy, nullable `media_url`, and creation time. `GET /api/posts/{id}/media`
-rechecks the same current access policy on every authenticated request. It
-returns `403` for an existing but forbidden post and `404` for absent media,
-ownership mismatch, missing metadata, or a missing physical file. Successful
-responses use the detected MIME, actual file length,
+privacy, nullable `media_url`, `comments_count`, and creation time.
+`GET /api/posts/{id}/media` rechecks the same current access policy on every
+authenticated request. It returns `403` for an existing but forbidden post and
+`404` for absent media, ownership mismatch, missing metadata, or a missing
+physical file. Successful responses use the detected MIME, actual file length,
 `X-Content-Type-Options: nosniff`, and `Cache-Control: private, no-store`.
+
+## Post comments
+
+`GET /api/posts/{id}/comments` lists comments in `(created_at ASC, id ASC)`
+order. It uses an opaque cursor, defaults to `limit=20`, and enforces a maximum
+of 50. `POST /api/posts/{id}/comments` accepts strict `application/json` with
+exactly one `text` field. The request body is limited to 64 KiB; comment text is
+trimmed and must contain 1–5000 Unicode code points. Unknown or duplicate JSON
+fields and invalid values return `400`; an oversized body returns `413` and an
+unsupported content type returns `415`.
+
+Both endpoints recheck the same current post access policy used by feed,
+profile posts, and post media. Existing inaccessible posts return `403`, while
+unknown posts return `404`. Comments are created inside a SQL transaction, and
+a failed commit leaves no comment row. Comment responses contain only a safe
+author summary; editing, deletion, replies, likes, and realtime delivery are
+outside this step.
 
 Supported environment variables:
 
@@ -256,15 +274,19 @@ Implemented endpoints:
 - `POST /api/posts` (authenticated multipart post creation)
 - `GET /api/posts/feed` (authenticated cursor feed)
 - `GET /api/posts/{id}/media` (authenticated and privacy-controlled)
+- `GET /api/posts/{id}/comments` (authenticated privacy-controlled pagination)
+- `POST /api/posts/{id}/comments` (authenticated strict JSON creation)
 - `GET /static/avatars/{male,female,neutral}.svg`
 - `GET /` and frontend assets (local development and browser smoke only)
 
 All other reserved API groups currently return JSON `501 Not Implemented`.
 
 The frontend feed, profiles, suggestions, follow controls, requests, follower
-lists, following lists, and profile posts use backend user IDs and live API
-state. Mock identities remain isolated to the not-yet-integrated groups and
-chats sections.
+lists, following lists, profile posts, and post comments use backend user IDs
+and live API state. Comments load lazily per opened post, paginate with the
+backend cursor, keep drafts on failures, and ignore stale responses across
+logout or access changes. Mock identities remain isolated to the
+not-yet-integrated groups and chats sections.
 
 The local frontend file server does not replace the planned Docker topology.
 The final setup keeps the backend private and serves the frontend through a

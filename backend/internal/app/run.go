@@ -120,6 +120,7 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 	avatarDelivery := service.NewAvatarDeliveryService(transactions, cfg.UploadDir)
 	posts := service.NewPostService(transactions, appClock, postStager)
 	postMedia := service.NewPostMediaDeliveryService(transactions, cfg.UploadDir)
+	comments := service.NewCommentService(transactions, appClock)
 	handler := httpserver.NewHandler(
 		db,
 		sessions,
@@ -131,6 +132,7 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		avatarDelivery,
 		posts,
 		postMedia,
+		comments,
 		httpserver.NewCookieSessionTokenExtractor(config.SessionCookieName),
 		cfg.CookieSecure,
 		cfg.FrontendDir,
