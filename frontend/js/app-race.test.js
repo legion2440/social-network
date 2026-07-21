@@ -273,6 +273,119 @@ test('comment create prevents duplicates, preserves unloaded state and increment
   assert.equal(component.state.posts[0].commentsCount, 5);
 });
 
+test('pending comment create survives a reset comments request', async () => {
+  const component = createComponent();
+  const createResponse = deferred();
+  const loadResponse = deferred();
+  global.AuthAPI.createComment = () => createResponse.promise;
+  global.AuthAPI.postComments = () => loadResponse.promise;
+  component.state.posts = [component.mapAPIPost(Object.assign(rawPost(7, 2), { comments_count: 4 }))];
+  component.state.commentsByPostID = {
+    '7': Object.assign(emptyTestCommentState(), { draft: 'survives retry' })
+  };
+
+  const create = component.createComment(7);
+  const retry = component.loadComments(7, true);
+  loadResponse.resolve({ comments: [], next_cursor: null });
+  await retry;
+  assert.equal(component.commentState(7).createPending, true);
+
+  createResponse.resolve(rawComment(9, 7, 1));
+  await create;
+
+  assert.equal(component.commentState(7).createPending, false);
+  assert.equal(component.commentState(7).draft, '');
+  assert.deepEqual(component.commentState(7).comments.map(comment => comment.apiId), [9]);
+  assert.equal(component.state.posts[0].commentsCount, 5);
+});
+
+test('comment create does not double-count a refreshed server count', async () => {
+  const component = createComponent();
+  const createResponse = deferred();
+  global.AuthAPI.createComment = () => createResponse.promise;
+  global.AuthAPI.feed = async () => ({
+    posts: [Object.assign(rawPost(7, 2), { comments_count: 5 })],
+    next_cursor: null
+  });
+  component.state.posts = [component.mapAPIPost(Object.assign(rawPost(7, 2), { comments_count: 4 }))];
+  component.state.profilePosts = [component.mapAPIPost(Object.assign(rawPost(7, 2), { comments_count: 3 }))];
+  component.state.commentsByPostID = {
+    '7': Object.assign(emptyTestCommentState(), { draft: 'count once' })
+  };
+
+  const create = component.createComment(7);
+  await component.loadFeed(true);
+  assert.equal(component.state.posts[0].commentsCount, 5);
+
+  createResponse.resolve(rawComment(9, 7, 1));
+  await create;
+
+  assert.equal(component.state.posts[0].commentsCount, 5);
+  assert.equal(component.state.profilePosts[0].commentsCount, 5);
+});
+
+test('stale feed count cannot roll back a locally completed comment create', async () => {
+  const component = createComponent();
+  const feedResponse = deferred();
+  global.AuthAPI.feed = () => feedResponse.promise;
+  global.AuthAPI.createComment = async () => rawComment(9, 7, 1);
+  component.state.posts = [component.mapAPIPost(Object.assign(rawPost(7, 2), { comments_count: 4 }))];
+  component.state.commentsByPostID = {
+    '7': Object.assign(emptyTestCommentState(), { draft: 'monotonic count' })
+  };
+
+  const staleFeed = component.loadFeed(true);
+  await component.createComment(7);
+  assert.equal(component.state.posts[0].commentsCount, 5);
+
+  feedResponse.resolve({
+    posts: [Object.assign(rawPost(7, 2), { comments_count: 4 })],
+    next_cursor: null
+  });
+  await staleFeed;
+
+  assert.equal(component.state.posts[0].commentsCount, 5);
+});
+
+test('stale profile response cannot lower a local comments count', async () => {
+  const component = createComponent();
+  component.state.profileId = 2;
+  component.state.profilePosts = [component.mapAPIPost(Object.assign(rawPost(7, 2), { comments_count: 5 }))];
+  global.AuthAPI.userPosts = async () => ({
+    posts: [Object.assign(rawPost(7, 2), { comments_count: 4 })],
+    next_cursor: null
+  });
+
+  await component.loadProfilePosts(2, true, component.profileGate.current());
+
+  assert.equal(component.state.profilePosts[0].commentsCount, 5);
+});
+
+test('current terminal comments denial invalidates a pending create', async () => {
+  const component = createComponent();
+  const createResponse = deferred();
+  global.AuthAPI.createComment = () => createResponse.promise;
+  global.AuthAPI.postComments = async () => {
+    const error = new Error('forbidden');
+    error.status = 403;
+    throw error;
+  };
+  component.state.posts = [component.mapAPIPost(Object.assign(rawPost(7, 2), { comments_count: 4 }))];
+  component.state.commentsByPostID = {
+    '7': Object.assign(emptyTestCommentState(), { draft: 'must become stale' })
+  };
+
+  const create = component.createComment(7);
+  await component.loadComments(7, true);
+  createResponse.resolve(rawComment(9, 7, 1));
+  await create;
+
+  assert.equal(component.commentState(7).createPending, false);
+  assert.match(component.commentState(7).error, /no longer have access/i);
+  assert.deepEqual(component.commentState(7).comments, []);
+  assert.equal(component.state.posts[0].commentsCount, 4);
+});
+
 test('comment created before the first page response is retained and deduplicated', async () => {
   const component = createComponent();
   const pageResponse = deferred();

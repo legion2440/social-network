@@ -142,7 +142,8 @@ class Component extends DCLogic {
     this.feedGate = UserModel.createRequestGate();
     this.directoryGate = UserModel.createRequestGate();
     this.postFollowersGate = UserModel.createRequestGate();
-    this.commentGatesByPostID = {};
+    this.commentAccessGatesByPostID = {};
+    this.commentLoadGatesByPostID = {};
   }
 
   componentDidMount() {
@@ -216,10 +217,32 @@ class Component extends DCLogic {
     return this.state.commentsByPostID[String(Number(postID))] || emptyCommentState();
   }
 
-  commentGate(postID) {
+  commentAccessGate(postID) {
     const key = String(Number(postID));
-    if (!this.commentGatesByPostID[key]) this.commentGatesByPostID[key] = UserModel.createRequestGate();
-    return this.commentGatesByPostID[key];
+    if (!this.commentAccessGatesByPostID[key]) this.commentAccessGatesByPostID[key] = UserModel.createRequestGate();
+    return this.commentAccessGatesByPostID[key];
+  }
+
+  commentLoadGate(postID) {
+    const key = String(Number(postID));
+    if (!this.commentLoadGatesByPostID[key]) this.commentLoadGatesByPostID[key] = UserModel.createRequestGate();
+    return this.commentLoadGatesByPostID[key];
+  }
+
+  maxPostCommentsCount(postID, ...collections) {
+    postID = Number(postID);
+    return collections.reduce((maximum, posts) => (posts || []).reduce((currentMaximum, post) => (
+      Number(post.id) === postID ? Math.max(currentMaximum, Number(post.commentsCount) || 0) : currentMaximum
+    ), maximum), 0);
+  }
+
+  mergePostCommentsCounts(incoming, ...localCollections) {
+    return (incoming || []).map(post => Object.assign({}, post, {
+      commentsCount: Math.max(
+        Number(post.commentsCount) || 0,
+        this.maxPostCommentsCount(post.id, ...localCollections)
+      )
+    }));
   }
 
   patchCommentState(postID, patch) {
@@ -237,7 +260,7 @@ class Component extends DCLogic {
       const key = String(Number(postID));
       if (key !== 'NaN') {
         removed[key] = true;
-        this.commentGate(key).begin();
+        this.commentAccessGate(key).begin();
       }
     });
     if (!Object.keys(removed).length) return;
@@ -256,8 +279,10 @@ class Component extends DCLogic {
     postID = Number(postID);
     if (!Number.isInteger(postID) || postID <= 0) return;
     const authGeneration = this.authGate.current();
-    const gate = this.commentGate(postID);
-    const generation = reset ? gate.begin() : gate.current();
+    const accessGate = this.commentAccessGate(postID);
+    const accessGeneration = accessGate.current();
+    const loadGate = this.commentLoadGate(postID);
+    const loadGeneration = reset ? loadGate.begin() : loadGate.current();
     const state = this.commentState(postID);
     if (!reset && state.pending) return;
     const cursor = reset ? null : state.nextCursor;
@@ -265,7 +290,11 @@ class Component extends DCLogic {
     this.patchCommentState(postID, { pending: true, loading: !!reset, error: '' });
     try {
       const page = await AuthAPI.postComments(postID, cursor, 20);
-      if (!this.authGate.isCurrent(authGeneration) || !gate.isCurrent(generation)) return;
+      if (
+        !this.authGate.isCurrent(authGeneration) ||
+        !accessGate.isCurrent(accessGeneration) ||
+        !loadGate.isCurrent(loadGeneration)
+      ) return;
       const rawComments = page.comments || [];
       const incoming = rawComments.map(CommentModel.normalizeCommentResponse);
       const apiUsersByID = this.mergeAPIUsers(rawComments.map(comment => comment.author));
@@ -277,8 +306,13 @@ class Component extends DCLogic {
         nextCursor: page.next_cursor || null
       });
     } catch (error) {
-      if (!this.authGate.isCurrent(authGeneration) || !gate.isCurrent(generation)) return;
+      if (
+        !this.authGate.isCurrent(authGeneration) ||
+        !accessGate.isCurrent(accessGeneration) ||
+        !loadGate.isCurrent(loadGeneration)
+      ) return;
       if (error && (error.status === 403 || error.status === 404)) {
+        accessGate.begin();
         this.patchCommentState(postID, Object.assign(emptyCommentState(), {
           error: error.status === 403 ? 'You no longer have access to these comments.' : 'Post not found.'
         }));
@@ -309,22 +343,23 @@ class Component extends DCLogic {
     const text = state.draft.trim();
     if (!text || state.createPending) return;
     const authGeneration = this.authGate.current();
-    const gate = this.commentGate(postID);
-    const generation = gate.current();
+    const accessGate = this.commentAccessGate(postID);
+    const accessGeneration = accessGate.current();
+    const countAtCreateStart = this.maxPostCommentsCount(postID, this.state.posts, this.state.profilePosts);
     this.patchCommentState(postID, { createPending: true, createError: '' });
     try {
       const response = await AuthAPI.createComment(postID, text);
-      if (!this.authGate.isCurrent(authGeneration) || !gate.isCurrent(generation)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration)) return;
       const comment = CommentModel.normalizeCommentResponse(response);
       const apiUsersByID = this.mergeAPIUsers([response.author]);
       const latest = this.commentState(postID);
       this.setState(current => ({
         apiUsersByID,
         posts: current.posts.map(post => Number(post.id) === postID
-          ? Object.assign({}, post, { commentsCount: (post.commentsCount || 0) + 1 })
+          ? Object.assign({}, post, { commentsCount: Math.max(Number(post.commentsCount) || 0, countAtCreateStart + 1) })
           : post),
         profilePosts: current.profilePosts.map(post => Number(post.id) === postID
-          ? Object.assign({}, post, { commentsCount: (post.commentsCount || 0) + 1 })
+          ? Object.assign({}, post, { commentsCount: Math.max(Number(post.commentsCount) || 0, countAtCreateStart + 1) })
           : post)
       }));
       this.patchCommentState(postID, {
@@ -332,8 +367,9 @@ class Component extends DCLogic {
         draft: '', createPending: false, createError: ''
       });
     } catch (error) {
-      if (!this.authGate.isCurrent(authGeneration) || !gate.isCurrent(generation)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration)) return;
       if (error && (error.status === 403 || error.status === 404)) {
+        accessGate.begin();
         this.patchCommentState(postID, Object.assign(emptyCommentState(), {
           draft: text,
           createError: error.status === 403 ? 'You no longer have access to this post.' : 'Post not found.'
@@ -359,11 +395,14 @@ class Component extends DCLogic {
       if (!this.authGate.isCurrent(authGeneration) || !this.feedGate.isCurrent(generation)) return;
       const mapped = (page.posts || []).map(post => this.mapAPIPost(post));
       const apiUsersByID = this.mergeAPIUsers((page.posts || []).map(post => post.author));
-      this.setState({
-        posts: reset ? mapped : this.state.posts.concat(mapped),
-        apiUsersByID,
-        feedLoading: false, feedPending: false,
-        feedNextCursor: page.next_cursor || null, feedError: ''
+      this.setState(current => {
+        const merged = this.mergePostCommentsCounts(mapped, current.posts, current.profilePosts);
+        return {
+          posts: reset ? merged : current.posts.concat(merged),
+          apiUsersByID,
+          feedLoading: false, feedPending: false,
+          feedNextCursor: page.next_cursor || null, feedError: ''
+        };
       });
     } catch (error) {
       if (!this.authGate.isCurrent(authGeneration) || !this.feedGate.isCurrent(generation)) return;
@@ -499,11 +538,14 @@ class Component extends DCLogic {
       ) return;
       const mapped = (page.posts || []).map(post => this.mapAPIPost(post));
       const apiUsersByID = this.mergeAPIUsers((page.posts || []).map(post => post.author));
-      this.setState({
-        profilePosts: reset ? mapped : this.state.profilePosts.concat(mapped),
-        apiUsersByID,
-        profilePostsLoading: false, profilePostsPending: false,
-        profilePostsNextCursor: page.next_cursor || null, profilePostsError: ''
+      this.setState(current => {
+        const merged = this.mergePostCommentsCounts(mapped, current.posts, current.profilePosts);
+        return {
+          profilePosts: reset ? merged : current.profilePosts.concat(merged),
+          apiUsersByID,
+          profilePostsLoading: false, profilePostsPending: false,
+          profilePostsNextCursor: page.next_cursor || null, profilePostsError: ''
+        };
       });
     } catch (error) {
       if (
@@ -633,8 +675,9 @@ class Component extends DCLogic {
       this.directoryGate.begin();
       this.postFollowersGate.begin();
       this.profileGate.begin();
-      Object.keys(this.commentGatesByPostID).forEach(key => this.commentGatesByPostID[key].begin());
-      this.commentGatesByPostID = {};
+      Object.keys(this.commentAccessGatesByPostID).forEach(key => this.commentAccessGatesByPostID[key].begin());
+      this.commentAccessGatesByPostID = {};
+      this.commentLoadGatesByPostID = {};
       this.setState(Object.assign({
         authStatus: 'anonymous', logoutPending: false, authMode: 'login',
         authError: '', screen: 'auth', myPrivacy: 'public',
