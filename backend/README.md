@@ -52,7 +52,9 @@ Current migrations:
 
 Migration `000011` rebuilds `posts` so personal and group publications share
 one table while keeping existing post IDs, selected audiences, comments,
-media links, timestamps, and AUTOINCREMENT state. Its down migration is
+media links, timestamps, and the saved `sqlite_sequence` values for posts and
+comments, including IDs above the current maximum that belonged to deleted
+rows. Its down migration preserves the same AUTOINCREMENT state and is
 allowed only while no group posts exist; the application rejects that down
 operation before `golang-migrate` can mark the database dirty.
 
@@ -299,9 +301,11 @@ detail/members/requests/sent invitations use a per-group generation, group
 posts have an additional request generation, and the invitation inbox has a
 separate generation. Successful mutations invalidate older reads and apply the
 returned group as the authoritative state. A leave or realtime `chat:remove`
-revokes group content locally, purges posts/comments/drafts, and makes pending
-responses stale; only an authoritative rejoin response can clear that revoke
-state and trigger a fresh load. Events and notifications remain unimplemented.
+revokes the complete local group access, hides member-only actions and chat,
+purges posts/comments/drafts, and makes pending detail/member/content responses
+stale. Only an authoritative owner/member response from rejoin can clear that
+revoke state and trigger a fresh content load. Events and notifications remain
+unimplemented.
 Group chat uses the realtime implementation described below.
 
 ## Chats and realtime

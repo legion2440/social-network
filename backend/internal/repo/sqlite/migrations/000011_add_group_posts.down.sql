@@ -1,3 +1,13 @@
+CREATE TABLE autoincrement_000011_down_backup (
+  name TEXT PRIMARY KEY,
+  seq INTEGER NOT NULL
+);
+
+INSERT INTO autoincrement_000011_down_backup (name, seq)
+SELECT name, seq
+FROM sqlite_sequence
+WHERE name IN ('posts', 'post_comments');
+
 CREATE TABLE posts_000011_down (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   author_user_id INTEGER NOT NULL,
@@ -68,3 +78,47 @@ DROP TABLE post_comments_000011_down_backup;
 
 CREATE INDEX idx_post_comments_post_created
 ON post_comments(post_id, created_at ASC, id ASC);
+
+UPDATE sqlite_sequence
+SET seq = max(
+  seq,
+  COALESCE((SELECT saved.seq FROM autoincrement_000011_down_backup saved WHERE saved.name = 'posts'), 0),
+  COALESCE((SELECT MAX(id) FROM posts), 0)
+)
+WHERE name = 'posts';
+
+INSERT INTO sqlite_sequence (name, seq)
+SELECT
+  'posts',
+  max(
+    COALESCE((SELECT saved.seq FROM autoincrement_000011_down_backup saved WHERE saved.name = 'posts'), 0),
+    COALESCE((SELECT MAX(id) FROM posts), 0)
+  )
+WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'posts')
+  AND (
+    EXISTS (SELECT 1 FROM autoincrement_000011_down_backup WHERE name = 'posts')
+    OR EXISTS (SELECT 1 FROM posts)
+  );
+
+UPDATE sqlite_sequence
+SET seq = max(
+  seq,
+  COALESCE((SELECT saved.seq FROM autoincrement_000011_down_backup saved WHERE saved.name = 'post_comments'), 0),
+  COALESCE((SELECT MAX(id) FROM post_comments), 0)
+)
+WHERE name = 'post_comments';
+
+INSERT INTO sqlite_sequence (name, seq)
+SELECT
+  'post_comments',
+  max(
+    COALESCE((SELECT saved.seq FROM autoincrement_000011_down_backup saved WHERE saved.name = 'post_comments'), 0),
+    COALESCE((SELECT MAX(id) FROM post_comments), 0)
+  )
+WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'post_comments')
+  AND (
+    EXISTS (SELECT 1 FROM autoincrement_000011_down_backup WHERE name = 'post_comments')
+    OR EXISTS (SELECT 1 FROM post_comments)
+  );
+
+DROP TABLE autoincrement_000011_down_backup;

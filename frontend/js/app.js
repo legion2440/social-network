@@ -164,7 +164,7 @@ class Component extends DCLogic {
     this.chatHistoryGatesByKey = {};
     this.chatAccessGatesByKey = {};
     this.revokedChatKeys = new Set();
-	this.revokedGroupContentIDs = new Set();
+    this.revokedGroupAccessIDs = new Set();
     this.ws = null;
     this.wsGeneration = 0;
     this.wsReconnectTimer = null;
@@ -739,7 +739,7 @@ class Component extends DCLogic {
       this.chatHistoryGatesByKey = {};
       this.chatAccessGatesByKey = {};
       this.revokedChatKeys.clear();
-	  this.revokedGroupContentIDs.clear();
+      this.revokedGroupAccessIDs.clear();
       this.stopRealtime();
       Object.keys(this.groupGenerationsByID).forEach(key => this.groupGenerationsByID[key].begin());
       this.groupGenerationsByID = {};
@@ -1107,43 +1107,64 @@ class Component extends DCLogic {
     }
   };
 
-  groupContentIsRevoked(groupID) {
-	return this.revokedGroupContentIDs.has(String(Number(groupID)));
+  groupAccessIsRevoked(groupID) {
+    return this.revokedGroupAccessIDs.has(String(Number(groupID)));
   }
 
-  clearGroupContent(groupID, revoke) {
-	groupID = Number(groupID);
-	if (!Number.isInteger(groupID) || groupID <= 0) return;
-	const key = String(groupID);
-	if (revoke) this.revokedGroupContentIDs.add(key);
-	if (Number(this.state.groupId) !== groupID) return;
-	this.groupPostsGate.begin();
-	const postIDs = this.state.groupPosts
-	  .filter(post => Number(post.groupID) === groupID)
-	  .map(post => post.id);
-	this.purgeCommentStates(postIDs);
-	const input = typeof document !== 'undefined' ? document.getElementById('group-post-media') : null;
-	if (input) input.value = '';
-	this.setState(emptyGroupPostState());
+  revokeGroupAccess(groupID) {
+    groupID = Number(groupID);
+    if (!Number.isInteger(groupID) || groupID <= 0) return;
+    const key = String(groupID);
+    this.revokedGroupAccessIDs.add(key);
+    this.groupGeneration(groupID).begin();
+    this.setState(current => ({
+      groupMutationPendingByID: Object.assign({}, current.groupMutationPendingByID, { [key]: false }),
+      groupMutationErrorByID: Object.assign({}, current.groupMutationErrorByID, { [key]: '' })
+    }));
+    if (Number(this.state.groupId) !== groupID) return;
+
+    this.groupDetailGate.begin();
+    this.groupMembersGate.begin();
+    this.groupRequestsGate.begin();
+    this.groupInvitationsGate.begin();
+    this.groupPostsGate.begin();
+    const postIDs = this.state.groupPosts
+      .filter(post => Number(post.groupID) === groupID)
+      .map(post => post.id);
+    this.purgeCommentStates(postIDs);
+    const input = typeof document !== 'undefined' ? document.getElementById('group-post-media') : null;
+    if (input) input.value = '';
+    this.setState(Object.assign({}, emptyGroupPostState(), {
+      inviteOpen: false,
+      groupLoading: false,
+      groupMembers: [], groupMembersNextCursor: null, groupMembersLoading: false, groupMembersError: '',
+      groupRequests: [], groupRequestsNextCursor: null, groupRequestsLoading: false, groupRequestsError: '',
+      groupInvitations: [], groupInvitationsNextCursor: null, groupInvitationsLoading: false, groupInvitationsError: ''
+    }));
   }
 
-  restoreGroupContent(groupID) {
-	groupID = Number(groupID);
-	if (!Number.isInteger(groupID) || groupID <= 0) return;
-	this.revokedGroupContentIDs.delete(String(groupID));
-	if (Number(this.state.groupId) !== groupID) return;
-	this.groupPostsGate.begin();
-	this.purgeCommentStates(this.state.groupPosts.map(post => post.id));
-	const input = typeof document !== 'undefined' ? document.getElementById('group-post-media') : null;
-	if (input) input.value = '';
-	this.setState(emptyGroupPostState(), () => {
-	  if (Number(this.state.groupId) === groupID) this.loadGroupPosts(groupID, true);
-	});
+  restoreGroupAccess(group) {
+    if (!group || (group.state !== 'owner' && group.state !== 'member')) return false;
+    const groupID = Number(group.id);
+    if (!Number.isInteger(groupID) || groupID <= 0) return false;
+    this.revokedGroupAccessIDs.delete(String(groupID));
+    if (Number(this.state.groupId) !== groupID) return true;
+
+    this.groupPostsGate.begin();
+    this.purgeCommentStates(this.state.groupPosts.map(post => post.id));
+    const input = typeof document !== 'undefined' ? document.getElementById('group-post-media') : null;
+    if (input) input.value = '';
+    this.setState(emptyGroupPostState(), () => {
+      if (Number(this.state.groupId) === groupID && !this.groupAccessIsRevoked(groupID)) {
+        this.loadGroupPosts(groupID, true);
+      }
+    });
+    return true;
   }
 
   loadGroupPosts = async (groupID, reset = true) => {
 	groupID = Number(groupID);
-	if (!Number.isInteger(groupID) || groupID <= 0 || this.groupContentIsRevoked(groupID)) return;
+	if (!Number.isInteger(groupID) || groupID <= 0 || this.groupAccessIsRevoked(groupID)) return;
 	const group = this.state.apiGroupsByID[String(groupID)];
 	if (group && group.state !== 'owner' && group.state !== 'member') return;
 	const authGeneration = this.authGate.current();
@@ -1158,7 +1179,7 @@ class Component extends DCLogic {
 	  const page = await AuthAPI.groupPosts(groupID, cursor, 20);
 	  if (
 		!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
-		!this.groupPostsGate.isCurrent(generation) || this.groupContentIsRevoked(groupID) ||
+		!this.groupPostsGate.isCurrent(generation) || this.groupAccessIsRevoked(groupID) ||
 		Number(this.state.groupId) !== groupID
 	  ) return;
 	  const rawPosts = page.posts || [];
@@ -1178,10 +1199,11 @@ class Component extends DCLogic {
 	} catch (error) {
 	  if (
 		!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
-		!this.groupPostsGate.isCurrent(generation) || Number(this.state.groupId) !== groupID
+		!this.groupPostsGate.isCurrent(generation) || this.groupAccessIsRevoked(groupID) ||
+		Number(this.state.groupId) !== groupID
 	  ) return;
 	  if (error && error.status === 403) {
-		this.clearGroupContent(groupID, true);
+		this.revokeGroupAccess(groupID);
 		return;
 	  }
 	  this.setState({
@@ -1215,7 +1237,7 @@ class Component extends DCLogic {
 	const groupID = Number(this.state.groupId);
 	const group = this.state.apiGroupsByID[String(groupID)];
 	if (
-	  !Number.isInteger(groupID) || groupID <= 0 || this.groupContentIsRevoked(groupID) ||
+	  !Number.isInteger(groupID) || groupID <= 0 || this.groupAccessIsRevoked(groupID) ||
 	  !group || (group.state !== 'owner' && group.state !== 'member') ||
 	  this.state.groupPostComposerPending || !this.state.groupPostComposerText.trim()
 	) return;
@@ -1231,7 +1253,7 @@ class Component extends DCLogic {
 	  const response = await AuthAPI.createGroupPost(groupID, form);
 	  if (
 		!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
-		this.groupContentIsRevoked(groupID) || Number(this.state.groupId) !== groupID
+		this.groupAccessIsRevoked(groupID) || Number(this.state.groupId) !== groupID
 	  ) return;
 	  this.groupPostsGate.begin();
 	  const post = this.mapAPIPost(response);
@@ -1246,9 +1268,12 @@ class Component extends DCLogic {
 		groupPostComposerError: '', groupPostComposerPending: false
 	  }));
 	} catch (error) {
-	  if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration)) return;
+	  if (
+		!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+		this.groupAccessIsRevoked(groupID) || Number(this.state.groupId) !== groupID
+	  ) return;
 	  if (error && error.status === 403) {
-		this.clearGroupContent(groupID, true);
+		this.revokeGroupAccess(groupID);
 		return;
 	  }
 	  this.setState({
@@ -1394,7 +1419,7 @@ class Component extends DCLogic {
         this.loadGroupRequests(groupID, true);
         this.loadGroupInvitations(groupID, true);
       }
-	  if ((mapped.state === 'owner' || mapped.state === 'member') && !this.groupContentIsRevoked(groupID)) {
+	  if ((mapped.state === 'owner' || mapped.state === 'member') && !this.groupAccessIsRevoked(groupID)) {
 		this.loadGroupPosts(groupID, true);
 	  }
     } catch (error) {
@@ -1532,6 +1557,8 @@ class Component extends DCLogic {
       const raw = await operation();
       if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration)) return false;
       const group = this.applyAuthoritativeGroup(raw, options && options.invalidateInbox);
+      if (options && options.revokeGroupAccess) this.revokeGroupAccess(groupID);
+      if (options && options.restoreGroupAccess) this.restoreGroupAccess(group);
       if (Number(this.state.groupId) === groupID) {
         this.loadGroupMembers(groupID, true);
         if (group.state === 'owner') {
@@ -1540,8 +1567,6 @@ class Component extends DCLogic {
         }
       }
       if (options && options.invalidateInbox) this.loadGroupInvitationInbox(true);
-	  if (options && options.purgeGroupContent) this.clearGroupContent(groupID, true);
-	  if (options && options.restoreGroupContent) this.restoreGroupContent(groupID);
       if (options && options.purgeChat) this.purgeChat(ChatModel.chatKey('group', groupID));
       if (options && options.refreshChats) this.loadChats(true);
       return true;
@@ -1567,7 +1592,7 @@ class Component extends DCLogic {
 
   acceptGroupInvitation = (groupID) => this.runGroupMutation(
 	groupID, () => AuthAPI.acceptGroupInvitation(groupID), {
-	  invalidateInbox: true, refreshChats: true, restoreGroupContent: true
+	  invalidateInbox: true, refreshChats: true, restoreGroupAccess: true
 	}
   );
 
@@ -1577,7 +1602,7 @@ class Component extends DCLogic {
 
   leaveGroup = (groupID) => this.runGroupMutation(
 	groupID, () => AuthAPI.leaveGroup(groupID), {
-	  purgeChat: true, refreshChats: true, purgeGroupContent: true
+	  purgeChat: true, refreshChats: true, revokeGroupAccess: true
 	}
   );
 
@@ -1598,8 +1623,8 @@ class Component extends DCLogic {
     try {
       const raw = await AuthAPI.createGroup(title, description);
       if (!this.authGate.isCurrent(authGeneration)) return;
-      this.applyAuthoritativeGroup(raw, false);
-	  this.revokedGroupContentIDs.delete(String(Number(raw.id)));
+      const group = this.applyAuthoritativeGroup(raw, false);
+      this.revokedGroupAccessIDs.delete(String(group.id));
       this.loadChats(true);
       this.setState({
         groupCreatePending: false, groupCreateError: '', createOpen: false, ngName: '', ngDesc: ''
@@ -1884,7 +1909,7 @@ class Component extends DCLogic {
   openGroupChat = groupID => {
     groupID = Number(groupID);
     const group = this.state.apiGroupsByID[String(groupID)];
-    if (!group || (group.state !== 'owner' && group.state !== 'member')) return;
+    if (!group || this.groupAccessIsRevoked(groupID) || (group.state !== 'owner' && group.state !== 'member')) return;
     const key = ChatModel.chatKey('group', groupID);
     this.revokedChatKeys.delete(key);
     this.setState(current => {
@@ -1961,7 +1986,7 @@ class Component extends DCLogic {
 	  if (!Number.isInteger(groupID) || groupID <= 0) return;
       let key;
       try { key = ChatModel.chatKey(event.chat.kind, event.chat.target_id); } catch (ignore) { return; }
-	  this.clearGroupContent(groupID, true);
+	  this.revokeGroupAccess(groupID);
       this.purgeChat(key);
       return;
     }
@@ -2473,13 +2498,15 @@ class Component extends DCLogic {
     // groups
     const groupCards = s.groupIDs.map(groupID => s.apiGroupsByID[String(groupID)]).filter(Boolean).map((g, i) => {
       const pending = !!s.groupMutationPendingByID[String(g.id)];
+      const accessRevoked = this.groupAccessIsRevoked(g.id);
       return {
         name: g.name, desc: g.desc, membersLabel: num(g.members), cover: cover(g.color),
         owner: this.apiUser(g.ownerID),
         delay: (i * 0.05).toFixed(2) + 's', pending,
         error: s.groupMutationErrorByID[String(g.id)] || '', hasError: !!s.groupMutationErrorByID[String(g.id)],
-        isJoined: g.state === 'member' || g.state === 'owner', isOwner: g.state === 'owner',
-        isMember: g.state === 'member', isNone: g.state === 'none',
+        isJoined: !accessRevoked && (g.state === 'member' || g.state === 'owner'),
+        isOwner: !accessRevoked && g.state === 'owner',
+        isMember: !accessRevoked && g.state === 'member', isNone: g.state === 'none',
         isRequested: g.state === 'requested', isInvited: g.state === 'invited',
         open: () => this.openGroup(g.id),
         join: () => this.requestGroupJoin(g.id),
@@ -2502,9 +2529,10 @@ class Component extends DCLogic {
     const g = s.apiGroupsByID[String(Number(s.groupId))] || {
       id: Number(s.groupId) || 0, name: '', desc: '', members: 0, state: 'none', ownerID: 0, color: GROUP_COLORS[0]
     };
-    const gIsOwner = g.state === 'owner';
-    const gCanChat = g.state === 'owner' || g.state === 'member';
-	const gCanContent = gCanChat && !this.groupContentIsRevoked(g.id);
+    const gAccessRevoked = this.groupAccessIsRevoked(g.id);
+    const gIsOwner = !gAccessRevoked && g.state === 'owner';
+    const gCanChat = !gAccessRevoked && (g.state === 'owner' || g.state === 'member');
+	const gCanContent = gCanChat;
     const gMutationPending = !!s.groupMutationPendingByID[String(g.id)];
     const gMutationError = s.groupMutationErrorByID[String(g.id)] || '';
     const gTabs = [
@@ -2832,7 +2860,7 @@ class Component extends DCLogic {
       gOwner: this.apiUser(g.ownerID), gMutationPending,
       gMutationHasError: !!gMutationError, gMutationError,
       gIsNone: g.state === 'none', gIsRequested: g.state === 'requested',
-      gIsInvited: g.state === 'invited', gIsMember: g.state === 'member',
+      gIsInvited: g.state === 'invited', gIsMember: !gAccessRevoked && g.state === 'member',
 	  gCanChat, gCanContent, gContentLocked: !gCanContent,
 	  gOpenChat: () => this.openGroupChat(g.id),
       gRequestJoin: () => this.requestGroupJoin(g.id),

@@ -986,6 +986,7 @@ test('chat remove purges group posts, comments, drafts and pending content respo
   component.state.groupPostComposerText = 'discarded draft';
   component.state.groupPostComposerFile = { name: 'discarded.png' };
   component.state.groupPostComposerFileName = 'discarded.png';
+  component.state.inviteOpen = true;
   component.state.commentsByPostID = {
     '71': Object.assign({}, emptyCommentStateForTest(), { draft: 'discarded comment', loaded: true })
   };
@@ -1002,8 +1003,17 @@ test('chat remove purges group posts, comments, drafts and pending content respo
   assert.equal(component.state.openComments['71'], undefined);
   assert.equal(component.state.groupPostComposerText, '');
   assert.equal(component.state.groupPostComposerFile, null);
-  assert.equal(component.groupContentIsRevoked(7), true);
-  assert.equal(component.renderVals().gCanContent, false);
+  assert.equal(component.groupAccessIsRevoked(7), true);
+  const view = component.renderVals();
+  assert.equal(view.gCanChat, false);
+  assert.equal(view.gCanContent, false);
+  assert.equal(view.gIsMember, false);
+  assert.equal(view.inviteOpen, false);
+
+  const chatKey = ChatModel.chatKey('group', 7);
+  component.openGroupChat(7);
+  assert.equal(component.state.chatsByKey[chatKey], undefined);
+  assert.equal(component.revokedChatKeys.has(chatKey), true);
 });
 
 test('chat remove for another group does not clear the active group content', () => {
@@ -1021,8 +1031,33 @@ test('chat remove for another group does not clear the active group content', ()
 
   assert.deepEqual(component.state.groupPosts.map(post => post.id), ['81']);
   assert.equal(component.state.groupPostComposerText, 'keep active draft');
-  assert.equal(component.groupContentIsRevoked(7), true);
-  assert.equal(component.groupContentIsRevoked(8), false);
+  assert.equal(component.groupAccessIsRevoked(7), true);
+  assert.equal(component.groupAccessIsRevoked(8), false);
+});
+
+test('chat remove invalidates pending group detail and members without reviving access', async () => {
+  const component = createComponent();
+  const detail = deferred();
+  const members = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.groupMembers = [{ userID: 1, status: 'member', createdAt: '2026-07-22T10:00:00Z' }];
+  global.AuthAPI.group = () => detail.promise;
+  global.AuthAPI.groupMembers = () => members.promise;
+
+  const pendingDetail = component.loadGroupDetail(7);
+  const pendingMembers = component.loadGroupMembers(7, true);
+  component.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
+  detail.resolve(rawGroup(7, 'member', 2, 2));
+  members.resolve({ members: [{ user: rawUser(2), status: 'member', created_at: '2026-07-22T10:01:00Z' }], next_cursor: null });
+  await Promise.all([pendingDetail, pendingMembers]);
+
+  const view = component.renderVals();
+  assert.equal(component.groupAccessIsRevoked(7), true);
+  assert.equal(view.gCanChat, false);
+  assert.equal(view.gIsMember, false);
+  assert.deepEqual(component.state.groupMembers, []);
 });
 
 test('local leave purges group content and authoritative rejoin loads fresh history', async () => {
@@ -1039,7 +1074,7 @@ test('local leave purges group content and authoritative rejoin loads fresh hist
   global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null });
 
   await component.leaveGroup(7);
-  assert.equal(component.groupContentIsRevoked(7), true);
+  assert.equal(component.groupAccessIsRevoked(7), true);
   assert.deepEqual(component.state.groupPosts, []);
   assert.equal(component.state.commentsByPostID['71'], undefined);
 
@@ -1051,8 +1086,39 @@ test('local leave purges group content and authoritative rejoin loads fresh hist
   await Promise.resolve();
   await Promise.resolve();
 
-  assert.equal(component.groupContentIsRevoked(7), false);
+  assert.equal(component.groupAccessIsRevoked(7), false);
   assert.deepEqual(component.state.groupPosts.map(post => post.id), ['72']);
+});
+
+test('rejected group post create cannot write an error into the next group composer', async () => {
+  const component = createComponent();
+  const create = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.groupPostComposerText = 'group A draft';
+  component.state.apiGroupsByID = {
+    '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
+    '8': component.mapAPIGroup(rawGroup(8, 'member', 2, 2))
+  };
+  global.AuthAPI.createGroupPost = () => create.promise;
+  global.AuthAPI.group = async () => rawGroup(8, 'member', 2, 2);
+  global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
+  global.AuthAPI.groupPosts = async () => ({ posts: [], next_cursor: null });
+
+  const pendingCreate = component.sendGroupPost();
+  component.openGroup(8);
+  component.setState({
+    groupPostComposerText: 'group B draft',
+    groupPostComposerPending: false,
+    groupPostComposerError: ''
+  });
+  create.reject(new Error('group A network failure'));
+  await pendingCreate;
+
+  assert.equal(component.state.groupId, 8);
+  assert.equal(component.state.groupPostComposerText, 'group B draft');
+  assert.equal(component.state.groupPostComposerPending, false);
+  assert.equal(component.state.groupPostComposerError, '');
 });
 
 test('group comment count is monotonic across group and personal copies', async () => {

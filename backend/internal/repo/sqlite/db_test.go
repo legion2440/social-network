@@ -303,6 +303,21 @@ func TestMigration11PreservesPersonalPostGraphAndAutoincrement(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("seed comment: %v", err)
 	}
+	if _, err := db.Exec(`
+		INSERT INTO posts (id, author_user_id, text, privacy, created_at)
+		VALUES (100, 1, 'deleted high post', 'public', 4)
+	`); err != nil {
+		t.Fatalf("seed high post sequence: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO post_comments (id, post_id, author_user_id, text, created_at)
+		VALUES (170, 100, 2, 'deleted high comment', 4)
+	`); err != nil {
+		t.Fatalf("seed high comment sequence: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM posts WHERE id = 100`); err != nil {
+		t.Fatalf("delete high post while retaining sequences: %v", err)
+	}
 
 	if err := migrateUp(db); err != nil {
 		t.Fatalf("migrate to version 11: %v", err)
@@ -336,8 +351,19 @@ func TestMigration11PreservesPersonalPostGraphAndAutoincrement(t *testing.T) {
 		t.Fatalf("insert post after migration: %v", err)
 	}
 	nextID, _ := result.LastInsertId()
-	if nextID <= 41 {
-		t.Fatalf("AUTOINCREMENT did not advance beyond migrated IDs: %d", nextID)
+	if nextID <= 100 {
+		t.Fatalf("post AUTOINCREMENT did not preserve deleted high ID: %d", nextID)
+	}
+	commentResult, err := db.Exec(`
+		INSERT INTO post_comments (post_id, author_user_id, text, created_at)
+		VALUES (?, 2, 'next comment', 5)
+	`, nextID)
+	if err != nil {
+		t.Fatalf("insert comment after migration: %v", err)
+	}
+	nextCommentID, _ := commentResult.LastInsertId()
+	if nextCommentID <= 170 {
+		t.Fatalf("comment AUTOINCREMENT did not preserve deleted high ID: %d", nextCommentID)
 	}
 }
 
@@ -393,6 +419,15 @@ func TestMigration11DownPreservesPersonalPostGraph(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO post_comments (id, post_id, author_user_id, text, created_at) VALUES (61, 31, 2, 'down comment', 3)`); err != nil {
 		t.Fatalf("seed comment: %v", err)
 	}
+	if _, err := db.Exec(`INSERT INTO posts (id, author_user_id, text, privacy, created_at) VALUES (130, 1, 'deleted high down post', 'public', 4)`); err != nil {
+		t.Fatalf("seed high down post sequence: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO post_comments (id, post_id, author_user_id, text, created_at) VALUES (190, 130, 2, 'deleted high down comment', 4)`); err != nil {
+		t.Fatalf("seed high down comment sequence: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM posts WHERE id = 130`); err != nil {
+		t.Fatalf("delete high down post while retaining sequences: %v", err)
+	}
 	if err := guardGroupPostsDownMigration(db); err != nil {
 		t.Fatalf("preflight personal down: %v", err)
 	}
@@ -417,6 +452,22 @@ func TestMigration11DownPreservesPersonalPostGraph(t *testing.T) {
 	}
 	if err := db.QueryRow(`SELECT id FROM post_comments WHERE post_id = 31`).Scan(&commentID); err != nil || commentID != 61 {
 		t.Fatalf("comment after down: id=%d err=%v", commentID, err)
+	}
+	postResult, err := db.Exec(`INSERT INTO posts (author_user_id, text, privacy, created_at) VALUES (1, 'next down post', 'public', 5)`)
+	if err != nil {
+		t.Fatalf("insert post after down migration: %v", err)
+	}
+	nextPostID, _ := postResult.LastInsertId()
+	if nextPostID <= 130 {
+		t.Fatalf("post AUTOINCREMENT did not survive down migration: %d", nextPostID)
+	}
+	commentResult, err := db.Exec(`INSERT INTO post_comments (post_id, author_user_id, text, created_at) VALUES (?, 2, 'next down comment', 5)`, nextPostID)
+	if err != nil {
+		t.Fatalf("insert comment after down migration: %v", err)
+	}
+	nextCommentID, _ := commentResult.LastInsertId()
+	if nextCommentID <= 190 {
+		t.Fatalf("comment AUTOINCREMENT did not survive down migration: %d", nextCommentID)
 	}
 }
 
