@@ -1117,9 +1117,12 @@ class Component extends DCLogic {
     const key = String(groupID);
     this.revokedGroupAccessIDs.add(key);
     this.groupGeneration(groupID).begin();
+    this.chatsGate.begin();
     this.setState(current => ({
       groupMutationPendingByID: Object.assign({}, current.groupMutationPendingByID, { [key]: false }),
-      groupMutationErrorByID: Object.assign({}, current.groupMutationErrorByID, { [key]: '' })
+      groupMutationErrorByID: Object.assign({}, current.groupMutationErrorByID, { [key]: '' }),
+      chatsPending: false,
+      chatsLoading: false
     }));
     if (Number(this.state.groupId) !== groupID) return;
 
@@ -1768,7 +1771,9 @@ class Component extends DCLogic {
     try {
       const page = await AuthAPI.chats(cursor, 20);
       if (!this.authGate.isCurrent(authGeneration) || !this.chatsGate.isCurrent(generation)) return;
-      const rawChats = page.chats || [];
+      const rawChats = (page.chats || []).filter(chat => (
+        chat && (chat.kind !== 'group' || !this.groupAccessIsRevoked(chat.target_id))
+      ));
       const rawUsers = [];
       const rawGroups = [];
       rawChats.forEach(chat => {
@@ -1781,7 +1786,9 @@ class Component extends DCLogic {
       });
       const normalized = rawChats.map(ChatModel.normalizeChatSummary);
       normalized.forEach(chat => {
-        if (chat.kind === 'group') this.revokedChatKeys.delete(chat.key);
+        if (chat.kind === 'group' && !this.groupAccessIsRevoked(chat.targetID)) {
+          this.revokedChatKeys.delete(chat.key);
+        }
       });
       normalized.forEach(chat => {
         if (chat.lastMessage) this.settlePendingMessage(chat.lastMessage.clientMessageID);
@@ -1877,7 +1884,9 @@ class Component extends DCLogic {
   };
 
   openChat = key => {
-    if (!ChatModel.parseChatKey(key) || !this.state.chatsByKey[key]) return;
+    const chat = ChatModel.parseChatKey(key);
+    if (!chat || !this.state.chatsByKey[key]) return;
+    if (chat.kind === 'group' && this.groupAccessIsRevoked(chat.target_id)) return;
     this.stopTyping();
     this.activeChatGate.begin();
     this.scrollChatToBottom = true;

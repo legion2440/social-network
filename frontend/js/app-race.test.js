@@ -915,6 +915,42 @@ test('chat list maps direct and group summaries and opens real HTTP history', as
   assert.deepEqual(component.chatMessages('direct:2').messages.map(message => message.apiId), [11]);
 });
 
+test('stale chat list cannot restore a group chat after access revocation', async () => {
+  const component = createComponent();
+  const staleChats = deferred();
+  const groupChat = {
+    kind: 'group', target_id: 7, group: rawGroup(7, 'member', 3, 2),
+    last_message: null, activity_at: '2026-07-22T11:30:00Z'
+  };
+  const key = ChatModel.chatKey('group', 7);
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 3, 2)) };
+  global.AuthAPI.chats = () => staleChats.promise;
+
+  const pending = component.loadChats(true);
+  const staleGeneration = component.chatsGate.current();
+  component.handleRealtimeEvent(JSON.stringify({
+    type: 'chat:remove', chat: { kind: 'group', target_id: 7 }
+  }));
+  staleChats.resolve({ chats: [groupChat], next_cursor: null });
+  await pending;
+
+  assert.equal(component.chatsGate.isCurrent(staleGeneration), false);
+  assert.equal(component.state.chatsByKey[key], undefined);
+  assert.equal(component.revokedChatKeys.has(key), true);
+
+  global.AuthAPI.chats = async () => ({ chats: [groupChat], next_cursor: null });
+  await component.loadChats(true);
+  assert.equal(component.state.chatsByKey[key], undefined);
+  assert.equal(component.revokedChatKeys.has(key), true);
+
+  component.state.chatsByKey[key] = ChatModel.normalizeChatSummary(groupChat);
+  component.state.chatKeys = [key];
+  component.state.activeChatKey = null;
+  component.openChat(key);
+  assert.equal(component.state.screen, 'feed');
+  assert.equal(component.state.activeChatKey, null);
+});
+
 test('group posts expose a real composer only to active owner or member access', () => {
   const component = createComponent();
   component.state.screen = 'group';

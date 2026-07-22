@@ -303,8 +303,10 @@ separate generation. Successful mutations invalidate older reads and apply the
 returned group as the authoritative state. A leave or realtime `chat:remove`
 revokes the complete local group access, hides member-only actions and chat,
 purges posts/comments/drafts, and makes pending detail/member/content responses
-stale. Only an authoritative owner/member response from rejoin can clear that
-revoke state and trigger a fresh content load. Events and notifications remain
+stale. It also invalidates pending chat-list requests, filters revoked group
+chats from later list responses, and blocks opening a stale group-chat card.
+Only an authoritative owner/member response from rejoin can clear that revoke
+state and trigger a fresh content load. Events and notifications remain
 unimplemented.
 Group chat uses the realtime implementation described below.
 
