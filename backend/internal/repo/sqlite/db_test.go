@@ -45,7 +45,7 @@ func TestMigrationsRunAllTheWayDownAndBackUp(t *testing.T) {
 	if err := migrateDown(db); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
-	for _, table := range []string{"chat_messages", "direct_conversations", "group_memberships", "groups", "post_comments", "post_selected_users", "posts", "follows", "sessions", "media", "users"} {
+	for _, table := range []string{"group_event_responses", "group_events", "chat_messages", "direct_conversations", "group_memberships", "groups", "post_comments", "post_selected_users", "posts", "follows", "sessions", "media", "users"} {
 		if tableExists(t, db, table) {
 			t.Fatalf("table %s still exists after down migrations", table)
 		}
@@ -88,7 +88,7 @@ func TestOpenRejectsDisposableLegacyBootstrapDatabase(t *testing.T) {
 func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 
-	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "post_comments", "groups", "group_memberships", "direct_conversations", "chat_messages", "schema_migrations"} {
+	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "post_comments", "groups", "group_memberships", "group_events", "group_event_responses", "direct_conversations", "chat_messages", "schema_migrations"} {
 		if !tableExists(t, db, table) {
 			t.Fatalf("expected table %s", table)
 		}
@@ -146,6 +146,10 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 		{table: "groups", column: "created_at"},
 		{table: "group_memberships", column: "created_at"},
 		{table: "group_memberships", column: "updated_at"},
+		{table: "group_events", column: "starts_at"},
+		{table: "group_events", column: "created_at"},
+		{table: "group_event_responses", column: "created_at"},
+		{table: "group_event_responses", column: "updated_at"},
 		{table: "direct_conversations", column: "created_at"},
 		{table: "chat_messages", column: "created_at"},
 	} {
@@ -196,6 +200,10 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "groups", "owner_user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "group_memberships", "group_id", "groups", "id", "CASCADE")
 	assertForeignKey(t, db, "group_memberships", "user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "group_events", "group_id", "groups", "id", "CASCADE")
+	assertForeignKey(t, db, "group_events", "creator_user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "group_event_responses", "event_id", "group_events", "id", "CASCADE")
+	assertForeignKey(t, db, "group_event_responses", "user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "direct_conversations", "user_low_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "direct_conversations", "user_high_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "chat_messages", "direct_conversation_id", "direct_conversations", "id", "CASCADE")
@@ -319,9 +327,14 @@ func TestMigration11PreservesPersonalPostGraphAndAutoincrement(t *testing.T) {
 		t.Fatalf("delete high post while retaining sequences: %v", err)
 	}
 
-	if err := migrateUp(db); err != nil {
+	migrator, sourceDriver, err = newMigrator(db)
+	if err != nil {
+		t.Fatalf("new version 11 migrator: %v", err)
+	}
+	if err := migrator.Migrate(11); err != nil {
 		t.Fatalf("migrate to version 11: %v", err)
 	}
+	_ = sourceDriver.Close()
 	assertMigrationVersion(t, db, 11, false)
 	var (
 		groupID       sql.NullInt64
@@ -373,6 +386,14 @@ func TestMigration11DownRefusesGroupPostsWithoutDirtyState(t *testing.T) {
 		t.Fatalf("open database: %v", err)
 	}
 	defer db.Close()
+	migrator, sourceDriver, err := newMigrator(db)
+	if err != nil {
+		t.Fatalf("new migrator: %v", err)
+	}
+	if err := migrator.Migrate(11); err != nil {
+		t.Fatalf("migrate to version 11: %v", err)
+	}
+	_ = sourceDriver.Close()
 	if _, err := db.Exec(`
 		INSERT INTO users (id, email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
 		VALUES (1, 'down-owner@example.com', 'hash', 'Down', 'Owner', '22-07-1992', 1, 1)
@@ -402,6 +423,14 @@ func TestMigration11DownPreservesPersonalPostGraph(t *testing.T) {
 		t.Fatalf("open database: %v", err)
 	}
 	defer db.Close()
+	migrator, sourceDriver, err := newMigrator(db)
+	if err != nil {
+		t.Fatalf("new version 11 migrator: %v", err)
+	}
+	if err := migrator.Migrate(11); err != nil {
+		t.Fatalf("migrate to version 11: %v", err)
+	}
+	_ = sourceDriver.Close()
 	if _, err := db.Exec(`
 		INSERT INTO users (id, email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
 		VALUES
@@ -431,7 +460,7 @@ func TestMigration11DownPreservesPersonalPostGraph(t *testing.T) {
 	if err := guardGroupPostsDownMigration(db); err != nil {
 		t.Fatalf("preflight personal down: %v", err)
 	}
-	migrator, sourceDriver, err := newMigrator(db)
+	migrator, sourceDriver, err = newMigrator(db)
 	if err != nil {
 		t.Fatalf("new migrator: %v", err)
 	}
@@ -537,6 +566,90 @@ func TestGroupSchemaConstraintsIndexesAndCascades(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM group_memberships WHERE group_id = ?`, groupID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("group delete did not cascade memberships: count=%d err=%v", count, err)
 	}
+}
+
+func TestGroupEventSchemaConstraintsIndexesAndCascades(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "social-network.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	insertUser := func(email string) int64 {
+		result, err := db.Exec(`
+			INSERT INTO users (email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
+			VALUES (?, 'hash', 'Event', 'User', '22-07-1992', 1, 1)
+		`, email)
+		if err != nil {
+			t.Fatalf("insert user %s: %v", email, err)
+		}
+		id, _ := result.LastInsertId()
+		return id
+	}
+	ownerID := insertUser("event-schema-owner@example.com")
+	memberID := insertUser("event-schema-member@example.com")
+	groupResult, err := db.Exec(`INSERT INTO groups (owner_user_id, title, description, created_at) VALUES (?, 'Events', 'Description', 1)`, ownerID)
+	if err != nil {
+		t.Fatalf("insert group: %v", err)
+	}
+	groupID, _ := groupResult.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO group_memberships (group_id, user_id, status, created_at, updated_at) VALUES (?, ?, 'owner', 1, 1)`, groupID, ownerID); err != nil {
+		t.Fatalf("insert owner membership: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO group_memberships (group_id, user_id, status, created_at, updated_at) VALUES (?, ?, 'member', 1, 1)`, groupID, memberID); err != nil {
+		t.Fatalf("insert member membership: %v", err)
+	}
+	eventResult, err := db.Exec(`
+		INSERT INTO group_events (group_id, creator_user_id, title, description, starts_at, created_at)
+		VALUES (?, ?, 'Planning', 'Plan the next meetup', 10, 1)
+	`, groupID, memberID)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	eventID, _ := eventResult.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO group_event_responses (event_id, user_id, response, created_at, updated_at) VALUES (?, ?, 'going', 2, 2)`, eventID, memberID); err != nil {
+		t.Fatalf("insert response: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO group_event_responses (event_id, user_id, response, created_at, updated_at) VALUES (?, ?, 'not_going', 3, 3)`, eventID, memberID); err == nil {
+		t.Fatal("expected one response per event/user")
+	}
+	if _, err := db.Exec(`UPDATE group_event_responses SET response = 'maybe' WHERE event_id = ?`, eventID); err == nil {
+		t.Fatal("expected response value constraint")
+	}
+	for name, values := range map[string][2]string{
+		"blank title":           {"   ", "Description"},
+		"untrimmed title":       {" Event ", "Description"},
+		"blank description":     {"Event", "   "},
+		"untrimmed description": {"Event", " Description "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := db.Exec(`INSERT INTO group_events (group_id, creator_user_id, title, description, starts_at, created_at) VALUES (?, ?, ?, ?, 10, 1)`, groupID, ownerID, values[0], values[1]); err == nil {
+				t.Fatal("expected event text constraint")
+			}
+		})
+	}
+	for _, index := range []string{"idx_group_events_group_starts", "idx_group_event_responses_user_event"} {
+		if !schemaObjectExists(t, db, "index", index) {
+			t.Fatalf("missing group event index %s", index)
+		}
+	}
+
+	if _, err := db.Exec(`DELETE FROM group_memberships WHERE group_id = ? AND user_id = ?`, groupID, memberID); err != nil {
+		t.Fatalf("delete membership: %v", err)
+	}
+	assertDBCount := func(table string, want int) {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil || count != want {
+			t.Fatalf("%s count=%d err=%v want=%d", table, count, err, want)
+		}
+	}
+	assertDBCount("group_events", 1)
+	assertDBCount("group_event_responses", 1)
+	if _, err := db.Exec(`DELETE FROM groups WHERE id = ?`, groupID); err != nil {
+		t.Fatalf("delete group: %v", err)
+	}
+	assertDBCount("group_events", 0)
+	assertDBCount("group_event_responses", 0)
 }
 
 func TestChatSchemaConstraintsIndexesAndCascades(t *testing.T) {

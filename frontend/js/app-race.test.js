@@ -24,6 +24,7 @@ global.UserModel = require('./user-model.js');
 global.PostModel = require('./post-model.js');
 global.CommentModel = require('./comment-model.js');
 global.ChatModel = require('./chat-model.js');
+global.GroupEventModel = require('./group-event-model.js');
 global.AuthAPI = {};
 
 const { Component } = require('./app.js');
@@ -101,6 +102,22 @@ function rawGroup(id, status, members, ownerID) {
     members_count: members == null ? 1 : members,
     viewer_status: status || 'none',
     owner: rawUser(ownerID || 1)
+  };
+}
+
+function rawGroupEvent(id, groupID, creatorID, options) {
+  options = options || {};
+  return {
+    id,
+    group_id: groupID,
+    creator: rawUser(creatorID),
+    title: options.title || ('Event ' + id),
+    description: options.description || ('Description ' + id),
+    starts_at: options.startsAt || '2026-07-24T12:00:00Z',
+    created_at: '2026-07-22T12:00:00Z',
+    going_count: options.goingCount || 0,
+    not_going_count: options.notGoingCount || 0,
+    viewer_response: options.viewerResponse || null
   };
 }
 
@@ -1126,6 +1143,29 @@ test('local leave purges group content and authoritative rejoin loads fresh hist
   assert.deepEqual(component.state.groupPosts.map(post => post.id), ['72']);
 });
 
+test('realtime revoke before leave response does not discard authoritative none state', async () => {
+  const component = createComponent();
+  const leave = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  global.AuthAPI.leaveGroup = () => leave.promise;
+  global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
+  global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null });
+
+  const pendingLeave = component.leaveGroup(7);
+  component.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
+  leave.resolve(rawGroup(7, 'none', 1, 2));
+  await pendingLeave;
+
+  assert.equal(component.state.apiGroupsByID['7'].state, 'none');
+  assert.equal(component.state.apiGroupsByID['7'].members, 1);
+  assert.equal(component.groupAccessIsRevoked(7), true);
+  const view = component.renderVals();
+  assert.equal(view.gIsNone, true);
+  assert.equal(view.gCanContent, false);
+});
+
 test('rejected group post create cannot write an error into the next group composer', async () => {
   const component = createComponent();
   const create = deferred();
@@ -1199,6 +1239,258 @@ test('logout invalidates pending group post load and create operations', async (
   assert.equal(component.state.authStatus, 'anonymous');
   assert.deepEqual(component.state.groupPosts, []);
   assert.equal(component.state.groupPostComposerText, '');
+});
+
+test('group event composer and list are exposed only to active group access', () => {
+  const component = createComponent();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.groupTab = 'events';
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+
+  let view = component.renderVals();
+  assert.equal(view.gCanContent, true);
+  assert.equal(typeof view.createGroupEvent, 'function');
+  assert.equal(Array.isArray(view.gEvents), true);
+
+  component.state.apiGroupsByID['7'] = component.mapAPIGroup(rawGroup(7, 'requested', 1, 2));
+  view = component.renderVals();
+  assert.equal(view.gCanContent, false);
+  assert.equal(view.gContentLocked, true);
+});
+
+test('authoritative created event survives an older list and is sorted by start time', async () => {
+  const component = createComponent();
+  const staleList = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'owner', 1, 1)) };
+  component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(73, 7, 1, {
+    startsAt: '2026-07-26T12:00:00Z'
+  }))];
+  component.state.groupEventTitle = 'New event';
+  component.state.groupEventDescription = 'New description';
+  component.state.groupEventStartsAt = '2026-07-25T12:00';
+  global.AuthAPI.groupEvents = () => staleList.promise;
+  global.AuthAPI.createGroupEvent = async () => rawGroupEvent(72, 7, 1, {
+    startsAt: '2026-07-25T12:00:00Z'
+  });
+
+  const pendingList = component.loadGroupEvents(7, true);
+  await component.createGroupEvent();
+  staleList.resolve({ events: [rawGroupEvent(71, 7, 1)], next_cursor: null });
+  await pendingList;
+
+  assert.deepEqual(component.state.groupEvents.map(event => event.id), [72, 73]);
+  assert.equal(component.state.groupEventTitle, '');
+  assert.equal(component.state.groupEventCreatePending, false);
+});
+
+test('group switch invalidates the old event list', async () => {
+  const component = createComponent();
+  const groupA = deferred();
+  const groupB = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = {
+    '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
+    '8': component.mapAPIGroup(rawGroup(8, 'member', 2, 2))
+  };
+  global.AuthAPI.groupEvents = groupID => groupID === 7 ? groupA.promise : groupB.promise;
+
+  const pendingA = component.loadGroupEvents(7, true);
+  component.state.groupId = 8;
+  const pendingB = component.loadGroupEvents(8, true);
+  groupB.resolve({ events: [rawGroupEvent(81, 8, 2)], next_cursor: null });
+  await pendingB;
+  groupA.resolve({ events: [rawGroupEvent(71, 7, 2)], next_cursor: null });
+  await pendingA;
+
+  assert.deepEqual(component.state.groupEvents.map(event => event.id), [81]);
+  assert.equal(component.state.groupEvents[0].groupID, 8);
+});
+
+test('event list reset does not invalidate pending RSVP', async () => {
+  const component = createComponent();
+  const response = deferred();
+  const reset = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(71, 7, 2))];
+  global.AuthAPI.respondToGroupEvent = () => response.promise;
+  global.AuthAPI.groupEvents = () => reset.promise;
+
+  const pendingResponse = component.respondToGroupEvent(71, 'going');
+  const pendingReset = component.loadGroupEvents(7, true);
+  reset.resolve({ events: [rawGroupEvent(71, 7, 2)], next_cursor: null });
+  await pendingReset;
+  response.resolve(rawGroupEvent(71, 7, 2, { goingCount: 1, viewerResponse: 'going' }));
+  await pendingResponse;
+
+  assert.equal(component.state.groupEvents[0].goingCount, 1);
+  assert.equal(component.state.groupEvents[0].viewerResponse, 'going');
+  assert.equal(component.state.groupEventResponsePendingByID['71'], false);
+});
+
+test('successful RSVP invalidates a stale event list with older counts', async () => {
+  const component = createComponent();
+  const staleList = deferred();
+  const response = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(71, 7, 2))];
+  global.AuthAPI.groupEvents = () => staleList.promise;
+  global.AuthAPI.respondToGroupEvent = () => response.promise;
+
+  const pendingList = component.loadGroupEvents(7, true);
+  const pendingResponse = component.respondToGroupEvent(71, 'going');
+  response.resolve(rawGroupEvent(71, 7, 2, { goingCount: 2, viewerResponse: 'going' }));
+  await pendingResponse;
+  staleList.resolve({ events: [rawGroupEvent(71, 7, 2, { goingCount: 1 })], next_cursor: null });
+  await pendingList;
+
+  assert.equal(component.state.groupEvents[0].goingCount, 2);
+  assert.equal(component.state.groupEvents[0].viewerResponse, 'going');
+});
+
+test('pending RSVP cannot mutate the next group after a switch', async () => {
+  const component = createComponent();
+  const response = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = {
+    '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
+    '8': component.mapAPIGroup(rawGroup(8, 'member', 2, 2))
+  };
+  component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(71, 7, 2))];
+  global.AuthAPI.respondToGroupEvent = () => response.promise;
+  global.AuthAPI.group = async () => rawGroup(8, 'member', 2, 2);
+  global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
+  global.AuthAPI.groupPosts = async () => ({ posts: [], next_cursor: null });
+  global.AuthAPI.groupEvents = async () => ({ events: [rawGroupEvent(81, 8, 2)], next_cursor: null });
+
+  const pendingResponse = component.respondToGroupEvent(71, 'going');
+  component.openGroup(8);
+  await Promise.resolve();
+  await Promise.resolve();
+  response.resolve(rawGroupEvent(71, 7, 2, { goingCount: 1, viewerResponse: 'going' }));
+  await pendingResponse;
+
+  assert.equal(component.state.groupId, 8);
+  assert.deepEqual(component.state.groupEvents.map(event => event.id), [81]);
+});
+
+test('rejected event create from group A cannot write into group B composer', async () => {
+  const component = createComponent();
+  const create = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = {
+    '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
+    '8': component.mapAPIGroup(rawGroup(8, 'member', 2, 2))
+  };
+  component.state.groupEventTitle = 'Group A event';
+  component.state.groupEventDescription = 'Group A description';
+  component.state.groupEventStartsAt = '2026-07-25T12:00';
+  global.AuthAPI.createGroupEvent = () => create.promise;
+  global.AuthAPI.group = async () => rawGroup(8, 'member', 2, 2);
+  global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
+  global.AuthAPI.groupPosts = async () => ({ posts: [], next_cursor: null });
+  global.AuthAPI.groupEvents = async () => ({ events: [], next_cursor: null });
+
+  const pendingCreate = component.createGroupEvent();
+  component.openGroup(8);
+  component.setState({
+    groupEventTitle: 'Group B event', groupEventDescription: 'Group B description',
+    groupEventStartsAt: '2026-07-26T12:00', groupEventCreatePending: false, groupEventCreateError: ''
+  });
+  create.reject(new Error('group A network failure'));
+  await pendingCreate;
+
+  assert.equal(component.state.groupId, 8);
+  assert.equal(component.state.groupEventTitle, 'Group B event');
+  assert.equal(component.state.groupEventCreateError, '');
+});
+
+test('chat remove clears events and ignores pending list and RSVP responses', async () => {
+  const component = createComponent();
+  const list = deferred();
+  const response = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(71, 7, 2))];
+  component.state.groupEventTitle = 'Discarded event';
+  component.state.groupEventDescription = 'Discarded description';
+  component.state.groupEventStartsAt = '2026-07-25T12:00';
+  global.AuthAPI.groupEvents = () => list.promise;
+  global.AuthAPI.respondToGroupEvent = () => response.promise;
+
+  const pendingList = component.loadGroupEvents(7, true);
+  const pendingResponse = component.respondToGroupEvent(71, 'going');
+  component.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
+  list.resolve({ events: [rawGroupEvent(72, 7, 2)], next_cursor: null });
+  response.resolve(rawGroupEvent(71, 7, 2, { goingCount: 1, viewerResponse: 'going' }));
+  await Promise.all([pendingList, pendingResponse]);
+
+  assert.deepEqual(component.state.groupEvents, []);
+  assert.equal(component.state.groupEventTitle, '');
+  assert.deepEqual(component.state.groupEventResponsePendingByID, {});
+  assert.equal(component.groupAccessIsRevoked(7), true);
+});
+
+test('authoritative rejoin clears revoked events and loads a fresh page', async () => {
+  const component = createComponent();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'invited', 1, 2)) };
+  component.revokedGroupAccessIDs.add('7');
+  global.AuthAPI.acceptGroupInvitation = async () => rawGroup(7, 'member', 2, 2);
+  global.AuthAPI.groupInvitationInbox = async () => ({ invitations: [], next_cursor: null });
+  global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
+  global.AuthAPI.groupPosts = async () => ({ posts: [], next_cursor: null });
+  global.AuthAPI.groupEvents = async () => ({ events: [rawGroupEvent(75, 7, 2)], next_cursor: null });
+  global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null });
+
+  await component.acceptGroupInvitation(7);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(component.groupAccessIsRevoked(7), false);
+  assert.deepEqual(component.state.groupEvents.map(event => event.id), [75]);
+});
+
+test('logout invalidates pending event list create and RSVP operations', async () => {
+  const component = createComponent();
+  const list = deferred();
+  const create = deferred();
+  const response = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(71, 7, 2))];
+  component.state.groupEventTitle = 'Pending event';
+  component.state.groupEventDescription = 'Pending description';
+  component.state.groupEventStartsAt = '2026-07-25T12:00';
+  global.AuthAPI.groupEvents = () => list.promise;
+  global.AuthAPI.createGroupEvent = () => create.promise;
+  global.AuthAPI.respondToGroupEvent = () => response.promise;
+  global.AuthAPI.logout = async () => null;
+
+  const pendingList = component.loadGroupEvents(7, true);
+  const pendingCreate = component.createGroupEvent();
+  const pendingResponse = component.respondToGroupEvent(71, 'going');
+  await component.logout();
+  list.resolve({ events: [rawGroupEvent(72, 7, 2)], next_cursor: null });
+  create.resolve(rawGroupEvent(73, 7, 2));
+  response.resolve(rawGroupEvent(71, 7, 2, { goingCount: 1, viewerResponse: 'going' }));
+  await Promise.all([pendingList, pendingCreate, pendingResponse]);
+
+  assert.equal(component.state.authStatus, 'anonymous');
+  assert.deepEqual(component.state.groupEvents, []);
+  assert.equal(component.state.groupEventTitle, '');
 });
 
 test('late history for chat A never replaces active chat B', async () => {

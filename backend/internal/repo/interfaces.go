@@ -73,6 +73,13 @@ type GroupRepo interface {
 	ListActiveMemberIDs(ctx context.Context, groupID int64) ([]int64, error)
 }
 
+type GroupEventRepo interface {
+	Create(ctx context.Context, event *domain.GroupEvent) (int64, error)
+	Get(ctx context.Context, viewerUserID, eventID int64) (*domain.GroupEvent, error)
+	List(ctx context.Context, viewerUserID, groupID int64, cursor *domain.GroupEventCursor, limit int) ([]*domain.GroupEvent, error)
+	UpsertResponse(ctx context.Context, eventID, userID int64, response domain.GroupEventResponse, now time.Time) error
+}
+
 type ChatRepo interface {
 	GetDirectConversation(ctx context.Context, userLowID, userHighID int64) (*domain.DirectConversation, error)
 	EnsureDirectConversation(ctx context.Context, userLowID, userHighID int64, createdAt time.Time) (*domain.DirectConversation, error)
@@ -92,6 +99,7 @@ type TransactionRepositories interface {
 	Posts() PostRepo
 	Comments() CommentRepo
 	Groups() GroupRepo
+	GroupEvents() GroupEventRepo
 	Chats() ChatRepo
 }
 

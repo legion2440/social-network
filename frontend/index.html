@@ -707,9 +707,45 @@
       </sc-if>
 
       <sc-if value="{{gTabEvents}}" hint-placeholder-val="{{false}}">
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:28px;text-align:center;color:var(--text3);font:700 13px/1.5 'Manrope',sans-serif;animation:fadeUp .3s ease both">
-          Group events are not implemented yet.
-        </div>
+		<sc-if value="{{gContentLocked}}" hint-placeholder-val="{{false}}">
+		  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:34px 24px;text-align:center;color:var(--text3);font:700 13px/1.55 'Manrope',sans-serif">
+			Join this group to view and respond to events.
+		  </div>
+		</sc-if>
+		<sc-if value="{{gCanContent}}" hint-placeholder-val="{{true}}">
+		  <div style="display:flex;flex-direction:column;gap:14px;animation:fadeUp .3s ease both">
+			<div style="display:flex;justify-content:flex-end"><button onclick="{{toggleGroupEventComposer}}" disabled="{{groupEventCreatePending}}" style="padding:9px 17px;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 12px 'Manrope',sans-serif;cursor:pointer">Create event</button></div>
+			<sc-if value="{{groupEventComposerOpen}}" hint-placeholder-val="{{false}}">
+			  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;display:flex;flex-direction:column;gap:11px">
+				<div style="font:800 14px 'Manrope',sans-serif">New group event</div>
+				<label style="display:flex;flex-direction:column;gap:5px;font:750 11.5px 'Manrope',sans-serif;color:var(--text3)">TITLE<input maxlength="100" value="{{groupEventTitle}}" onchange="{{onGroupEventTitle}}" placeholder="Event title" style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg);color:var(--text);font:600 13px 'Manrope',sans-serif;outline-color:var(--accent)"></label>
+				<label style="display:flex;flex-direction:column;gap:5px;font:750 11.5px 'Manrope',sans-serif;color:var(--text3)">DESCRIPTION<textarea rows="3" maxlength="2000" value="{{groupEventDescription}}" onchange="{{onGroupEventDescription}}" placeholder="What is this event about?" style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg);color:var(--text);font:500 13px/1.5 'Manrope',sans-serif;outline-color:var(--accent);resize:vertical"></textarea></label>
+				<label style="display:flex;flex-direction:column;gap:5px;font:750 11.5px 'Manrope',sans-serif;color:var(--text3)">DATE AND TIME<input type="datetime-local" value="{{groupEventStartsAt}}" oninput="{{onGroupEventStartsAt}}" onchange="{{onGroupEventStartsAt}}" style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg);color:var(--text);font:600 13px 'Manrope',sans-serif;outline-color:var(--accent)"></label>
+				<sc-if value="{{groupEventCreateHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="color:var(--danger);font:650 12px/1.45 'Manrope',sans-serif">{{groupEventCreateError}}</div></sc-if>
+				<div style="display:flex;justify-content:flex-end"><button onclick="{{createGroupEvent}}" disabled="{{groupEventCreateDisabled}}" style="padding:9px 18px;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 12px 'Manrope',sans-serif;cursor:pointer">{{groupEventCreateButtonLabel}}</button></div>
+			  </div>
+			</sc-if>
+
+			<sc-if value="{{groupEventsLoading}}" hint-placeholder-val="{{false}}"><div style="padding:28px;text-align:center;color:var(--text3);font:650 13px 'Manrope',sans-serif">Loading events…</div></sc-if>
+			<sc-if value="{{groupEventsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="padding:16px;text-align:center;border:1px solid color-mix(in oklab,var(--danger) 35%,var(--border));border-radius:14px;color:var(--danger);font:650 12.5px 'Manrope',sans-serif">{{groupEventsError}} <button onclick="{{retryGroupEvents}}" style="border:none;background:transparent;color:var(--accent);font:800 12px 'Manrope',sans-serif;cursor:pointer">Retry</button></div></sc-if>
+			<sc-if value="{{groupEventsEmpty}}" hint-placeholder-val="{{false}}"><div style="padding:28px;text-align:center;color:var(--text3);font:650 13px 'Manrope',sans-serif">No group events yet.</div></sc-if>
+			<sc-for list="{{gEvents}}" as="ev" hint-placeholder-count="2">
+			  <article style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;animation:fadeUp .35s ease both;animation-delay:{{ev.delay}}">
+				<div style="display:flex;gap:12px;align-items:center">
+				  <div onclick="{{ev.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 12px 'Manrope',sans-serif;flex:none;background:{{ev.creator.color}};overflow:hidden;cursor:pointer"><sc-if value="{{ev.creator.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{ev.creator.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if><sc-if value="{{ev.creator.noAvatar}}" hint-placeholder-val="{{true}}">{{ev.creator.initials}}</sc-if></div>
+				  <div style="min-width:0"><div style="font:800 15px 'Manrope',sans-serif">{{ev.title}}</div><div style="font:650 11.5px 'Manrope',sans-serif;color:var(--text3)">{{ev.startsAt}} · by {{ev.creator.name}}</div></div>
+				</div>
+				<p style="margin:12px 0 0;font:500 13.5px/1.55 'Manrope',sans-serif;color:var(--text2);white-space:pre-wrap">{{ev.description}}</p>
+				<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+				  <button onclick="{{ev.going}}" disabled="{{ev.pending}}" style="padding:8px 14px;border:1px solid var(--border);border-radius:999px;background:{{ev.goingBg}};color:{{ev.goingColor}};font:800 12px 'Manrope',sans-serif;cursor:pointer">Going · {{ev.goingCount}}</button>
+				  <button onclick="{{ev.notGoing}}" disabled="{{ev.pending}}" style="padding:8px 14px;border:1px solid var(--border);border-radius:999px;background:{{ev.notGoingBg}};color:{{ev.notGoingColor}};font:800 12px 'Manrope',sans-serif;cursor:pointer">Not going · {{ev.notGoingCount}}</button>
+				</div>
+				<sc-if value="{{ev.hasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="margin-top:8px;color:var(--danger);font:650 11.5px 'Manrope',sans-serif">{{ev.error}}</div></sc-if>
+			  </article>
+			</sc-for>
+			<sc-if value="{{groupEventsHasMore}}" hint-placeholder-val="{{false}}"><button onclick="{{loadMoreGroupEvents}}" disabled="{{groupEventsLoadMoreDisabled}}" style="align-self:center;padding:9px 20px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text2);font:800 12px 'Manrope',sans-serif;cursor:pointer">Load more events</button></sc-if>
+		  </div>
+		</sc-if>
       </sc-if>
 
       <sc-if value="{{gTabMembers}}" hint-placeholder-val="{{false}}">
@@ -965,6 +1001,7 @@
 <script src="js/avatar-url.js"></script>
 <script src="js/comment-model.js"></script>
 <script src="js/chat-model.js"></script>
+<script src="js/group-event-model.js"></script>
 <script src="js/post-model.js"></script>
 <script src="js/user-model.js"></script>
 <script type="text/x-dc" data-dc-script="" data-props="{&quot;accent&quot;: {&quot;editor&quot;: &quot;color&quot;, &quot;default&quot;: &quot;#5661d8&quot;, &quot;options&quot;: [&quot;#5661d8&quot;, &quot;#0e8577&quot;, &quot;#c14f70&quot;, &quot;#a06b23&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Theme&quot;}, &quot;radius&quot;: {&quot;editor&quot;: &quot;range&quot;, &quot;default&quot;: 18, &quot;min&quot;: 6, &quot;max&quot;: 26, &quot;step&quot;: 2, &quot;unit&quot;: &quot;px&quot;, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Theme&quot;}, &quot;defaultTheme&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;light&quot;, &quot;dark&quot;], &quot;default&quot;: &quot;light&quot;, &quot;tsType&quot;: &quot;'light' | 'dark'&quot;, &quot;section&quot;: &quot;Theme&quot;}}" data-src="js/app.js"></script>

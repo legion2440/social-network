@@ -40,6 +40,7 @@ func (m *TransactionManager) WithinTransaction(ctx context.Context, fn func(repo
 		posts:    &PostRepo{db: tx},
 		comments: &CommentRepo{db: tx},
 		groups:   &GroupRepo{db: tx},
+		events:   &GroupEventRepo{db: tx},
 		chats:    &ChatRepo{db: tx},
 	}
 	if err := fn(repositories); err != nil {
@@ -64,6 +65,7 @@ type transactionRepositories struct {
 	posts    *PostRepo
 	comments *CommentRepo
 	groups   *GroupRepo
+	events   *GroupEventRepo
 	chats    *ChatRepo
 }
 
@@ -93,6 +95,10 @@ func (r *transactionRepositories) Comments() repo.CommentRepo {
 
 func (r *transactionRepositories) Groups() repo.GroupRepo {
 	return r.groups
+}
+
+func (r *transactionRepositories) GroupEvents() repo.GroupEventRepo {
+	return r.events
 }
 
 func (r *transactionRepositories) Chats() repo.ChatRepo {

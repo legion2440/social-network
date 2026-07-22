@@ -26,6 +26,7 @@ type Handler struct {
 	postMedia    *service.PostMediaDeliveryService
 	comments     *service.CommentService
 	groups       *service.GroupService
+	groupEvents  *service.GroupEventService
 	chats        *service.ChatService
 	hub          *realtimews.Hub
 	admission    atomic.Bool
@@ -48,6 +49,7 @@ func NewHandler(
 	postMedia *service.PostMediaDeliveryService,
 	comments *service.CommentService,
 	groups *service.GroupService,
+	groupEvents *service.GroupEventService,
 	chats *service.ChatService,
 	sessionToken SessionTokenExtractor,
 	cookieSecure bool,
@@ -73,6 +75,7 @@ func NewHandler(
 		postMedia:    postMedia,
 		comments:     comments,
 		groups:       groups,
+		groupEvents:  groupEvents,
 		chats:        chats,
 		sessionToken: sessionToken,
 		cookieSecure: cookieSecure,
@@ -139,6 +142,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/groups/{id}", protected(h.handleGroupDetail))
 	mux.Handle("/api/groups/{id}/members", protected(h.handleGroupMembers))
 	mux.Handle("/api/groups/{id}/posts", protected(h.handleGroupPosts))
+	mux.Handle("/api/groups/{id}/events", protected(h.handleGroupEvents))
+	mux.Handle("/api/groups/{id}/events/{event_id}/response", protected(h.handleGroupEventResponse))
 	mux.Handle("/api/groups/{id}/join-request", protected(h.handleGroupJoinRequest))
 	mux.Handle("/api/groups/{id}/join-requests", protected(h.handleGroupJoinRequests))
 	mux.Handle("/api/groups/{id}/join-requests/{user_id}/accept", protected(h.handleGroupJoinRequestAccept))

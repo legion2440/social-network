@@ -134,6 +134,7 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 	postMedia := service.NewPostMediaDeliveryService(transactions, uploadDir)
 	comments := service.NewCommentService(transactions, fixedClock{})
 	groups := service.NewGroupService(transactions, fixedClock{})
+	groupEvents := service.NewGroupEventService(transactions, fixedClock{})
 	chats := service.NewChatService(transactions, fixedClock{})
 	hub := realtimews.NewHubWithNow(nil, fixedClock{}.Now)
 	go hub.Run()
@@ -146,7 +147,7 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 		case <-ctx.Done():
 		}
 	})
-	handler := NewHandler(db, sessions, media, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, groups, chats, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil)
+	handler := NewHandler(db, sessions, media, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, groups, groupEvents, chats, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil)
 	handler.SetRealtimeHub(hub)
 
 	return &testEnvironment{
@@ -327,6 +328,7 @@ func newSessionFailureHandlerWithFrontend(store *failingSessionRepo, frontendDir
 		sessions,
 		nil,
 		auth,
+		nil,
 		nil,
 		nil,
 		nil,

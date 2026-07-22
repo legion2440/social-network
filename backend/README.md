@@ -49,6 +49,7 @@ Current migrations:
 - `000009_create_groups`
 - `000010_create_chats`
 - `000011_add_group_posts`
+- `000012_create_group_events`
 
 Migration `000011` rebuilds `posts` so personal and group publications share
 one table while keeping existing post IDs, selected audiences, comments,
@@ -294,20 +295,39 @@ Creation, listing, comments, and `/api/posts/{postID}/media` all require a
 current owner/member membership. Leaving immediately removes access, including
 for the post author, while rejoining restores the existing history.
 
+`GET|POST /api/groups/{id}/events` lists or creates group events for current
+owners and members. Create accepts strict JSON containing `title`,
+`description`, and RFC3339 `starts_at`; text is trimmed and limited to 100 and
+2000 Unicode code points respectively, and the start must be in the future at
+the service transaction's current time. Event times are normalized to UTC.
+Lists use `(starts_at ASC, id ASC)`, opaque cursors, a default limit of 20, and
+a maximum of 50.
+
+`PUT /api/groups/{id}/events/{eventID}/response` accepts exactly one
+`response`, either `going` or `not_going`, and returns the complete
+authoritative event with current counts and the viewer's response. The UPSERT,
+membership check, event/group check, count read, and commit form one SQL
+transaction. RSVP rows survive leave, but counts include only current owners
+and members; rejoining therefore restores the previous response. Events also
+survive their creator leaving. Creator summaries remain viewer-aware, so group
+membership alone never exposes a private custom avatar.
+
 The frontend uses the group endpoints for creation, discovery, invitations,
-join requests, owner management, leaving, and the real Group Posts tab. Its
+join requests, owner management, leaving, and the real Group Posts and Events tabs. Its
 group directory has a global request generation, group
 detail/members/requests/sent invitations use a per-group generation, group
-posts have an additional request generation, and the invitation inbox has a
-separate generation. Successful mutations invalidate older reads and apply the
+posts and events have additional request generations, RSVP uses a separate
+per-event generation, and the invitation inbox has a separate generation.
+Successful mutations invalidate older reads and apply the
 returned group as the authoritative state. A leave or realtime `chat:remove`
 revokes the complete local group access, hides member-only actions and chat,
-purges posts/comments/drafts, and makes pending detail/member/content responses
+purges posts/comments/events/drafts, and makes pending detail/member/content responses
 stale. It also invalidates pending chat-list requests, filters revoked group
 chats from later list responses, and blocks opening a stale group-chat card.
 Only an authoritative owner/member response from rejoin can clear that revoke
-state and trigger a fresh content load. Events and notifications remain
-unimplemented.
+state and trigger a fresh content load. Event creation and RSVP do not create
+notifications or realtime events yet; persisted notifications remain a
+separate step.
 Group chat uses the realtime implementation described below.
 
 ## Chats and realtime
@@ -412,6 +432,8 @@ Implemented endpoints:
 - `POST /api/groups/{id}/invitation/accept`
 - `DELETE /api/groups/{id}/invitation`
 - `DELETE /api/groups/{id}/membership`
+- `GET|POST /api/groups/{id}/events` (owner/member event list and creation)
+- `PUT /api/groups/{id}/events/{eventID}/response` (owner/member RSVP UPSERT)
 - `GET /api/group-invitations`
 - `GET /api/chats` (authenticated cursor-paginated chat list)
 - `GET /api/chats/direct/{userID}/messages` (authenticated direct history)
@@ -426,8 +448,8 @@ lists, following lists, profile posts, post comments, direct chats, and group
 chats use backend IDs and live API state. Chat history paginates upward,
 reconnect reloads list/current history, optimistic sends are retryable, and
 stale responses are generation-gated across logout and access changes.
-Group-dependent mock posts, comments, events, notifications, and right-rail
-events have been removed.
+Group-dependent mock posts, comments, notifications, and right-rail events
+have been removed; the Group Events tab uses persisted backend events and RSVP.
 
 The local frontend file server does not replace the planned Docker topology.
 The final setup keeps the backend private and serves the frontend through a

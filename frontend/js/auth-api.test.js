@@ -238,6 +238,31 @@ test('group posts client keeps multipart intact and uses cursor pagination', asy
   assert.ok(calls.every(call => call.options.credentials === 'same-origin'));
 });
 
+test('group events client uses JSON create and idempotent RSVP endpoints', async () => {
+  const calls = [];
+  const api = createAuthAPI(async (path, options) => {
+    calls.push({ path, options });
+    return jsonResponse(options.method === 'POST' ? 201 : 200, { id: 14, group_id: 9 });
+  });
+  const event = {
+    title: 'Planning', description: 'Plan the meetup', starts_at: '2026-07-24T12:00:00.000Z'
+  };
+
+  await api.groupEvents(9, 'event cursor', 20);
+  await api.createGroupEvent(9, event);
+  await api.respondToGroupEvent(9, 14, 'going');
+
+  assert.equal(calls[0].path, '/api/groups/9/events?cursor=event%20cursor&limit=20');
+  assert.equal(calls[0].options.method, 'GET');
+  assert.equal(calls[1].path, '/api/groups/9/events');
+  assert.equal(calls[1].options.method, 'POST');
+  assert.deepEqual(JSON.parse(calls[1].options.body), event);
+  assert.equal(calls[2].path, '/api/groups/9/events/14/response');
+  assert.equal(calls[2].options.method, 'PUT');
+  assert.deepEqual(JSON.parse(calls[2].options.body), { response: 'going' });
+  assert.ok(calls.every(call => call.options.credentials === 'same-origin'));
+});
+
 test('comment create sends strict JSON to the post comments endpoint', async () => {
   let call;
   const api = createAuthAPI(async (path, options) => {

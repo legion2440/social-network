@@ -62,6 +62,16 @@ function emptyGroupPostState() {
   };
 }
 
+function emptyGroupEventState() {
+  return {
+    groupEvents: [], groupEventsNextCursor: null,
+    groupEventsLoading: false, groupEventsPending: false, groupEventsError: '',
+    groupEventComposerOpen: false, groupEventTitle: '', groupEventDescription: '', groupEventStartsAt: '',
+    groupEventCreatePending: false, groupEventCreateError: '',
+    groupEventResponsePendingByID: {}, groupEventResponseErrorByID: {}
+  };
+}
+
 function emptyChatMessages() {
   return { messages: [], nextCursor: null, loading: false, pending: false, error: '', loaded: false };
 }
@@ -135,6 +145,7 @@ class Component extends DCLogic {
       groupMutationPendingByID: {}, groupMutationErrorByID: {},
       inviteOpen: false, groupInviteUserID: '',
 	  ...emptyGroupPostState(),
+	  ...emptyGroupEventState(),
       createOpen: false, ngName: '', ngDesc: '', groupCreatePending: false, groupCreateError: '',
       ...emptyChatState(),
       notifs: [],
@@ -159,6 +170,9 @@ class Component extends DCLogic {
     this.groupRequestsGate = UserModel.createRequestGate();
     this.groupInvitationsGate = UserModel.createRequestGate();
 	this.groupPostsGate = UserModel.createRequestGate();
+    this.groupEventsGate = UserModel.createRequestGate();
+    this.groupEventCreateGate = UserModel.createRequestGate();
+    this.groupEventResponseGatesByID = {};
     this.chatsGate = UserModel.createRequestGate();
     this.activeChatGate = UserModel.createRequestGate();
     this.chatHistoryGatesByKey = {};
@@ -732,6 +746,10 @@ class Component extends DCLogic {
       this.groupRequestsGate.begin();
       this.groupInvitationsGate.begin();
 	  this.groupPostsGate.begin();
+      this.groupEventsGate.begin();
+      this.groupEventCreateGate.begin();
+      Object.keys(this.groupEventResponseGatesByID).forEach(key => this.groupEventResponseGatesByID[key].begin());
+      this.groupEventResponseGatesByID = {};
       this.chatsGate.begin();
       this.activeChatGate.begin();
       Object.keys(this.chatHistoryGatesByKey).forEach(key => this.chatHistoryGatesByKey[key].begin());
@@ -772,7 +790,7 @@ class Component extends DCLogic {
         createOpen: false, ngName: '', ngDesc: '', groupCreatePending: false, groupCreateError: '',
         composerText: '', composerFile: null, composerFileName: '', composerError: '', composerPending: false,
 		privacy: 'public', privacyOpen: false
-	  }, emptyGroupPostState(), emptyChatState(), emptyRegistrationForm(), emptyProfileEditor()));
+	  }, emptyGroupPostState(), emptyGroupEventState(), emptyChatState(), emptyRegistrationForm(), emptyProfileEditor()));
     } catch (error) {
       if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
@@ -1107,6 +1125,21 @@ class Component extends DCLogic {
     }
   };
 
+  groupEventResponseGate(eventID) {
+    const key = String(Number(eventID));
+    if (!this.groupEventResponseGatesByID[key]) {
+      this.groupEventResponseGatesByID[key] = UserModel.createRequestGate();
+    }
+    return this.groupEventResponseGatesByID[key];
+  }
+
+  invalidateGroupEventResponses() {
+    Object.keys(this.groupEventResponseGatesByID).forEach(key => {
+      this.groupEventResponseGatesByID[key].begin();
+    });
+    this.groupEventResponseGatesByID = {};
+  }
+
   groupAccessIsRevoked(groupID) {
     return this.revokedGroupAccessIDs.has(String(Number(groupID)));
   }
@@ -1131,13 +1164,16 @@ class Component extends DCLogic {
     this.groupRequestsGate.begin();
     this.groupInvitationsGate.begin();
     this.groupPostsGate.begin();
+    this.groupEventsGate.begin();
+    this.groupEventCreateGate.begin();
+    this.invalidateGroupEventResponses();
     const postIDs = this.state.groupPosts
       .filter(post => Number(post.groupID) === groupID)
       .map(post => post.id);
     this.purgeCommentStates(postIDs);
     const input = typeof document !== 'undefined' ? document.getElementById('group-post-media') : null;
     if (input) input.value = '';
-    this.setState(Object.assign({}, emptyGroupPostState(), {
+    this.setState(Object.assign({}, emptyGroupPostState(), emptyGroupEventState(), {
       inviteOpen: false,
       groupLoading: false,
       groupMembers: [], groupMembersNextCursor: null, groupMembersLoading: false, groupMembersError: '',
@@ -1154,16 +1190,176 @@ class Component extends DCLogic {
     if (Number(this.state.groupId) !== groupID) return true;
 
     this.groupPostsGate.begin();
+    this.groupEventsGate.begin();
+    this.groupEventCreateGate.begin();
+    this.invalidateGroupEventResponses();
     this.purgeCommentStates(this.state.groupPosts.map(post => post.id));
     const input = typeof document !== 'undefined' ? document.getElementById('group-post-media') : null;
     if (input) input.value = '';
-    this.setState(emptyGroupPostState(), () => {
+    this.setState(Object.assign({}, emptyGroupPostState(), emptyGroupEventState()), () => {
       if (Number(this.state.groupId) === groupID && !this.groupAccessIsRevoked(groupID)) {
         this.loadGroupPosts(groupID, true);
+        this.loadGroupEvents(groupID, true);
       }
     });
     return true;
   }
+
+  loadGroupEvents = async (groupID, reset = true) => {
+    groupID = Number(groupID);
+    if (!Number.isInteger(groupID) || groupID <= 0 || this.groupAccessIsRevoked(groupID)) return;
+    const group = this.state.apiGroupsByID[String(groupID)];
+    if (group && group.state !== 'owner' && group.state !== 'member') return;
+    const authGeneration = this.authGate.current();
+    const accessGate = this.groupGeneration(groupID);
+    const accessGeneration = accessGate.current();
+    const generation = reset ? this.groupEventsGate.begin() : this.groupEventsGate.current();
+    if (!reset && this.state.groupEventsPending) return;
+    const cursor = reset ? null : this.state.groupEventsNextCursor;
+    if (!reset && !cursor) return;
+    this.setState({ groupEventsPending: true, groupEventsLoading: !!reset, groupEventsError: '' });
+    try {
+      const page = await AuthAPI.groupEvents(groupID, cursor, 20);
+      if (
+        !this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+        !this.groupEventsGate.isCurrent(generation) || this.groupAccessIsRevoked(groupID) ||
+        Number(this.state.groupId) !== groupID
+      ) return;
+      const rawEvents = page.events || [];
+      const mapped = rawEvents.map(event => GroupEventModel.normalizeEventResponse(event));
+      const apiUsersByID = this.mergeAPIUsers(rawEvents.map(event => event.creator));
+      this.setState(current => {
+        let events = reset ? [] : current.groupEvents.slice();
+        mapped.forEach(event => { events = GroupEventModel.mergeAuthoritative(events, event); });
+        return {
+          apiUsersByID, groupEvents: events,
+          groupEventsNextCursor: page.next_cursor || null,
+          groupEventsPending: false, groupEventsLoading: false, groupEventsError: ''
+        };
+      });
+    } catch (error) {
+      if (
+        !this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+        !this.groupEventsGate.isCurrent(generation) || this.groupAccessIsRevoked(groupID) ||
+        Number(this.state.groupId) !== groupID
+      ) return;
+      if (error && error.status === 403) {
+        this.revokeGroupAccess(groupID);
+        return;
+      }
+      this.setState({
+        groupEventsPending: false, groupEventsLoading: false,
+        groupEventsError: requestErrorMessage(error, error && error.status === 404 ? 'Group not found.' : 'Could not load group events.')
+      });
+    }
+  };
+
+  createGroupEvent = async () => {
+    const groupID = Number(this.state.groupId);
+    const group = this.state.apiGroupsByID[String(groupID)];
+    const startsAt = new Date(this.state.groupEventStartsAt);
+    if (
+      !Number.isInteger(groupID) || groupID <= 0 || this.groupAccessIsRevoked(groupID) ||
+      !group || (group.state !== 'owner' && group.state !== 'member') ||
+      this.state.groupEventCreatePending || !this.state.groupEventTitle.trim() ||
+      !this.state.groupEventDescription.trim() || Number.isNaN(startsAt.getTime())
+    ) return;
+    const authGeneration = this.authGate.current();
+    const accessGate = this.groupGeneration(groupID);
+    const accessGeneration = accessGate.current();
+    const createGeneration = this.groupEventCreateGate.current();
+    this.setState({ groupEventCreatePending: true, groupEventCreateError: '' });
+    try {
+      const raw = await AuthAPI.createGroupEvent(groupID, {
+        title: this.state.groupEventTitle.trim(),
+        description: this.state.groupEventDescription.trim(),
+        starts_at: startsAt.toISOString()
+      });
+      if (
+        !this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+        !this.groupEventCreateGate.isCurrent(createGeneration) || this.groupAccessIsRevoked(groupID) ||
+        Number(this.state.groupId) !== groupID
+      ) return;
+      this.groupEventsGate.begin();
+      const event = GroupEventModel.normalizeEventResponse(raw);
+      const apiUsersByID = this.mergeAPIUsers([raw.creator]);
+      this.setState(current => ({
+        apiUsersByID,
+        groupEvents: GroupEventModel.mergeAuthoritative(current.groupEvents, event),
+        groupEventsPending: false, groupEventsLoading: false,
+        groupEventComposerOpen: false, groupEventTitle: '', groupEventDescription: '', groupEventStartsAt: '',
+        groupEventCreatePending: false, groupEventCreateError: ''
+      }));
+    } catch (error) {
+      if (
+        !this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+        !this.groupEventCreateGate.isCurrent(createGeneration) || this.groupAccessIsRevoked(groupID) ||
+        Number(this.state.groupId) !== groupID
+      ) return;
+      if (error && error.status === 403) {
+        this.revokeGroupAccess(groupID);
+        return;
+      }
+      this.setState({
+        groupEventCreatePending: false,
+        groupEventCreateError: requestErrorMessage(error, 'Could not create the event. Your draft was kept.')
+      });
+    }
+  };
+
+  respondToGroupEvent = async (eventID, response) => {
+    const groupID = Number(this.state.groupId);
+    eventID = Number(eventID);
+    const key = String(eventID);
+    if (
+      !Number.isInteger(groupID) || groupID <= 0 || !Number.isInteger(eventID) || eventID <= 0 ||
+      (response !== 'going' && response !== 'not_going') || this.groupAccessIsRevoked(groupID) ||
+      this.state.groupEventResponsePendingByID[key]
+    ) return;
+    const authGeneration = this.authGate.current();
+    const accessGate = this.groupGeneration(groupID);
+    const accessGeneration = accessGate.current();
+    const responseGate = this.groupEventResponseGate(eventID);
+    const responseGeneration = responseGate.current();
+    this.setState({
+      groupEventResponsePendingByID: Object.assign({}, this.state.groupEventResponsePendingByID, { [key]: true }),
+      groupEventResponseErrorByID: Object.assign({}, this.state.groupEventResponseErrorByID, { [key]: '' })
+    });
+    try {
+      const raw = await AuthAPI.respondToGroupEvent(groupID, eventID, response);
+      if (
+        !this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+        !responseGate.isCurrent(responseGeneration) || this.groupAccessIsRevoked(groupID) ||
+        Number(this.state.groupId) !== groupID
+      ) return;
+      this.groupEventsGate.begin();
+      const event = GroupEventModel.normalizeEventResponse(raw);
+      const apiUsersByID = this.mergeAPIUsers([raw.creator]);
+      this.setState(current => ({
+        apiUsersByID,
+        groupEvents: GroupEventModel.mergeAuthoritative(current.groupEvents, event),
+        groupEventsPending: false, groupEventsLoading: false,
+        groupEventResponsePendingByID: Object.assign({}, current.groupEventResponsePendingByID, { [key]: false }),
+        groupEventResponseErrorByID: Object.assign({}, current.groupEventResponseErrorByID, { [key]: '' })
+      }));
+    } catch (error) {
+      if (
+        !this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+        !responseGate.isCurrent(responseGeneration) || this.groupAccessIsRevoked(groupID) ||
+        Number(this.state.groupId) !== groupID
+      ) return;
+      if (error && error.status === 403) {
+        this.revokeGroupAccess(groupID);
+        return;
+      }
+      this.setState(current => ({
+        groupEventResponsePendingByID: Object.assign({}, current.groupEventResponsePendingByID, { [key]: false }),
+        groupEventResponseErrorByID: Object.assign({}, current.groupEventResponseErrorByID, {
+          [key]: requestErrorMessage(error, 'Could not update your response.')
+        })
+      }));
+    }
+  };
 
   loadGroupPosts = async (groupID, reset = true) => {
 	groupID = Number(groupID);
@@ -1386,6 +1582,9 @@ class Component extends DCLogic {
     this.groupRequestsGate.begin();
     this.groupInvitationsGate.begin();
 	this.groupPostsGate.begin();
+	this.groupEventsGate.begin();
+	this.groupEventCreateGate.begin();
+	this.invalidateGroupEventResponses();
 	this.purgeCommentStates(this.state.groupPosts.map(post => post.id));
 	this.setState(Object.assign({
       screen: 'group', groupId: groupID, groupTab: 'posts', inviteOpen: false,
@@ -1393,7 +1592,7 @@ class Component extends DCLogic {
       groupMembersLoading: true, groupMembersError: '', groupRequests: [], groupRequestsNextCursor: null,
       groupRequestsLoading: false, groupRequestsError: '', groupInvitations: [], groupInvitationsNextCursor: null,
       groupInvitationsLoading: false, groupInvitationsError: '', groupInviteUserID: ''
-	}, emptyGroupPostState()));
+	}, emptyGroupPostState(), emptyGroupEventState()));
     this.loadGroupDetail(groupID);
     this.loadGroupMembers(groupID, true);
   };
@@ -1424,6 +1623,7 @@ class Component extends DCLogic {
       }
 	  if ((mapped.state === 'owner' || mapped.state === 'member') && !this.groupAccessIsRevoked(groupID)) {
 		this.loadGroupPosts(groupID, true);
+		this.loadGroupEvents(groupID, true);
 	  }
     } catch (error) {
       if (
@@ -1558,7 +1758,11 @@ class Component extends DCLogic {
     });
     try {
       const raw = await operation();
-      if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration)) return false;
+      const expectedRevokeAlreadyApplied = options && options.revokeGroupAccess && this.groupAccessIsRevoked(groupID);
+      if (
+        !this.authGate.isCurrent(authGeneration) ||
+        (!accessGate.isCurrent(accessGeneration) && !expectedRevokeAlreadyApplied)
+      ) return false;
       const group = this.applyAuthoritativeGroup(raw, options && options.invalidateInbox);
       if (options && options.revokeGroupAccess) this.revokeGroupAccess(groupID);
       if (options && options.restoreGroupAccess) this.restoreGroupAccess(group);
@@ -2589,6 +2793,38 @@ class Component extends DCLogic {
 	const gPosts = s.groupPosts.map((post, index) => Object.assign(this.mapPost(post), {
 	  delay: (index * 0.05).toFixed(2) + 's'
 	}));
+    const gEvents = s.groupEvents.map((event, index) => {
+      const eventID = String(event.id);
+      const startsAt = new Date(event.startsAt);
+      const pending = !!s.groupEventResponsePendingByID[eventID];
+      return {
+        id: event.id,
+        title: event.title,
+        description: event.description,
+        startsAt: Number.isNaN(startsAt.getTime()) ? event.startsAt : startsAt.toLocaleString([], {
+          dateStyle: 'medium', timeStyle: 'short'
+        }),
+        creator: this.apiUser(event.creatorID),
+        goingCount: num(event.goingCount),
+        notGoingCount: num(event.notGoingCount),
+        goingSelected: event.viewerResponse === 'going',
+        notGoingSelected: event.viewerResponse === 'not_going',
+        goingBg: event.viewerResponse === 'going' ? 'var(--accent)' : 'transparent',
+        goingColor: event.viewerResponse === 'going' ? '#fff' : 'var(--text2)',
+        notGoingBg: event.viewerResponse === 'not_going' ? 'var(--surface2)' : 'transparent',
+        notGoingColor: event.viewerResponse === 'not_going' ? 'var(--text)' : 'var(--text2)',
+        pending,
+        error: s.groupEventResponseErrorByID[eventID] || '',
+        hasError: !!s.groupEventResponseErrorByID[eventID],
+        delay: (index * 0.05).toFixed(2) + 's',
+        goProfile: () => this.openProfile(event.creatorID),
+        going: () => this.respondToGroupEvent(event.id, 'going'),
+        notGoing: () => this.respondToGroupEvent(event.id, 'not_going')
+      };
+    });
+    const groupEventStartsAtDate = new Date(s.groupEventStartsAt);
+    const groupEventCreateDisabled = s.groupEventCreatePending || !s.groupEventTitle.trim() ||
+      !s.groupEventDescription.trim() || Number.isNaN(groupEventStartsAtDate.getTime());
 
     // chat
     const chatMeta = chat => {
@@ -2901,6 +3137,31 @@ class Component extends DCLogic {
 	  onGroupPostMedia: this.onGroupPostMedia,
 	  removeGroupPostMedia: this.removeGroupPostMedia,
 	  sendGroupPost: this.sendGroupPost,
+      gEvents,
+      groupEventsLoading: s.groupEventsLoading,
+      groupEventsHasError: !!s.groupEventsError,
+      groupEventsError: s.groupEventsError,
+      groupEventsEmpty: !s.groupEventsLoading && !s.groupEventsError && gEvents.length === 0,
+      groupEventsHasMore: !!s.groupEventsNextCursor,
+      groupEventsLoadMoreDisabled: s.groupEventsPending,
+      retryGroupEvents: () => this.loadGroupEvents(g.id, true),
+      loadMoreGroupEvents: () => this.loadGroupEvents(g.id, false),
+      groupEventComposerOpen: s.groupEventComposerOpen,
+      toggleGroupEventComposer: () => this.setState({
+        groupEventComposerOpen: !s.groupEventComposerOpen, groupEventCreateError: ''
+      }),
+      groupEventTitle: s.groupEventTitle,
+      onGroupEventTitle: (event) => this.setState({ groupEventTitle: event.target.value, groupEventCreateError: '' }),
+      groupEventDescription: s.groupEventDescription,
+      onGroupEventDescription: (event) => this.setState({ groupEventDescription: event.target.value, groupEventCreateError: '' }),
+      groupEventStartsAt: s.groupEventStartsAt,
+      onGroupEventStartsAt: (event) => this.setState({ groupEventStartsAt: event.target.value, groupEventCreateError: '' }),
+      groupEventCreatePending: s.groupEventCreatePending,
+      groupEventCreateHasError: !!s.groupEventCreateError,
+      groupEventCreateError: s.groupEventCreateError,
+      groupEventCreateDisabled,
+      groupEventCreateButtonLabel: s.groupEventCreatePending ? 'Creating…' : 'Create event',
+      createGroupEvent: this.createGroupEvent,
       gMembers, gRequests, gInvitations,
       gHasRequests: gRequests.length > 0,
       gHasInvitations: gInvitations.length > 0,
