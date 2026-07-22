@@ -78,9 +78,10 @@ func (s *ChatService) Send(ctx context.Context, senderUserID int64, rawSessionTo
 	}
 
 	result := &ChatSendResult{RecipientUserIDs: make([]int64, 0)}
-	now := s.clock.Now()
 	err = s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
-		if err := authorizeChatSession(ctx, repositories.Sessions(), rawSessionToken, senderUserID, now); err != nil {
+		if err := authorizeChatSession(
+			ctx, repositories.Sessions(), rawSessionToken, senderUserID, s.clock.Now(),
+		); err != nil {
 			return err
 		}
 		recipients, err := authorizeChatSend(ctx, repositories, senderUserID, input.Chat)
@@ -101,14 +102,15 @@ func (s *ChatService) Send(ctx context.Context, senderUserID int64, rawSessionTo
 			return err
 		}
 
+		createdAt := s.clock.Now()
 		message := &domain.ChatMessage{
 			SenderUserID: senderUserID, ClientMessageID: input.ClientMessageID,
-			Chat: input.Chat, Body: input.Body, CreatedAt: now,
+			Chat: input.Chat, Body: input.Body, CreatedAt: createdAt,
 		}
 		switch input.Chat.Kind {
 		case domain.ChatDirect:
 			low, high := normalizeUserPair(senderUserID, input.Chat.TargetID)
-			conversation, err := repositories.Chats().EnsureDirectConversation(ctx, low, high, now)
+			conversation, err := repositories.Chats().EnsureDirectConversation(ctx, low, high, createdAt)
 			if err != nil {
 				return err
 			}

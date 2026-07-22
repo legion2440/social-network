@@ -32,6 +32,15 @@ type typingEntry struct {
 	recipientIDs map[int64]struct{}
 }
 
+type chatRemoveEnvelope struct {
+	Type string         `json:"type"`
+	Chat domain.ChatRef `json:"chat"`
+}
+
+func marshalChatRemove(chat domain.ChatRef) ([]byte, error) {
+	return json.Marshal(chatRemoveEnvelope{Type: "chat:remove", Chat: chat})
+}
+
 type typingCommand struct {
 	clientID         string
 	chat             domain.ChatRef
@@ -187,6 +196,9 @@ func (h *Hub) groupAccessChanged(command groupAccessCommand) {
 		h.blockedGroups[command.groupID] = blocked
 	}
 	blocked[command.userID] = struct{}{}
+	if payload, err := marshalChatRemove(domain.ChatRef{Kind: domain.ChatGroup, TargetID: command.groupID}); err == nil {
+		h.deliverToUser(command.userID, payload)
+	}
 	target := typingTarget{kind: domain.ChatGroup, first: command.groupID}
 	bucket := h.typingByTarget[target]
 	ids := make([]string, 0)

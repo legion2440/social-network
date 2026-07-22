@@ -51,6 +51,8 @@ func (h *Hub) notifyPresenceTransition(userID int64, online bool) {
 }
 
 func (h *Hub) relationshipChanged(command relationshipCommand) {
+	h.presenceGen[command.firstUserID]++
+	h.presenceGen[command.secondUserID]++
 	firstPeers := h.presencePeers[command.firstUserID]
 	if firstPeers == nil {
 		firstPeers = make(map[int64]struct{})

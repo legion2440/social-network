@@ -998,6 +998,41 @@ test('group leave purges chat and a late socket message cannot recreate it', () 
   assert.equal(component.state.messagesByChatKey[key], undefined);
 });
 
+test('chat remove purges revoked group access in every tab state', () => {
+  const component = createComponent();
+  const removedKey = 'group:7';
+  const fallbackKey = 'direct:2';
+  component.state.chatsByKey = {
+    [removedKey]: ChatModel.normalizeChatSummary({
+      kind: 'group', target_id: 7, group: rawGroup(7, 'member', 3, 2),
+      last_message: null, activity_at: '2026-07-22T11:00:01Z'
+    }),
+    [fallbackKey]: ChatModel.normalizeChatSummary(rawDirectChat(2))
+  };
+  component.state.chatKeys = [removedKey, fallbackKey];
+  component.state.activeChatKey = removedKey;
+  component.state.messagesByChatKey = {
+    [removedKey]: { messages: [], nextCursor: null, loading: false, pending: false, loaded: true, error: '' }
+  };
+  component.state.typingByChatKey = { [removedKey]: { 2: { id: 2, name: 'User 2' } } };
+  component.typingChatKey = removedKey;
+  const accessGeneration = component.chatAccessGate(removedKey).current();
+
+  component.handleRealtimeEvent(JSON.stringify({
+    type: 'chat:remove', chat: { kind: 'group', target_id: 7 }
+  }));
+  component.handleRealtimeMessage(rawChatMessage(
+    78, '14ecf674-cfed-48f0-8ea0-ed6c9dcd0627', 'group', 7, 2
+  ));
+
+  assert.equal(component.state.chatsByKey[removedKey], undefined);
+  assert.equal(component.state.messagesByChatKey[removedKey], undefined);
+  assert.equal(component.state.typingByChatKey[removedKey], undefined);
+  assert.equal(component.state.activeChatKey, fallbackKey);
+  assert.equal(component.typingChatKey, null);
+  assert.equal(component.chatAccessGate(removedKey).isCurrent(accessGeneration), false);
+});
+
 test('old WebSocket generation cannot mutate a newly authenticated session', () => {
   const component = createComponent();
   const previousWindow = global.window;

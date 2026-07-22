@@ -300,11 +300,18 @@ lists and histories use opaque cursors, default to 20 rows, and allow at most
 Live messages use the authenticated same-origin `GET /ws` WebSocket. Client
 events are `chat:send`, `typing:start`, `typing:heartbeat`, and `typing:stop`;
 server events are `presence:init`, `presence:update`, `presence:remove`,
-`typing:update`, `chat:message`, and `chat:error`. Frames are limited to 16 KiB
-and message text is trimmed and limited to 1–2000 Unicode code points. A user
+`typing:update`, `chat:message`, `chat:remove`, and `chat:error`. `chat:remove`
+immediately purges a group chat from every active tab when membership access is
+revoked. Frames are limited to 16 KiB and message text is trimmed and limited
+to 1–2000 Unicode code points. A user
 may have up to eight active sockets. Presence and direct typing are visible
 only while an accepted follow exists in either direction. Group sends, typing,
 and history require current owner/member access.
+
+WebSocket presence bootstrap is versioned around the peer query. Every
+relationship mutation advances the Hub generation for both users, so
+a snapshot read before that mutation cannot overwrite newer realtime access
+state when the socket registers.
 
 Every send carries a UUID `client_message_id`. SQLite enforces uniqueness per
 sender, so retrying the same canonical target and body returns the existing

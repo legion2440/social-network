@@ -28,6 +28,8 @@ var (
 
 type SessionKey [sha256.Size]byte
 
+type PresenceSyncGeneration uint64
+
 func HashSessionToken(rawToken string) SessionKey {
 	return sha256.Sum256([]byte(rawToken))
 }
@@ -68,9 +70,20 @@ type Delivery struct {
 }
 
 type registerCommand struct {
-	client  *Client
-	peerIDs []int64
-	result  chan error
+	client             *Client
+	presenceGeneration PresenceSyncGeneration
+	peerIDs            []int64
+	result             chan error
+}
+
+type beginPresenceSyncCommand struct {
+	userID int64
+	result chan presenceSyncResult
+}
+
+type presenceSyncResult struct {
+	generation PresenceSyncGeneration
+	err        error
 }
 
 type unregisterCommand struct{ clientID string }
@@ -140,6 +153,7 @@ type Hub struct {
 	leases         map[uint64]*operationLease
 	nextLeaseID    uint64
 	presencePeers  map[int64]map[int64]struct{}
+	presenceGen    map[int64]PresenceSyncGeneration
 	blockedGroups  map[int64]map[int64]struct{}
 	typingByTarget map[typingTarget]map[string]*typingEntry
 	typingByClient map[string]map[typingTarget]struct{}
@@ -168,6 +182,7 @@ func NewHubWithNow(logger *log.Logger, now func() time.Time) *Hub {
 		clientsByUser:  make(map[int64]map[string]*Client),
 		leases:         make(map[uint64]*operationLease),
 		presencePeers:  make(map[int64]map[int64]struct{}),
+		presenceGen:    make(map[int64]PresenceSyncGeneration),
 		blockedGroups:  make(map[int64]map[int64]struct{}),
 		typingByTarget: make(map[typingTarget]map[string]*typingEntry),
 		typingByClient: make(map[string]map[typingTarget]struct{}),
@@ -229,12 +244,37 @@ func (h *Hub) submit(command any) error {
 	}
 }
 
-func (h *Hub) Register(client *Client, peerIDs []int64) error {
+func (h *Hub) BeginPresenceSync(userID int64) (PresenceSyncGeneration, error) {
+	if h == nil || userID <= 0 {
+		return 0, ErrSessionUnavailable
+	}
+	state := h.currentState()
+	if state == hubDraining {
+		return 0, ErrHubDraining
+	}
+	if state == hubStopped {
+		return 0, ErrHubStopped
+	}
+	result := make(chan presenceSyncResult, 1)
+	if err := h.submit(beginPresenceSyncCommand{userID: userID, result: result}); err != nil {
+		return 0, err
+	}
+	select {
+	case value := <-result:
+		return value.generation, value.err
+	case <-h.done:
+		return 0, ErrHubStopped
+	}
+}
+
+func (h *Hub) Register(client *Client, generation PresenceSyncGeneration, peerIDs []int64) error {
 	if client == nil {
 		return ErrSessionUnavailable
 	}
 	result := make(chan error, 1)
-	if err := h.submit(registerCommand{client: client, peerIDs: peerIDs, result: result}); err != nil {
+	if err := h.submit(registerCommand{
+		client: client, presenceGeneration: generation, peerIDs: peerIDs, result: result,
+	}); err != nil {
 		return err
 	}
 	select {
@@ -386,8 +426,14 @@ func (h *Hub) BeginDrain(ctx context.Context) error {
 
 func (h *Hub) handleCommand(command any) {
 	switch value := command.(type) {
+	case beginPresenceSyncCommand:
+		if h.currentState() != hubRunning {
+			value.result <- presenceSyncResult{err: ErrHubDraining}
+		} else {
+			value.result <- presenceSyncResult{generation: h.presenceGen[value.userID]}
+		}
 	case registerCommand:
-		value.result <- h.register(value.client, value.peerIDs)
+		value.result <- h.register(value.client, value.presenceGeneration, value.peerIDs)
 	case unregisterCommand:
 		h.deactivateClient(value.clientID, deactivateDisconnect)
 	case acquireCommand:
@@ -425,7 +471,7 @@ func (h *Hub) handleCommand(command any) {
 	}
 }
 
-func (h *Hub) register(client *Client, peerIDs []int64) error {
+func (h *Hub) register(client *Client, generation PresenceSyncGeneration, peerIDs []int64) error {
 	if h.currentState() != hubRunning {
 		return ErrHubDraining
 	}
@@ -456,7 +502,9 @@ func (h *Hub) register(client *Client, peerIDs []int64) error {
 		h.clientsByUser[client.userID] = userClients
 	}
 	userClients[client.id] = client
-	h.setPresencePeers(client.userID, peerIDs)
+	if generation == h.presenceGen[client.userID] {
+		h.setPresencePeers(client.userID, peerIDs)
+	}
 	if !wasOnline {
 		h.notifyPresenceTransition(client.userID, true)
 	}
@@ -682,6 +730,7 @@ func (h *Hub) finishStop(_ bool) {
 	clear(h.sessions)
 	clear(h.leases)
 	clear(h.presencePeers)
+	clear(h.presenceGen)
 	clear(h.blockedGroups)
 	clear(h.typingByTarget)
 	clear(h.typingByClient)

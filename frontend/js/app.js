@@ -1723,7 +1723,7 @@ class Component extends DCLogic {
     this.revokedChatKeys.add(key);
     this.chatAccessGate(key).begin();
     this.chatHistoryGate(key).begin();
-    if (this.typingChatKey === key) this.stopTyping();
+    if (this.typingChatKey === key) this.stopTyping(false);
     const history = this.chatMessages(key);
     history.messages.forEach(message => this.settlePendingMessage(message.clientMessageID));
     this.setState(current => {
@@ -1772,6 +1772,13 @@ class Component extends DCLogic {
         delete onlineUserIDs[String(userID)];
         return { onlineUserIDs };
       });
+      return;
+    }
+    if (event.type === 'chat:remove') {
+      if (!event.chat || event.chat.kind !== 'group') return;
+      let key;
+      try { key = ChatModel.chatKey(event.chat.kind, event.chat.target_id); } catch (ignore) { return; }
+      this.purgeChat(key);
       return;
     }
     if (event.type === 'typing:update') {

@@ -49,6 +49,11 @@ func (h *Handler) handleWS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "realtime unavailable")
 		return
 	}
+	presenceGeneration, err := h.hub.BeginPresenceSync(user.ID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "realtime unavailable")
+		return
+	}
 	peers, err := h.chats.DirectPeerIDs(r.Context(), user.ID)
 	if err != nil {
 		h.logger.Printf("websocket peers: %v", err)
@@ -65,7 +70,10 @@ func (h *Handler) handleWS(w http.ResponseWriter, r *http.Request) {
 	if profile.Nickname != nil && strings.TrimSpace(*profile.Nickname) != "" {
 		displayName = strings.TrimSpace(*profile.Nickname)
 	}
-	if err := realtimews.Serve(w, r, h.hub, h.chats, user.ID, user.SessionToken, user.SessionExpiresAt, displayName, peers); err != nil {
+	if err := realtimews.Serve(
+		w, r, h.hub, h.chats, user.ID, user.SessionToken, user.SessionExpiresAt,
+		displayName, presenceGeneration, peers,
+	); err != nil {
 		h.logger.Printf("websocket: %v", err)
 	}
 }

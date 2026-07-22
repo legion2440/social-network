@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"social-network/backend/internal/config"
 	"social-network/backend/internal/domain"
 	"social-network/backend/internal/repo/sqlite"
+	"social-network/backend/internal/service"
 
 	"github.com/gorilla/websocket"
 )
@@ -144,6 +146,45 @@ func TestWebSocketPersistsRoutesAndRevokesOnlyLogoutSession(t *testing.T) {
 	}
 	if event := readWebSocketEvent(t, recipient, "chat:message"); event["client_message_id"] != secondClientMessageID {
 		t.Fatalf("recipient second message=%+v", event)
+	}
+}
+
+func TestGroupLeaveBroadcastsChatRemoveToEveryActiveUserSocket(t *testing.T) {
+	env := newTestEnvironment(t)
+	ownerID, _ := env.createUserAndSession(t, "ws-group-owner@example.com")
+	memberID, memberToken := env.createUserAndSession(t, "ws-group-member@example.com")
+	groups := service.NewGroupService(sqlite.NewTransactionManager(env.db), fixedClock{})
+	group, err := groups.Create(context.Background(), ownerID, "Realtime removal", "Cross-tab access revoke")
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	if _, err := groups.Invite(context.Background(), ownerID, group.ID, memberID); err != nil {
+		t.Fatalf("invite member: %v", err)
+	}
+	if _, err := groups.AcceptInvitation(context.Background(), memberID, group.ID); err != nil {
+		t.Fatalf("accept invitation: %v", err)
+	}
+
+	server := httptest.NewServer(env.handler)
+	defer server.Close()
+	first := dialTestWebSocket(t, server.URL, memberToken)
+	readWebSocketEvent(t, first, "presence:init")
+	second := dialTestWebSocket(t, server.URL, memberToken)
+	readWebSocketEvent(t, second, "presence:init")
+
+	recorder := httptest.NewRecorder()
+	env.handler.ServeHTTP(recorder, authenticatedRequest(
+		http.MethodDelete, "/api/groups/"+strconv.FormatInt(group.ID, 10)+"/membership", memberToken, nil,
+	))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("leave group: status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+	for name, connection := range map[string]*websocket.Conn{"first": first, "second": second} {
+		event := readWebSocketEvent(t, connection, "chat:remove")
+		chat, ok := event["chat"].(map[string]any)
+		if !ok || chat["kind"] != "group" || chat["target_id"] != float64(group.ID) {
+			t.Fatalf("%s chat remove=%+v", name, event)
+		}
 	}
 }
 

@@ -46,8 +46,24 @@ func testClient(id string, userID int64, token string, queueSize int) *Client {
 func registerTestClient(t *testing.T, hub *Hub, client *Client, peers ...int64) {
 	t.Helper()
 	client.hub = hub
-	if err := hub.Register(client, peers); err != nil {
+	generation, err := hub.BeginPresenceSync(client.userID)
+	if err != nil {
+		t.Fatalf("begin presence sync: %v", err)
+	}
+	if err := hub.Register(client, generation, peers); err != nil {
 		t.Fatalf("register client: %v", err)
+	}
+}
+
+func assertChatRemove(t *testing.T, client *Client, kind domain.ChatKind, targetID int64) {
+	t.Helper()
+	var event struct {
+		Type string         `json:"type"`
+		Chat domain.ChatRef `json:"chat"`
+	}
+	if err := json.Unmarshal(readPayload(t, client), &event); err != nil ||
+		event.Type != "chat:remove" || event.Chat != (domain.ChatRef{Kind: kind, TargetID: targetID}) {
+		t.Fatalf("chat remove payload=%+v err=%v", event, err)
 	}
 }
 
@@ -391,14 +407,95 @@ func TestRelationshipRevocationSuppressesAlreadyAuthorizedDeliveryAndTyping(t *t
 	assertNoPayload(t, recipient)
 }
 
+func TestPresenceSyncRejectsSnapshotsOlderThanRelationshipMutation(t *testing.T) {
+	t.Run("accept wins over stale empty snapshot", func(t *testing.T) {
+		hub := startTestHub(t)
+		recipient := testClient("recipient", 2, "recipient-session", 0)
+		registerTestClient(t, hub, recipient)
+		drainClient(recipient)
+
+		generation, err := hub.BeginPresenceSync(1)
+		if err != nil {
+			t.Fatalf("begin stale presence sync: %v", err)
+		}
+		hub.RelationshipChanged(1, 2, true)
+		drainClient(recipient)
+		sender := testClient("sender", 1, "sender-session", 0)
+		sender.hub = hub
+		if err := hub.Register(sender, generation, nil); err != nil {
+			t.Fatalf("register with stale snapshot: %v", err)
+		}
+		var initial presenceInitEnvelope
+		if err := json.Unmarshal(readPayload(t, sender), &initial); err != nil ||
+			len(initial.OnlineUserIDs) != 1 || initial.OnlineUserIDs[0] != 2 {
+			t.Fatalf("presence init=%+v err=%v", initial, err)
+		}
+		drainClient(recipient)
+
+		leaseID, _, err := hub.AcquireSessionOperation(sender.sessionKey, sender.id)
+		if err != nil {
+			t.Fatalf("acquire direct operation: %v", err)
+		}
+		if err := hub.CompleteSessionOperation(leaseID, &Delivery{
+			Created: true, Chat: domain.ChatRef{Kind: domain.ChatDirect, TargetID: 2},
+			RecipientUserIDs: []int64{2}, AckPayload: []byte("ack"),
+			RecipientBroadcastPayload: []byte("recipient"),
+		}); err != nil {
+			t.Fatalf("complete direct operation: %v", err)
+		}
+		if got := string(readPayload(t, sender)); got != "ack" {
+			t.Fatalf("sender ack=%q", got)
+		}
+		if got := string(readPayload(t, recipient)); got != "recipient" {
+			t.Fatalf("recipient payload=%q", got)
+		}
+	})
+
+	t.Run("unfollow wins over stale eligible snapshot", func(t *testing.T) {
+		hub := startTestHub(t)
+		hub.RelationshipChanged(1, 2, true)
+		generation, err := hub.BeginPresenceSync(1)
+		if err != nil {
+			t.Fatalf("begin stale presence sync: %v", err)
+		}
+		hub.RelationshipChanged(1, 2, false)
+		sender := testClient("sender", 1, "sender-session", 0)
+		recipient := testClient("recipient", 2, "recipient-session", 0)
+		sender.hub = hub
+		if err := hub.Register(sender, generation, []int64{2}); err != nil {
+			t.Fatalf("register with stale snapshot: %v", err)
+		}
+		registerTestClient(t, hub, recipient)
+		drainClient(sender)
+		drainClient(recipient)
+
+		leaseID, _, err := hub.AcquireSessionOperation(sender.sessionKey, sender.id)
+		if err != nil {
+			t.Fatalf("acquire direct operation: %v", err)
+		}
+		if err := hub.CompleteSessionOperation(leaseID, &Delivery{
+			Created: true, Chat: domain.ChatRef{Kind: domain.ChatDirect, TargetID: 2},
+			RecipientUserIDs: []int64{2}, AckPayload: []byte("must-not-send"),
+			RecipientBroadcastPayload: []byte("must-not-send"),
+		}); err != nil {
+			t.Fatalf("complete stale direct operation: %v", err)
+		}
+		assertNoPayload(t, sender)
+		assertNoPayload(t, recipient)
+	})
+}
+
 func TestGroupAccessRevocationSuppressesStaleSenderAndRecipientDelivery(t *testing.T) {
 	hub := startTestHub(t)
 	sender := testClient("group-sender", 1, "sender-session", 0)
 	recipient := testClient("group-recipient", 2, "recipient-session", 0)
+	recipientSibling := testClient("group-recipient-sibling", 2, "recipient-second-session", 0)
 	registerTestClient(t, hub, sender)
 	registerTestClient(t, hub, recipient)
+	registerTestClient(t, hub, recipientSibling)
 	drainClient(sender)
 	drainClient(recipient)
+	drainClient(recipientSibling)
 	chat := domain.ChatRef{Kind: domain.ChatGroup, TargetID: 7}
 
 	leaseID, _, err := hub.AcquireSessionOperation(sender.sessionKey, sender.id)
@@ -406,6 +503,8 @@ func TestGroupAccessRevocationSuppressesStaleSenderAndRecipientDelivery(t *testi
 		t.Fatalf("acquire operation: %v", err)
 	}
 	hub.GroupAccessChanged(7, 2, false)
+	assertChatRemove(t, recipient, domain.ChatGroup, 7)
+	assertChatRemove(t, recipientSibling, domain.ChatGroup, 7)
 	if err := hub.CompleteSessionOperation(leaseID, &Delivery{
 		Created: true, Chat: chat, RecipientUserIDs: []int64{2},
 		AckPayload: []byte("ack"), RecipientBroadcastPayload: []byte("recipient"),
@@ -416,6 +515,7 @@ func TestGroupAccessRevocationSuppressesStaleSenderAndRecipientDelivery(t *testi
 		t.Fatalf("active sender ack=%q", got)
 	}
 	assertNoPayload(t, recipient)
+	assertNoPayload(t, recipientSibling)
 
 	hub.GroupAccessChanged(7, 2, true)
 	leaseID, _, err = hub.AcquireSessionOperation(sender.sessionKey, sender.id)
@@ -423,6 +523,7 @@ func TestGroupAccessRevocationSuppressesStaleSenderAndRecipientDelivery(t *testi
 		t.Fatalf("acquire second operation: %v", err)
 	}
 	hub.GroupAccessChanged(7, 1, false)
+	assertChatRemove(t, sender, domain.ChatGroup, 7)
 	if err := hub.CompleteSessionOperation(leaseID, &Delivery{
 		Created: true, Chat: chat, RecipientUserIDs: []int64{2},
 		AckPayload: []byte("must-not-send"), RecipientBroadcastPayload: []byte("must-not-send"),
@@ -464,7 +565,11 @@ func TestConnectionLimitRejectsNinthSocketWithoutClosingExistingClients(t *testi
 	}
 	ninth := testClient("ninth", 1, "session", 0)
 	ninth.hub = hub
-	if err := hub.Register(ninth, nil); !errors.Is(err, ErrConnectionLimit) {
+	generation, err := hub.BeginPresenceSync(ninth.userID)
+	if err != nil {
+		t.Fatalf("begin ninth presence sync: %v", err)
+	}
+	if err := hub.Register(ninth, generation, nil); !errors.Is(err, ErrConnectionLimit) {
 		t.Fatalf("ninth registration error=%v", err)
 	}
 	for _, client := range clients {
@@ -586,7 +691,7 @@ func TestHubPublicMethodsReturnImmediatelyAfterStop(t *testing.T) {
 
 	client := testClient("post-stop", 1, "post-stop-session", 0)
 	client.hub = hub
-	if err := hub.Register(client, nil); !errors.Is(err, ErrHubStopped) {
+	if err := hub.Register(client, 0, nil); !errors.Is(err, ErrHubStopped) {
 		t.Fatalf("post-stop register error=%v", err)
 	}
 	if _, _, err := hub.AcquireSessionOperation(client.sessionKey, client.id); !errors.Is(err, ErrHubStopped) {

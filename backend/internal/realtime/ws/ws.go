@@ -124,6 +124,7 @@ func Serve(
 	rawSessionToken string,
 	expiresAt time.Time,
 	displayName string,
+	presenceGeneration PresenceSyncGeneration,
 	peerIDs []int64,
 ) error {
 	if hub == nil || chats == nil || userID <= 0 || strings.TrimSpace(rawSessionToken) == "" || expiresAt.IsZero() {
@@ -138,7 +139,7 @@ func Serve(
 		sessionKey: HashSessionToken(rawSessionToken), expiresAt: expiresAt,
 		conn: conn, send: make(chan []byte, ClientQueueSize), done: make(chan struct{}), hub: hub,
 	}
-	if err := hub.Register(client, peerIDs); err != nil {
+	if err := hub.Register(client, presenceGeneration, peerIDs); err != nil {
 		code := websocket.CloseTryAgainLater
 		reason := "realtime unavailable"
 		if errors.Is(err, ErrConnectionLimit) {

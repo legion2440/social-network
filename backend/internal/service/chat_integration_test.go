@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"social-network/backend/internal/domain"
+	"social-network/backend/internal/repo"
 	"social-network/backend/internal/repo/sqlite"
 	"social-network/backend/internal/service"
 )
@@ -25,6 +26,45 @@ func (c *mutableChatClock) Now() time.Time {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.now
+}
+
+func (c *mutableChatClock) Set(now time.Time) {
+	c.mu.Lock()
+	c.now = now
+	c.mu.Unlock()
+}
+
+type beforeTransactionManager struct {
+	inner  repo.TransactionManager
+	before func()
+}
+
+func (m *beforeTransactionManager) WithinTransaction(
+	ctx context.Context,
+	fn func(repo.TransactionRepositories) error,
+) error {
+	if m.before != nil {
+		m.before()
+	}
+	return m.inner.WithinTransaction(ctx, fn)
+}
+
+type sequenceChatClock struct {
+	mu    sync.Mutex
+	times []time.Time
+}
+
+func (c *sequenceChatClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.times) == 0 {
+		return time.Time{}
+	}
+	now := c.times[0]
+	if len(c.times) > 1 {
+		c.times = c.times[1:]
+	}
+	return now
 }
 
 type chatFixture struct {
@@ -274,6 +314,61 @@ func TestChatMessageValidationAndSessionCheck(t *testing.T) {
 	}); !errors.Is(err, service.ErrUnauthorized) || result != nil {
 		t.Fatalf("send with deleted session: result=%+v err=%v", result, err)
 	}
+}
+
+func TestChatSendChecksExpiryAfterEnteringTransactionAndUsesFreshCreatedAt(t *testing.T) {
+	t.Run("expiry while waiting for transaction", func(t *testing.T) {
+		fixture := newChatFixture(t)
+		fixture.acceptFollow(t, 0, 1)
+		expiresAt := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
+		fixture.clock.Set(expiresAt.Add(-time.Second))
+		transactions := &beforeTransactionManager{
+			inner: sqlite.NewTransactionManager(fixture.db),
+			before: func() {
+				fixture.clock.Set(expiresAt.Add(time.Second))
+			},
+		}
+		chats := service.NewChatService(transactions, fixture.clock)
+		result, err := chats.Send(context.Background(), fixture.userIDs[0], fixture.tokens[0], service.ChatSendInput{
+			ClientMessageID: chatClientID(25),
+			Chat:            domain.ChatRef{Kind: domain.ChatDirect, TargetID: fixture.userIDs[1]},
+			Body:            "must not persist after expiry",
+		})
+		if result != nil || !errors.Is(err, service.ErrUnauthorized) {
+			t.Fatalf("expired send: result=%+v err=%v", result, err)
+		}
+		var messageCount, conversationCount int
+		if err := fixture.db.QueryRow(`SELECT COUNT(*) FROM chat_messages`).Scan(&messageCount); err != nil {
+			t.Fatalf("count messages: %v", err)
+		}
+		if err := fixture.db.QueryRow(`SELECT COUNT(*) FROM direct_conversations`).Scan(&conversationCount); err != nil {
+			t.Fatalf("count conversations: %v", err)
+		}
+		if messageCount != 0 || conversationCount != 0 {
+			t.Fatalf("expired send persisted rows: messages=%d conversations=%d", messageCount, conversationCount)
+		}
+	})
+
+	t.Run("created at is sampled after authorization", func(t *testing.T) {
+		fixture := newChatFixture(t)
+		fixture.acceptFollow(t, 0, 1)
+		authorizedAt := time.Date(2026, time.July, 22, 12, 0, 1, 0, time.UTC)
+		createdAt := authorizedAt.Add(5 * time.Second)
+		chats := service.NewChatService(sqlite.NewTransactionManager(fixture.db), &sequenceChatClock{
+			times: []time.Time{authorizedAt, createdAt},
+		})
+		result, err := chats.Send(context.Background(), fixture.userIDs[0], fixture.tokens[0], service.ChatSendInput{
+			ClientMessageID: chatClientID(26),
+			Chat:            domain.ChatRef{Kind: domain.ChatDirect, TargetID: fixture.userIDs[1]},
+			Body:            "fresh creation time",
+		})
+		if err != nil || result == nil || result.Message == nil {
+			t.Fatalf("send with sequence clock: result=%+v err=%v", result, err)
+		}
+		if !result.Message.CreatedAt.Equal(createdAt) {
+			t.Fatalf("created_at=%s want=%s", result.Message.CreatedAt, createdAt)
+		}
+	})
 }
 
 func TestConcurrentDuplicateChatSendCreatesOneRow(t *testing.T) {
