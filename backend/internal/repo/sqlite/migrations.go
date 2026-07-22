@@ -12,7 +12,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
-const latestMigrationVersion uint = 9
+const latestMigrationVersion uint = 10
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS

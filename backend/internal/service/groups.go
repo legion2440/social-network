@@ -195,8 +195,46 @@ func (s *GroupService) RequestJoin(ctx context.Context, userID, groupID int64) (
 	return s.createMembership(ctx, userID, groupID, userID, domain.GroupRequested, false)
 }
 
-func (s *GroupService) Invite(ctx context.Context, ownerUserID, groupID, targetUserID int64) (*domain.Group, error) {
-	return s.createMembership(ctx, ownerUserID, groupID, targetUserID, domain.GroupInvited, true)
+func (s *GroupService) Invite(ctx context.Context, actorUserID, groupID, targetUserID int64) (*domain.Group, error) {
+	if s == nil || s.transactions == nil || s.clock == nil || actorUserID <= 0 || groupID <= 0 || targetUserID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	if actorUserID == targetUserID {
+		return nil, ErrConflict
+	}
+	var group *domain.Group
+	now := s.clock.Now()
+	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+		var err error
+		group, err = repositories.Groups().Get(ctx, groupID, actorUserID)
+		if err != nil {
+			return mapGroupRepoError(err)
+		}
+		status, err := repositories.Groups().GetMembershipStatus(ctx, groupID, actorUserID)
+		if errors.Is(err, repo.ErrNotFound) {
+			return ErrForbidden
+		}
+		if err != nil {
+			return err
+		}
+		if status == nil || (*status != domain.GroupOwner && *status != domain.GroupMember) {
+			return ErrForbidden
+		}
+		if _, err := repositories.Users().GetByID(ctx, targetUserID); err != nil {
+			return mapGroupRepoError(err)
+		}
+		if err := repositories.Groups().CreateMembership(ctx, &domain.GroupMembership{
+			GroupID: groupID, UserID: targetUserID, Status: domain.GroupInvited, CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			return mapGroupRepoError(err)
+		}
+		group, err = repositories.Groups().Get(ctx, groupID, actorUserID)
+		return mapGroupRepoError(err)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return group, nil
 }
 
 func (s *GroupService) createMembership(

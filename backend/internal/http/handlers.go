@@ -45,7 +45,27 @@ func (h *Handler) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := CurrentUserFromContext(r.Context())
-	if err := realtimews.Serve(w, r, user.ID); err != nil {
+	if h.hub == nil || h.chats == nil || h.auth == nil {
+		writeError(w, http.StatusServiceUnavailable, "realtime unavailable")
+		return
+	}
+	peers, err := h.chats.DirectPeerIDs(r.Context(), user.ID)
+	if err != nil {
+		h.logger.Printf("websocket peers: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	profile, err := h.auth.Me(r.Context(), user.ID)
+	if err != nil {
+		h.logger.Printf("websocket user: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	displayName := strings.TrimSpace(profile.FirstName + " " + profile.LastName)
+	if profile.Nickname != nil && strings.TrimSpace(*profile.Nickname) != "" {
+		displayName = strings.TrimSpace(*profile.Nickname)
+	}
+	if err := realtimews.Serve(w, r, h.hub, h.chats, user.ID, user.SessionToken, user.SessionExpiresAt, displayName, peers); err != nil {
 		h.logger.Printf("websocket: %v", err)
 	}
 }

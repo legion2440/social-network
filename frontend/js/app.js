@@ -22,7 +22,6 @@ const USERS = {
   sara:  { id: 'sara', name: 'Sara Bishop', handle: '@sarab', initials: 'SB', color: '#8f6cc9', bio: 'Illustrator and printmaker.', email: 'sara@bishop.ink', dob: 'Apr 17, 1995', private: false }
 };
 
-const REPLIES = ['Totally agree \ud83d\ude04', 'Ha! Send it over', 'Let\u2019s sync tomorrow?', '\ud83d\udc40 looking now', 'Love that \u2728', 'Okay that\u2019s actually great'];
 const EMOJIS = ['\ud83d\ude00', '\ud83d\ude02', '\ud83d\ude0d', '\ud83d\udd25', '\ud83d\udc4d', '\ud83c\udf89', '\ud83d\ude2e', '\ud83d\ude22', '\u2764\ufe0f', '\ud83d\udc40', '\u2728', '\ud83d\ude4c'];
 const GROUP_COLORS = ['#6b62c9', '#b3813f', '#3f9a85', '#c25a83', '#4d84c4', '#8f6cc9'];
 
@@ -52,6 +51,30 @@ function emptyCommentState() {
     comments: [], loading: false, pending: false, error: '', nextCursor: null,
     draft: '', createPending: false, createError: '', loaded: false
   };
+}
+
+function emptyChatMessages() {
+  return { messages: [], nextCursor: null, loading: false, pending: false, error: '', loaded: false };
+}
+
+function emptyChatState() {
+  return {
+    chatsByKey: {}, chatKeys: [], chatsNextCursor: null,
+    chatsLoading: false, chatsPending: false, chatsError: '',
+    activeChatKey: null, messagesByChatKey: {}, onlineUserIDs: {}, typingByChatKey: {},
+    wsStatus: 'disconnected', wsReconnectAttempt: 0,
+    chatDraft: '', chatError: '', emojiOpen: false
+  };
+}
+
+function createClientMessageID() {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID().toLowerCase();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (character) {
+    const random = Math.floor(Math.random() * 16);
+    return (character === 'x' ? random : ((random & 3) | 8)).toString(16);
+  });
 }
 
 function decorateUser(user) {
@@ -103,17 +126,7 @@ class Component extends DCLogic {
       groupMutationPendingByID: {}, groupMutationErrorByID: {},
       inviteOpen: false, groupInviteUserID: '',
       createOpen: false, ngName: '', ngDesc: '', groupCreatePending: false, groupCreateError: '',
-      convos: [
-        { id: 'c1', kind: 'dm', uid: 'nina', unread: 2, typing: false, online: true, messages: [
-          { from: 'nina', text: 'Did you see the moodboard I posted? \ud83d\udc40', time: '09:12' },
-          { from: 'me', text: 'Yes! The serif direction is bold. I like it', time: '09:14' },
-          { from: 'nina', text: 'Okay good. I was 50/50 on it \ud83d\ude05', time: '09:15' },
-          { from: 'nina', text: 'Coffee this week? I want your take on the type scale', time: '09:15' } ] },
-        { id: 'c2', kind: 'dm', uid: 'david', unread: 0, typing: false, online: false, messages: [
-          { from: 'me', text: 'That tokens write-up is gold \ud83d\udd25', time: 'Tue' },
-          { from: 'david', text: 'Ha, thanks! Took forever to edit down', time: 'Tue' } ] }
-      ],
-      convoId: 'c1', chatDraft: '', emojiOpen: false,
+      ...emptyChatState(),
       notifs: [],
       authMode: 'login', authStatus: 'checking', authPending: false, logoutPending: false,
       authError: '', bootstrapError: '', appError: '',
@@ -135,6 +148,22 @@ class Component extends DCLogic {
     this.groupMembersGate = UserModel.createRequestGate();
     this.groupRequestsGate = UserModel.createRequestGate();
     this.groupInvitationsGate = UserModel.createRequestGate();
+    this.chatsGate = UserModel.createRequestGate();
+    this.activeChatGate = UserModel.createRequestGate();
+    this.chatHistoryGatesByKey = {};
+    this.chatAccessGatesByKey = {};
+    this.revokedChatKeys = new Set();
+    this.ws = null;
+    this.wsGeneration = 0;
+    this.wsReconnectTimer = null;
+    this.wsHasOpened = false;
+    this.pendingMessageTimers = {};
+    this.typingHeartbeatTimer = null;
+    this.typingExpiryTimers = {};
+    this.typingChatKey = null;
+    this.chatScrollAnchor = null;
+    this.scrollChatToBottom = false;
+    this.chatSendLock = false;
   }
 
   componentDidMount() {
@@ -144,8 +173,15 @@ class Component extends DCLogic {
   }
   componentDidUpdate() {
     this.applyTokens();
-    if (this.msgEl) this.msgEl.scrollTop = this.msgEl.scrollHeight;
+    if (this.chatScrollAnchor && this.msgEl && this.state.activeChatKey === this.chatScrollAnchor.key) {
+      this.msgEl.scrollTop = this.msgEl.scrollHeight - this.chatScrollAnchor.height + this.chatScrollAnchor.top;
+      this.chatScrollAnchor = null;
+    } else if (this.scrollChatToBottom && this.msgEl) {
+      this.msgEl.scrollTop = this.msgEl.scrollHeight;
+      this.scrollChatToBottom = false;
+    }
   }
+  componentWillUnmount() { this.stopRealtime(); }
   applyTokens() {
     const el = document.documentElement;
     el.style.setProperty('--accent', this.props.accent || '#5661d8');
@@ -570,6 +606,7 @@ class Component extends DCLogic {
 
   loadCurrentUser = async () => {
     const authGeneration = this.authGate.begin();
+    this.stopRealtime();
     this.setState({ authStatus: 'checking', bootstrapError: '', appError: '' });
     try {
       const user = await AuthAPI.me();
@@ -580,7 +617,7 @@ class Component extends DCLogic {
         apiUsersByID,
         myPrivacy: user.is_private === true ? 'private' : 'public',
         profilePrivacyPending: false, profilePrivacyError: ''
-      });
+      }, () => this.startAuthenticatedRealtime(authGeneration));
       this.loadFeed(true);
       this.loadPostFollowers();
       this.loadDirectory();
@@ -646,7 +683,7 @@ class Component extends DCLogic {
       };
       if (s.authMode === 'register') Object.assign(authenticatedState, emptyRegistrationForm());
       Object.assign(authenticatedState, emptyProfileEditor());
-      this.setState(authenticatedState);
+      this.setState(authenticatedState, () => this.startAuthenticatedRealtime(authGeneration));
       this.loadFeed(true);
       this.loadPostFollowers();
       this.loadDirectory();
@@ -678,6 +715,14 @@ class Component extends DCLogic {
       this.groupMembersGate.begin();
       this.groupRequestsGate.begin();
       this.groupInvitationsGate.begin();
+      this.chatsGate.begin();
+      this.activeChatGate.begin();
+      Object.keys(this.chatHistoryGatesByKey).forEach(key => this.chatHistoryGatesByKey[key].begin());
+      Object.keys(this.chatAccessGatesByKey).forEach(key => this.chatAccessGatesByKey[key].begin());
+      this.chatHistoryGatesByKey = {};
+      this.chatAccessGatesByKey = {};
+      this.revokedChatKeys.clear();
+      this.stopRealtime();
       Object.keys(this.groupGenerationsByID).forEach(key => this.groupGenerationsByID[key].begin());
       this.groupGenerationsByID = {};
       Object.keys(this.commentAccessGatesByPostID).forEach(key => this.commentAccessGatesByPostID[key].begin());
@@ -709,7 +754,7 @@ class Component extends DCLogic {
         createOpen: false, ngName: '', ngDesc: '', groupCreatePending: false, groupCreateError: '',
         composerText: '', composerFile: null, composerFileName: '', composerError: '', composerPending: false,
         privacy: 'public', privacyOpen: false
-      }, emptyRegistrationForm(), emptyProfileEditor()));
+      }, emptyChatState(), emptyRegistrationForm(), emptyProfileEditor()));
     } catch (error) {
       if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
@@ -720,7 +765,9 @@ class Component extends DCLogic {
   };
 
   go = (screen) => {
+    if (screen !== 'chat') this.stopTyping();
     this.setState({ screen, privacyOpen: false, emojiOpen: false });
+    if (screen === 'chat') this.loadChats(true);
     if (screen === 'notifications') this.loadFollowRequests();
     if (screen === 'groups') {
       this.loadGroups(true);
@@ -731,6 +778,7 @@ class Component extends DCLogic {
     if (targetUserID === 'me') targetUserID = USERS.me.apiId;
     targetUserID = Number(targetUserID);
     if (!Number.isInteger(targetUserID) || targetUserID <= 0) return;
+    this.stopTyping();
     const authGeneration = this.authGate.current();
     const generation = this.profileGate.begin();
     const isMe = targetUserID === USERS.me.apiId;
@@ -1135,6 +1183,7 @@ class Component extends DCLogic {
   openGroup = (groupID) => {
     groupID = Number(groupID);
     if (!Number.isInteger(groupID) || groupID <= 0) return;
+    this.stopTyping();
     this.groupDetailGate.begin();
     this.groupMembersGate.begin();
     this.groupRequestsGate.begin();
@@ -1317,6 +1366,8 @@ class Component extends DCLogic {
         }
       }
       if (options && options.invalidateInbox) this.loadGroupInvitationInbox(true);
+      if (options && options.purgeChat) this.purgeChat(ChatModel.chatKey('group', groupID));
+      if (options && options.refreshChats) this.loadChats(true);
       return true;
     } catch (error) {
       if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration)) return false;
@@ -1339,14 +1390,16 @@ class Component extends DCLogic {
   };
 
   acceptGroupInvitation = (groupID) => this.runGroupMutation(
-    groupID, () => AuthAPI.acceptGroupInvitation(groupID), { invalidateInbox: true }
+    groupID, () => AuthAPI.acceptGroupInvitation(groupID), { invalidateInbox: true, refreshChats: true }
   );
 
   declineGroupInvitation = (groupID) => this.runGroupMutation(
     groupID, () => AuthAPI.declineGroupInvitation(groupID), { invalidateInbox: true }
   );
 
-  leaveGroup = (groupID) => this.runGroupMutation(groupID, () => AuthAPI.leaveGroup(groupID));
+  leaveGroup = (groupID) => this.runGroupMutation(
+    groupID, () => AuthAPI.leaveGroup(groupID), { purgeChat: true, refreshChats: true }
+  );
 
   acceptGroupRequest = (groupID, userID) => this.runGroupMutation(
     groupID, () => AuthAPI.acceptGroupJoinRequest(groupID, userID)
@@ -1366,6 +1419,7 @@ class Component extends DCLogic {
       const raw = await AuthAPI.createGroup(title, description);
       if (!this.authGate.isCurrent(authGeneration)) return;
       this.applyAuthoritativeGroup(raw, false);
+      this.loadChats(true);
       this.setState({
         groupCreatePending: false, groupCreateError: '', createOpen: false, ngName: '', ngDesc: ''
       });
@@ -1393,27 +1447,598 @@ class Component extends DCLogic {
     });
   };
 
-  openConvo = (id) => {
-    this.setState({ convoId: id, emojiOpen: false, convos: this.state.convos.map(c => c.id === id ? Object.assign({}, c, { unread: 0 }) : c) });
-  };
-  sendMsg = () => {
-    const text = this.state.chatDraft.trim();
-    if (!text) return;
-    const id = this.state.convoId;
-    const now = new Date();
-    const hh = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-    this.setState({
-      chatDraft: '', emojiOpen: false,
-      convos: this.state.convos.map(c => c.id === id ? Object.assign({}, c, { messages: c.messages.concat([{ from: 'me', text, time: hh }]) }) : c)
-    });
-    const convo = this.state.convos.find(c => c.id === id);
-    if (convo && convo.kind === 'dm') {
-      setTimeout(() => this.setState({ convos: this.state.convos.map(c => c.id === id ? Object.assign({}, c, { typing: true }) : c) }), 700);
-      setTimeout(() => {
-        const reply = REPLIES[Math.floor(Math.random() * REPLIES.length)];
-        this.setState({ convos: this.state.convos.map(c => c.id === id ? Object.assign({}, c, { typing: false, messages: c.messages.concat([{ from: convo.uid, text: reply, time: hh }]) }) : c) });
-      }, 2200);
+  chatHistoryGate(key) {
+    if (!this.chatHistoryGatesByKey[key]) this.chatHistoryGatesByKey[key] = UserModel.createRequestGate();
+    return this.chatHistoryGatesByKey[key];
+  }
+
+  chatAccessGate(key) {
+    if (!this.chatAccessGatesByKey[key]) this.chatAccessGatesByKey[key] = UserModel.createRequestGate();
+    return this.chatAccessGatesByKey[key];
+  }
+
+  chatMessages(key) {
+    return this.state.messagesByChatKey[key] || emptyChatMessages();
+  }
+
+  startAuthenticatedRealtime(authGeneration) {
+    if (!this.authGate.isCurrent(authGeneration) || this.state.authStatus !== 'authenticated') return;
+    this.wsHasOpened = false;
+    this.chatSendLock = false;
+    this.loadChats(true);
+    this.connectRealtime(authGeneration);
+  }
+
+  realtimeURL() {
+    if (typeof window === 'undefined' || !window.location) return '';
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return protocol + '//' + window.location.host + '/ws';
+  }
+
+  connectRealtime(authGeneration = this.authGate.current()) {
+    if (!this.authGate.isCurrent(authGeneration) || this.state.authStatus !== 'authenticated') return;
+    if (this.ws && (this.ws.readyState === 0 || this.ws.readyState === 1)) return;
+    if (typeof WebSocket !== 'function') {
+      this.setState({ wsStatus: 'disconnected', chatError: 'Realtime is unavailable in this browser.' });
+      return;
     }
+    if (this.wsReconnectTimer) {
+      clearTimeout(this.wsReconnectTimer);
+      this.wsReconnectTimer = null;
+    }
+    const url = this.realtimeURL();
+    if (!url) return;
+    const generation = ++this.wsGeneration;
+    const socket = new WebSocket(url);
+    this.ws = socket;
+    this.setState({ wsStatus: 'connecting' });
+    socket.onopen = () => {
+      if (!this.authGate.isCurrent(authGeneration) || generation !== this.wsGeneration || this.ws !== socket) {
+        socket.close();
+        return;
+      }
+      const reconnect = this.wsHasOpened;
+      this.wsHasOpened = true;
+      this.setState({ wsStatus: 'connected', wsReconnectAttempt: 0, chatError: '' }, () => {
+        if (!reconnect) return;
+        this.loadChats(true);
+        if (this.state.activeChatKey) this.loadChatHistory(this.state.activeChatKey, true);
+      });
+    };
+    socket.onmessage = event => {
+      if (!this.authGate.isCurrent(authGeneration) || generation !== this.wsGeneration || this.ws !== socket) return;
+      this.handleRealtimeEvent(event && event.data);
+    };
+    socket.onclose = () => {
+      if (!this.authGate.isCurrent(authGeneration) || generation !== this.wsGeneration || this.ws !== socket) return;
+      this.ws = null;
+      this.stopTyping(false);
+      this.setState({ wsStatus: 'reconnecting' }, () => this.scheduleRealtimeReconnect(authGeneration));
+    };
+    socket.onerror = () => {};
+  }
+
+  scheduleRealtimeReconnect(authGeneration) {
+    if (this.wsReconnectTimer || !this.authGate.isCurrent(authGeneration) || this.state.authStatus !== 'authenticated') return;
+    const attempt = Math.max(0, Number(this.state.wsReconnectAttempt) || 0);
+    const base = Math.min(15000, 500 * Math.pow(2, attempt));
+    const delay = Math.round(base * (0.75 + Math.random() * 0.5));
+    this.setState({ wsReconnectAttempt: attempt + 1 });
+    this.wsReconnectTimer = setTimeout(() => {
+      this.wsReconnectTimer = null;
+      this.connectRealtime(authGeneration);
+    }, delay);
+  }
+
+  stopRealtime(updateState = true) {
+    this.stopTyping(false);
+    this.wsGeneration += 1;
+    if (this.wsReconnectTimer) {
+      clearTimeout(this.wsReconnectTimer);
+      this.wsReconnectTimer = null;
+    }
+    const socket = this.ws;
+    this.ws = null;
+    if (socket && typeof socket.close === 'function') {
+      try { socket.close(); } catch (ignore) {}
+    }
+    Object.keys(this.pendingMessageTimers).forEach(id => clearTimeout(this.pendingMessageTimers[id]));
+    this.pendingMessageTimers = {};
+    Object.keys(this.typingExpiryTimers).forEach(id => clearTimeout(this.typingExpiryTimers[id]));
+    this.typingExpiryTimers = {};
+    this.wsHasOpened = false;
+    if (updateState && this.state) {
+      this.setState({ wsStatus: 'disconnected', wsReconnectAttempt: 0, onlineUserIDs: {}, typingByChatKey: {} });
+    }
+  }
+
+  loadChats = async (reset = true) => {
+    const authGeneration = this.authGate.current();
+    const generation = reset ? this.chatsGate.begin() : this.chatsGate.current();
+    if (!reset && this.state.chatsPending) return;
+    const cursor = reset ? null : this.state.chatsNextCursor;
+    if (!reset && !cursor) return;
+    this.setState({ chatsPending: true, chatsLoading: !!reset, chatsError: '' });
+    try {
+      const page = await AuthAPI.chats(cursor, 20);
+      if (!this.authGate.isCurrent(authGeneration) || !this.chatsGate.isCurrent(generation)) return;
+      const rawChats = page.chats || [];
+      const rawUsers = [];
+      const rawGroups = [];
+      rawChats.forEach(chat => {
+        if (chat.user) rawUsers.push(chat.user);
+        if (chat.group) {
+          rawGroups.push(chat.group);
+          if (chat.group.owner) rawUsers.push(chat.group.owner);
+        }
+        if (chat.last_message && chat.last_message.sender) rawUsers.push(chat.last_message.sender);
+      });
+      const normalized = rawChats.map(ChatModel.normalizeChatSummary);
+      normalized.forEach(chat => {
+        if (chat.kind === 'group') this.revokedChatKeys.delete(chat.key);
+      });
+      normalized.forEach(chat => {
+        if (chat.lastMessage) this.settlePendingMessage(chat.lastMessage.clientMessageID);
+      });
+      const apiUsersByID = this.mergeAPIUsers(rawUsers);
+      this.setState(current => {
+        const chatsByKey = ChatModel.mergeChatSummaries(current.chatsByKey, normalized);
+        const activeChatKey = current.activeChatKey || ChatModel.sortedChatKeys(chatsByKey)[0] || null;
+        return {
+          apiUsersByID,
+          apiGroupsByID: this.mergeGroupResponses(rawGroups, current.apiGroupsByID),
+          chatsByKey,
+          chatKeys: ChatModel.sortedChatKeys(chatsByKey),
+          activeChatKey,
+          chatsNextCursor: page.next_cursor || null,
+          chatsPending: false, chatsLoading: false, chatsError: ''
+        };
+      }, () => {
+        if (this.state.activeChatKey && (reset || !this.chatMessages(this.state.activeChatKey).loaded)) {
+          this.loadChatHistory(this.state.activeChatKey, true);
+        }
+      });
+    } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration) || !this.chatsGate.isCurrent(generation)) return;
+      this.setState({
+        chatsPending: false, chatsLoading: false,
+        chatsError: requestErrorMessage(error, 'Could not load chats. Please try again.')
+      });
+    }
+  };
+
+  loadChatHistory = async (key, reset = true) => {
+    const chat = ChatModel.parseChatKey(key);
+    if (!chat) return;
+    const authGeneration = this.authGate.current();
+    const accessGate = this.chatAccessGate(key);
+    const accessGeneration = accessGate.current();
+    const historyGate = this.chatHistoryGate(key);
+    const historyGeneration = reset ? historyGate.begin() : historyGate.current();
+    const previous = this.chatMessages(key);
+    if (!reset && previous.pending) return;
+    const cursor = reset ? null : previous.nextCursor;
+    if (!reset && !cursor) return;
+    if (!reset && this.msgEl && this.state.activeChatKey === key) {
+      this.chatScrollAnchor = { key, height: this.msgEl.scrollHeight, top: this.msgEl.scrollTop };
+    }
+    this.setState(current => {
+      const messagesByChatKey = Object.assign({}, current.messagesByChatKey);
+      messagesByChatKey[key] = Object.assign({}, emptyChatMessages(), messagesByChatKey[key] || {}, {
+        loading: !!reset, pending: true, error: ''
+      });
+      return { messagesByChatKey };
+    });
+    try {
+      const page = chat.kind === 'direct'
+        ? await AuthAPI.directMessages(chat.target_id, cursor, 20)
+        : await AuthAPI.groupMessages(chat.target_id, cursor, 20);
+      if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+          !historyGate.isCurrent(historyGeneration)) return;
+      const rawMessages = page.messages || [];
+      const normalized = rawMessages.map(ChatModel.normalizeMessage);
+      normalized.forEach(message => this.settlePendingMessage(message.clientMessageID));
+      const apiUsersByID = this.mergeAPIUsers(rawMessages.map(message => message.sender));
+      if (reset && this.state.activeChatKey === key) this.scrollChatToBottom = true;
+      this.setState(current => {
+        const messagesByChatKey = Object.assign({}, current.messagesByChatKey);
+        const currentEntry = Object.assign({}, emptyChatMessages(), messagesByChatKey[key] || {});
+        messagesByChatKey[key] = Object.assign({}, currentEntry, {
+          messages: ChatModel.mergeMessages(currentEntry.messages, normalized),
+          nextCursor: page.next_cursor || null,
+          loading: false, pending: false, error: '', loaded: true
+        });
+        return { apiUsersByID, messagesByChatKey };
+      });
+    } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+          !historyGate.isCurrent(historyGeneration)) return;
+      if ((error && (error.status === 403 || error.status === 404)) && chat.kind === 'group') {
+        this.purgeChat(key);
+        return;
+      }
+      this.setState(current => {
+        const messagesByChatKey = Object.assign({}, current.messagesByChatKey);
+        messagesByChatKey[key] = Object.assign({}, emptyChatMessages(), messagesByChatKey[key] || {}, {
+          loading: false, pending: false, loaded: true,
+          error: error && error.status === 403
+            ? 'You cannot access this conversation.'
+            : requestErrorMessage(error, 'Could not load messages. Please try again.')
+        });
+        return { messagesByChatKey };
+      });
+    }
+  };
+
+  openChat = key => {
+    if (!ChatModel.parseChatKey(key) || !this.state.chatsByKey[key]) return;
+    this.stopTyping();
+    this.activeChatGate.begin();
+    this.scrollChatToBottom = true;
+    this.setState({
+      screen: 'chat', activeChatKey: key, emojiOpen: false, chatDraft: '', chatError: ''
+    }, () => {
+      const history = this.chatMessages(key);
+      if (!history.loaded) this.loadChatHistory(key, true);
+    });
+  };
+
+  openDirectChat = userID => {
+    userID = Number(userID);
+    if (!Number.isInteger(userID) || userID <= 0 || userID === Number(USERS.me.apiId)) return;
+    const key = ChatModel.chatKey('direct', userID);
+    const user = this.apiUser(userID);
+    this.setState(current => {
+      const chatsByKey = Object.assign({}, current.chatsByKey);
+      if (!chatsByKey[key]) {
+        chatsByKey[key] = {
+          key, kind: 'direct', targetID: userID, userID, groupID: null,
+          lastMessage: null, activityAt: new Date().toISOString(), transient: true
+        };
+      }
+      return { chatsByKey, chatKeys: ChatModel.sortedChatKeys(chatsByKey) };
+    }, () => this.openChat(key));
+  };
+
+  openGroupChat = groupID => {
+    groupID = Number(groupID);
+    const group = this.state.apiGroupsByID[String(groupID)];
+    if (!group || (group.state !== 'owner' && group.state !== 'member')) return;
+    const key = ChatModel.chatKey('group', groupID);
+    this.revokedChatKeys.delete(key);
+    this.setState(current => {
+      const chatsByKey = Object.assign({}, current.chatsByKey);
+      if (!chatsByKey[key]) {
+        chatsByKey[key] = {
+          key, kind: 'group', targetID: groupID, userID: null, groupID,
+          lastMessage: null, activityAt: new Date().toISOString(), transient: true
+        };
+      }
+      return { chatsByKey, chatKeys: ChatModel.sortedChatKeys(chatsByKey) };
+    }, () => this.openChat(key));
+  };
+
+  purgeChat(key) {
+    if (!ChatModel.parseChatKey(key)) return;
+    this.revokedChatKeys.add(key);
+    this.chatAccessGate(key).begin();
+    this.chatHistoryGate(key).begin();
+    if (this.typingChatKey === key) this.stopTyping();
+    const history = this.chatMessages(key);
+    history.messages.forEach(message => this.settlePendingMessage(message.clientMessageID));
+    this.setState(current => {
+      const chatsByKey = Object.assign({}, current.chatsByKey);
+      const messagesByChatKey = Object.assign({}, current.messagesByChatKey);
+      const typingByChatKey = Object.assign({}, current.typingByChatKey);
+      delete chatsByKey[key];
+      delete messagesByChatKey[key];
+      delete typingByChatKey[key];
+      const chatKeys = ChatModel.sortedChatKeys(chatsByKey);
+      return {
+        chatsByKey, messagesByChatKey, typingByChatKey, chatKeys,
+        activeChatKey: current.activeChatKey === key ? (chatKeys[0] || null) : current.activeChatKey
+      };
+    });
+  }
+
+  handleRealtimeEvent(raw) {
+    let event;
+    try { event = JSON.parse(String(raw || '')); } catch (ignore) { return; }
+    if (!event || typeof event.type !== 'string') return;
+    if (event.type === 'presence:init') {
+      const onlineUserIDs = {};
+      (event.online_user_ids || []).forEach(id => {
+        id = Number(id);
+        if (Number.isInteger(id) && id > 0) onlineUserIDs[String(id)] = true;
+      });
+      this.setState({ onlineUserIDs });
+      return;
+    }
+    if (event.type === 'presence:update') {
+      const userID = Number(event.user_id);
+      if (!Number.isInteger(userID) || userID <= 0) return;
+      this.setState(current => {
+        const onlineUserIDs = Object.assign({}, current.onlineUserIDs);
+        if (event.online === true) onlineUserIDs[String(userID)] = true;
+        else delete onlineUserIDs[String(userID)];
+        return { onlineUserIDs };
+      });
+      return;
+    }
+    if (event.type === 'presence:remove') {
+      const userID = Number(event.user_id);
+      this.setState(current => {
+        const onlineUserIDs = Object.assign({}, current.onlineUserIDs);
+        delete onlineUserIDs[String(userID)];
+        return { onlineUserIDs };
+      });
+      return;
+    }
+    if (event.type === 'typing:update') {
+      this.handleTypingUpdate(event);
+      return;
+    }
+    if (event.type === 'chat:message' && event.message) {
+      this.handleRealtimeMessage(event.message);
+      return;
+    }
+    if (event.type === 'chat:error') this.handleRealtimeError(event);
+  }
+
+  handleRealtimeMessage(rawMessage) {
+    let message;
+    try { message = ChatModel.normalizeMessage(rawMessage); } catch (ignore) { return; }
+    const key = message.chatKey;
+    if (this.revokedChatKeys.has(key)) return;
+    const wasKnown = !!this.state.chatsByKey[key];
+    this.settlePendingMessage(message.clientMessageID);
+    let apiUsersByID = this.state.apiUsersByID;
+    if (!apiUsersByID[String(message.senderID)] && message.senderID !== Number(USERS.me.apiId)) {
+      apiUsersByID = this.mergeAPIUsers([{
+        id: message.senderID, first_name: message.senderName, last_name: '',
+        avatar_url: message.senderAvatarURL || '/static/avatars/neutral.svg', is_private: false
+      }]);
+    }
+    if (this.state.activeChatKey === key) this.scrollChatToBottom = true;
+    this.setState(current => {
+      const messagesByChatKey = Object.assign({}, current.messagesByChatKey);
+      const history = Object.assign({}, emptyChatMessages(), messagesByChatKey[key] || {});
+      messagesByChatKey[key] = Object.assign({}, history, {
+        messages: ChatModel.mergeMessages(history.messages, [message])
+      });
+      const chatsByKey = Object.assign({}, current.chatsByKey);
+      const existing = chatsByKey[key];
+      chatsByKey[key] = Object.assign({}, existing || {
+        key, kind: message.chat.kind, targetID: message.chat.target_id,
+        userID: message.chat.kind === 'direct' ? message.chat.target_id : null,
+        groupID: message.chat.kind === 'group' ? message.chat.target_id : null,
+        transient: true
+      }, {
+        lastMessage: message, activityAt: message.createdAt
+      });
+      return {
+        apiUsersByID, messagesByChatKey, chatsByKey,
+        chatKeys: ChatModel.sortedChatKeys(chatsByKey), chatError: ''
+      };
+    }, () => {
+      if (!wasKnown) this.loadChats(true);
+    });
+  }
+
+  handleRealtimeError(event) {
+    const clientMessageID = String(event.client_message_id || '').trim().toLowerCase();
+    const messageText = String(event.message || 'Could not send message.');
+    if (!clientMessageID) {
+      this.setState({ chatError: messageText });
+      return;
+    }
+    this.settlePendingMessage(clientMessageID);
+    this.setState(current => {
+      const messagesByChatKey = Object.assign({}, current.messagesByChatKey);
+      Object.keys(messagesByChatKey).forEach(key => {
+        const history = Object.assign({}, messagesByChatKey[key]);
+        let changed = false;
+        history.messages = (history.messages || []).map(message => {
+          if (message.clientMessageID !== clientMessageID) return message;
+          changed = true;
+          return Object.assign({}, message, { pending: false, failed: true, error: messageText });
+        });
+        if (changed) messagesByChatKey[key] = history;
+      });
+      return { messagesByChatKey, chatError: messageText };
+    });
+  }
+
+  handleTypingUpdate(event) {
+    const userID = Number(event.user && event.user.id);
+    let key;
+    try { key = ChatModel.chatKey(event.chat && event.chat.kind, event.chat && event.chat.target_id); } catch (ignore) { return; }
+    if (!Number.isInteger(userID) || userID <= 0 || userID === Number(USERS.me.apiId)) return;
+    const timerKey = key + ':' + userID;
+    if (this.typingExpiryTimers[timerKey]) {
+      clearTimeout(this.typingExpiryTimers[timerKey]);
+      delete this.typingExpiryTimers[timerKey];
+    }
+    this.setState(current => {
+      const typingByChatKey = Object.assign({}, current.typingByChatKey);
+      const users = Object.assign({}, typingByChatKey[key] || {});
+      if (event.typing === true) {
+        users[String(userID)] = {
+          id: userID, name: String(event.user.display_name || ('User ' + userID))
+        };
+      } else {
+        delete users[String(userID)];
+      }
+      if (Object.keys(users).length) typingByChatKey[key] = users;
+      else delete typingByChatKey[key];
+      return { typingByChatKey };
+    });
+    if (event.typing === true) {
+      this.typingExpiryTimers[timerKey] = setTimeout(() => {
+        delete this.typingExpiryTimers[timerKey];
+        this.handleTypingUpdate({
+          chat: event.chat, user: event.user, typing: false
+        });
+      }, 6000);
+    }
+  }
+
+  sendTypingEvent(type, key) {
+    const chat = ChatModel.parseChatKey(key);
+    if (!chat || !this.ws || this.ws.readyState !== 1) return false;
+    try {
+      this.ws.send(JSON.stringify({ type, chat: { kind: chat.kind, target_id: chat.target_id } }));
+      return true;
+    } catch (ignore) {
+      return false;
+    }
+  }
+
+  startTyping(key) {
+    if (!key || this.state.wsStatus !== 'connected') return;
+    if (this.typingChatKey && this.typingChatKey !== key) this.stopTyping();
+    if (this.typingChatKey === key) return;
+    if (!this.sendTypingEvent('typing:start', key)) return;
+    this.typingChatKey = key;
+    this.typingHeartbeatTimer = setInterval(() => {
+      if (!this.typingChatKey || !this.state.chatDraft.trim()) {
+        this.stopTyping();
+        return;
+      }
+      this.sendTypingEvent('typing:heartbeat', this.typingChatKey);
+    }, 2000);
+  }
+
+  stopTyping(sendEvent = true) {
+    const key = this.typingChatKey;
+    this.typingChatKey = null;
+    if (this.typingHeartbeatTimer) {
+      clearInterval(this.typingHeartbeatTimer);
+      this.typingHeartbeatTimer = null;
+    }
+    if (sendEvent && key) this.sendTypingEvent('typing:stop', key);
+  }
+
+  onChatDraft = value => {
+    this.setState({ chatDraft: value, chatError: '' }, () => {
+      if (this.state.chatDraft.trim() && this.state.activeChatKey) this.startTyping(this.state.activeChatKey);
+      else this.stopTyping();
+    });
+  };
+
+  settlePendingMessage(clientMessageID) {
+    clientMessageID = String(clientMessageID || '').toLowerCase();
+    if (this.pendingMessageTimers[clientMessageID]) {
+      clearTimeout(this.pendingMessageTimers[clientMessageID]);
+      delete this.pendingMessageTimers[clientMessageID];
+    }
+  }
+
+  armPendingMessageTimeout(clientMessageID, key) {
+    this.settlePendingMessage(clientMessageID);
+    const authGeneration = this.authGate.current();
+    const accessGeneration = this.chatAccessGate(key).current();
+    this.pendingMessageTimers[clientMessageID] = setTimeout(() => {
+      delete this.pendingMessageTimers[clientMessageID];
+      if (!this.authGate.isCurrent(authGeneration) || !this.chatAccessGate(key).isCurrent(accessGeneration)) return;
+      this.setState(current => {
+        const messagesByChatKey = Object.assign({}, current.messagesByChatKey);
+        const history = Object.assign({}, emptyChatMessages(), messagesByChatKey[key] || {});
+        history.messages = history.messages.map(message => message.clientMessageID === clientMessageID && message.pending
+          ? Object.assign({}, message, {
+            pending: false, failed: true,
+            error: 'No response from server. Retry with the same message ID.'
+          })
+          : message);
+        messagesByChatKey[key] = history;
+        return { messagesByChatKey };
+      });
+    }, 15000);
+  }
+
+  sendPendingMessage(
+    message,
+    authGeneration = this.authGate.current(),
+    accessGeneration = message && message.chatKey ? this.chatAccessGate(message.chatKey).current() : -1
+  ) {
+    if (!message || !message.clientMessageID || !message.chat) return false;
+    if (!this.authGate.isCurrent(authGeneration) ||
+        !this.chatAccessGate(message.chatKey).isCurrent(accessGeneration) ||
+        this.state.authStatus !== 'authenticated') return false;
+    if (!this.ws || this.ws.readyState !== 1 || this.state.wsStatus !== 'connected') {
+      this.handleRealtimeError({
+        client_message_id: message.clientMessageID,
+        message: 'Realtime is disconnected. Reconnect and retry.'
+      });
+      return false;
+    }
+    this.setState(current => {
+      const messagesByChatKey = Object.assign({}, current.messagesByChatKey);
+      const history = Object.assign({}, emptyChatMessages(), messagesByChatKey[message.chatKey] || {});
+      history.messages = history.messages.map(item => item.clientMessageID === message.clientMessageID
+        ? Object.assign({}, item, { pending: true, failed: false, error: '' })
+        : item);
+      messagesByChatKey[message.chatKey] = history;
+      return { messagesByChatKey, chatError: '' };
+    });
+    try {
+      this.ws.send(JSON.stringify({
+        type: 'chat:send',
+        client_message_id: message.clientMessageID,
+        chat: { kind: message.chat.kind, target_id: message.chat.target_id },
+        text: message.body
+      }));
+      this.armPendingMessageTimeout(message.clientMessageID, message.chatKey);
+      return true;
+    } catch (error) {
+      this.handleRealtimeError({
+        client_message_id: message.clientMessageID,
+        message: 'Could not send message. Please retry.'
+      });
+      return false;
+    }
+  }
+
+  sendMsg = () => {
+    if (this.chatSendLock) return;
+    const key = this.state.activeChatKey;
+    const chat = ChatModel.parseChatKey(key);
+    const body = this.state.chatDraft.trim();
+    if (!chat || !body) return;
+    if (Array.from(body).length > 2000) {
+      this.setState({ chatError: 'Messages are limited to 2000 characters.' });
+      return;
+    }
+    const authGeneration = this.authGate.current();
+    const accessGeneration = this.chatAccessGate(key).current();
+    this.chatSendLock = true;
+    const message = ChatModel.pendingMessage(
+      createClientMessageID(), chat, USERS.me.apiId, body, new Date().toISOString()
+    );
+    this.stopTyping();
+    this.scrollChatToBottom = true;
+    this.setState(current => {
+      const messagesByChatKey = Object.assign({}, current.messagesByChatKey);
+      const history = Object.assign({}, emptyChatMessages(), messagesByChatKey[key] || {});
+      history.messages = ChatModel.mergeMessages(history.messages, [message]);
+      messagesByChatKey[key] = history;
+      return { messagesByChatKey, chatDraft: '', emojiOpen: false, chatError: '' };
+    }, () => {
+      this.chatSendLock = false;
+      this.sendPendingMessage(message, authGeneration, accessGeneration);
+    });
+  };
+
+  retryMessage = clientMessageID => {
+    let found = null;
+    Object.keys(this.state.messagesByChatKey).some(key => {
+      found = (this.state.messagesByChatKey[key].messages || []).find(message => (
+        message.clientMessageID === clientMessageID
+      ));
+      return !!found;
+    });
+    if (!found || found.pending || !found.failed) return;
+    this.sendPendingMessage(found);
   };
 
   acceptFollowRequest = async (requestID) => {
@@ -1560,7 +2185,7 @@ class Component extends DCLogic {
     const s = this.state;
     const me = USERS.me;
     const notifUnread = s.notifs.filter(n => !n.read).length + s.followRequests.length;
-    const chatUnread = s.convos.reduce((a, c) => a + c.unread, 0);
+    const chatUnread = 0;
 
     const navDefs = [
       { k: 'feed', label: 'Home', icon: IC.home, badge: 0 },
@@ -1626,6 +2251,7 @@ class Component extends DCLogic {
         btnLabel: b.label, btnBg: b.bg, btnColor: b.color, btnBd: b.bd,
         btnDisabled: b.disabled,
         onBtn: () => this.toggleFollow(userID),
+        message: () => this.openDirectChat(userID),
         goProfile: () => this.openProfile(userID)
       };
     };
@@ -1686,6 +2312,7 @@ class Component extends DCLogic {
       id: Number(s.groupId) || 0, name: '', desc: '', members: 0, state: 'none', ownerID: 0, color: GROUP_COLORS[0]
     };
     const gIsOwner = g.state === 'owner';
+    const gCanChat = g.state === 'owner' || g.state === 'member';
     const gMutationPending = !!s.groupMutationPendingByID[String(g.id)];
     const gMutationError = s.groupMutationErrorByID[String(g.id)] || '';
     const gTabs = [
@@ -1732,37 +2359,85 @@ class Component extends DCLogic {
     });
 
     // chat
-    const convoMeta = (c) => {
-      if (c.kind === 'dm') { const u = USERS[c.uid]; return { title: u.name, initials: u.initials, color: u.color, sub: c.online ? 'Online now' : 'Active recently' }; }
-      return { title: 'Group chat', initials: 'GC', color: GROUP_COLORS[0], sub: 'Not implemented' };
+    const chatMeta = chat => {
+      if (!chat) {
+        return {
+          title: 'Select a conversation', initials: '…', color: 'var(--text3)', sub: '',
+          avatarUrl: '', hasAvatar: false, noAvatar: true, online: false
+        };
+      }
+      if (chat.kind === 'direct') {
+        const user = this.apiUser(chat.userID || chat.targetID);
+        const online = !!s.onlineUserIDs[String(user.apiId)];
+        return {
+          title: user.name, initials: user.initials, color: user.color,
+          sub: online ? 'Online now' : 'Offline', online,
+          avatarUrl: user.avatarUrl, hasAvatar: user.hasAvatar, noAvatar: user.noAvatar
+        };
+      }
+      const group = s.apiGroupsByID[String(chat.groupID || chat.targetID)] || {
+        name: 'Group ' + chat.targetID, members: 0,
+        color: GROUP_COLORS[Math.abs(chat.targetID) % GROUP_COLORS.length]
+      };
+      return {
+        title: group.name, initials: String(group.name || 'G').slice(0, 2).toUpperCase(),
+        color: group.color, sub: num(group.members || 0) + ' members', online: false,
+        avatarUrl: '', hasAvatar: false, noAvatar: true
+      };
     };
-    const convos = s.convos.map(c => {
-      const m = convoMeta(c);
-      const last = c.messages[c.messages.length - 1];
+    const convos = s.chatKeys.map(key => {
+      const chat = s.chatsByKey[key];
+      const meta = chatMeta(chat);
+      const last = chat.lastMessage;
       return {
-        title: m.title, initials: m.initials, color: m.color,
-        preview: (last.from === 'me' ? 'You: ' : '') + last.text,
-        previewColor: c.unread > 0 ? 'var(--text)' : 'var(--text3)',
-        previewW: c.unread > 0 ? '700' : '500',
-        time: last.time,
-        online: !!c.online,
-        hasUnread: c.unread > 0, unread: num(c.unread),
-        bg: c.id === s.convoId ? 'var(--soft)' : 'transparent',
-        open: () => this.openConvo(c.id)
+        title: meta.title, initials: meta.initials, color: meta.color,
+        avatarUrl: meta.avatarUrl, hasAvatar: meta.hasAvatar, noAvatar: meta.noAvatar,
+        preview: last
+          ? (Number(last.senderID) === Number(me.apiId) ? 'You: ' : '') + last.body
+          : 'No messages yet',
+        previewColor: 'var(--text3)', previewW: '500',
+        time: last ? this.formatPostTime(last.createdAt) : '',
+        online: meta.online,
+        bg: key === s.activeChatKey ? 'var(--soft)' : 'transparent',
+        open: () => this.openChat(key)
       };
     });
-    const active = s.convos.find(c => c.id === s.convoId) || s.convos[0];
-    const am = convoMeta(active);
-    const messages = active.messages.map((msg, i) => {
-      const prev = active.messages[i - 1];
+    const active = s.activeChatKey ? s.chatsByKey[s.activeChatKey] : null;
+    const am = chatMeta(active);
+    const activeHistory = s.activeChatKey ? this.chatMessages(s.activeChatKey) : emptyChatMessages();
+    const activeMessages = activeHistory.messages || [];
+    const messages = activeMessages.map((msg, i) => {
+      const prev = activeMessages[i - 1];
+      let user = this.apiUser(msg.senderID);
+      if ((!user || user.name.indexOf('User ') === 0) && msg.senderName) {
+        user = decorateUser({
+          id: String(msg.senderID), apiId: msg.senderID, name: msg.senderName,
+          initials: msg.senderName.split(/\s+/).map(part => part.charAt(0)).join('').slice(0, 2).toUpperCase() || '?',
+          color: GROUP_COLORS[Math.abs(msg.senderID) % GROUP_COLORS.length],
+          avatarUrl: msg.senderAvatarURL || '/static/avatars/neutral.svg'
+        });
+      }
       return {
-        text: msg.text, time: msg.time,
-        mine: msg.from === 'me', theirs: msg.from !== 'me',
-        user: USERS[msg.from] || USERS.me,
-        showName: active.kind === 'group' && msg.from !== 'me' && (!prev || prev.from !== msg.from)
+        text: msg.body, time: this.formatPostTime(msg.createdAt),
+        mine: Number(msg.senderID) === Number(me.apiId),
+        theirs: Number(msg.senderID) !== Number(me.apiId),
+        user,
+        showName: active && active.kind === 'group' && Number(msg.senderID) !== Number(me.apiId) &&
+          (!prev || Number(prev.senderID) !== Number(msg.senderID)),
+        pending: !!msg.pending, failed: !!msg.failed, error: msg.error || '',
+        hasStatus: !!msg.pending || !!msg.failed,
+        statusLabel: msg.failed ? 'Failed' : (msg.pending ? 'Sending…' : ''),
+        retry: () => this.retryMessage(msg.clientMessageID)
       };
     });
-    const emojis = EMOJIS.map(ch => ({ ch, add: () => this.setState({ chatDraft: s.chatDraft + ch }) }));
+    const activeTypingUsers = Object.values(s.typingByChatKey[s.activeChatKey] || {});
+    const typingLabel = activeTypingUsers.length > 1
+      ? activeTypingUsers.map(user => user.name).join(', ') + ' are typing'
+      : (activeTypingUsers[0] ? activeTypingUsers[0].name + ' is typing' : '');
+    const emojis = EMOJIS.map(ch => ({
+      ch,
+      add: () => this.onChatDraft(this.state.chatDraft + ch)
+    }));
 
     // notifications
     const followRequestItems = s.followRequests.map((request, i) => {
@@ -1787,7 +2462,10 @@ class Component extends DCLogic {
         return {
           user, isPrivate: user.private,
           btnLabel: b.label, btnBg: b.bg, btnColor: b.color, btnBd: b.bd, btnDisabled: b.disabled,
-          onBtn: () => this.toggleFollow(user.apiId), goProfile: () => this.openProfile(user.apiId)
+          onBtn: () => this.toggleFollow(user.apiId),
+          canMessage: user.relationship && (user.relationship.status === 'accepted' || user.relationship.follows_me),
+          message: () => this.openDirectChat(user.apiId),
+          goProfile: () => this.openProfile(user.apiId)
         };
       });
     const railEvents = [];
@@ -1904,7 +2582,7 @@ class Component extends DCLogic {
       followHasError: !!s.followErrorByID[String(s.profileId)],
       followError: s.followErrorByID[String(s.profileId)] || '',
       onFollow: () => this.toggleFollow(s.profileId),
-      msgProfile: () => this.setState({ appError: 'Messages are not connected to backend users yet.' }),
+      msgProfile: () => this.openDirectChat(s.profileId),
       privacySeg,
       profilePrivacyHasError: pIsMe && !!s.profilePrivacyError,
       profilePrivacyError: s.profilePrivacyError,
@@ -1960,6 +2638,7 @@ class Component extends DCLogic {
       gMutationHasError: !!gMutationError, gMutationError,
       gIsNone: g.state === 'none', gIsRequested: g.state === 'requested',
       gIsInvited: g.state === 'invited', gIsMember: g.state === 'member',
+      gCanChat, gOpenChat: () => this.openGroupChat(g.id),
       gRequestJoin: () => this.requestGroupJoin(g.id),
       gAcceptInvitation: () => this.acceptGroupInvitation(g.id),
       gDeclineInvitation: () => this.declineGroupInvitation(g.id),
@@ -1981,7 +2660,7 @@ class Component extends DCLogic {
       groupInvitationsHasError: !!s.groupInvitationsError, groupInvitationsError: s.groupInvitationsError,
       groupInvitationsHasMore: !!s.groupInvitationsNextCursor,
       loadMoreGroupInvitations: () => this.loadGroupInvitations(g.id, false),
-      inviteOpen: s.inviteOpen && gIsOwner,
+      inviteOpen: s.inviteOpen && gCanChat,
       toggleInvite: () => {
         const opening = !s.inviteOpen;
         this.setState({ inviteOpen: opening });
@@ -1996,11 +2675,32 @@ class Component extends DCLogic {
       // chat
       convos, messages,
       activeTitle: am.title, activeSub: am.sub, activeInitials: am.initials, activeColor: am.color,
-      typing: active.typing,
+      activeAvatarUrl: am.avatarUrl, activeHasAvatar: am.hasAvatar, activeNoAvatar: am.noAvatar,
+      chatHasActive: !!active,
+      chatHasNoActive: !active && !s.chatsLoading,
+      chatsLoading: s.chatsLoading,
+      chatsHasError: !!s.chatsError, chatsError: s.chatsError,
+      retryChats: () => this.loadChats(true),
+      chatsHasMore: !!s.chatsNextCursor,
+      loadMoreChats: () => this.loadChats(false),
+      chatsLoadMoreDisabled: s.chatsPending,
+      historyLoading: activeHistory.loading,
+      historyHasError: !!activeHistory.error, historyError: activeHistory.error,
+      retryHistory: () => s.activeChatKey && this.loadChatHistory(s.activeChatKey, true),
+      historyHasMore: !!activeHistory.nextCursor,
+      loadMoreHistory: () => s.activeChatKey && this.loadChatHistory(s.activeChatKey, false),
+      historyLoadMoreDisabled: activeHistory.pending,
+      typing: activeTypingUsers.length > 0,
+      typingLabel,
       chatDraft: s.chatDraft,
-      onChatDraft: (e) => this.setState({ chatDraft: e.target.value }),
-      onChatKey: (e) => { if (e.key === 'Enter') this.sendMsg(); },
+      onChatDraft: (e) => this.onChatDraft(e.target.value),
+      onChatBlur: () => this.stopTyping(),
+      onChatKey: (e) => { if (e.key === 'Enter') { e.preventDefault(); this.sendMsg(); } },
       sendMsg: this.sendMsg,
+      chatSendDisabled: !active || s.wsStatus !== 'connected' || !s.chatDraft.trim(),
+      chatInputDisabled: !active || s.wsStatus !== 'connected',
+      chatStatus: s.wsStatus === 'connected' ? 'Live' : (s.wsStatus === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'),
+      chatHasError: !!s.chatError, chatError: s.chatError,
       emojiOpen: s.emojiOpen,
       toggleEmoji: () => this.setState({ emojiOpen: !s.emojiOpen }),
       emojis,

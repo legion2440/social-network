@@ -45,7 +45,7 @@ func TestMigrationsRunAllTheWayDownAndBackUp(t *testing.T) {
 	if err := migrateDown(db); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
-	for _, table := range []string{"group_memberships", "groups", "post_comments", "post_selected_users", "posts", "follows", "sessions", "media", "users"} {
+	for _, table := range []string{"chat_messages", "direct_conversations", "group_memberships", "groups", "post_comments", "post_selected_users", "posts", "follows", "sessions", "media", "users"} {
 		if tableExists(t, db, table) {
 			t.Fatalf("table %s still exists after down migrations", table)
 		}
@@ -88,7 +88,7 @@ func TestOpenRejectsDisposableLegacyBootstrapDatabase(t *testing.T) {
 func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 
-	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "post_comments", "groups", "group_memberships", "schema_migrations"} {
+	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "post_comments", "groups", "group_memberships", "direct_conversations", "chat_messages", "schema_migrations"} {
 		if !tableExists(t, db, table) {
 			t.Fatalf("expected table %s", table)
 		}
@@ -146,6 +146,8 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 		{table: "groups", column: "created_at"},
 		{table: "group_memberships", column: "created_at"},
 		{table: "group_memberships", column: "updated_at"},
+		{table: "direct_conversations", column: "created_at"},
+		{table: "chat_messages", column: "created_at"},
 	} {
 		definition := tableColumns(t, db, tableAndColumn.table)[tableAndColumn.column]
 		if definition.columnType != "INTEGER" {
@@ -193,6 +195,11 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "groups", "owner_user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "group_memberships", "group_id", "groups", "id", "CASCADE")
 	assertForeignKey(t, db, "group_memberships", "user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "direct_conversations", "user_low_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "direct_conversations", "user_high_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "chat_messages", "direct_conversation_id", "direct_conversations", "id", "CASCADE")
+	assertForeignKey(t, db, "chat_messages", "group_id", "groups", "id", "CASCADE")
+	assertForeignKey(t, db, "chat_messages", "sender_user_id", "users", "id", "CASCADE")
 }
 
 func TestGroupSchemaConstraintsIndexesAndCascades(t *testing.T) {
@@ -260,6 +267,94 @@ func TestGroupSchemaConstraintsIndexesAndCascades(t *testing.T) {
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM group_memberships WHERE group_id = ?`, groupID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("group delete did not cascade memberships: count=%d err=%v", count, err)
+	}
+}
+
+func TestChatSchemaConstraintsIndexesAndCascades(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "social-network.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	insertUser := func(email string) int64 {
+		result, err := db.Exec("INSERT INTO users (email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at) VALUES (?, 'hash', 'Chat', 'User', '22-07-1992', 1, 1)", email)
+		if err != nil {
+			t.Fatalf("insert user %s: %v", email, err)
+		}
+		id, _ := result.LastInsertId()
+		return id
+	}
+	firstID := insertUser("chat-schema-first@example.com")
+	secondID := insertUser("chat-schema-second@example.com")
+	thirdID := insertUser("chat-schema-third@example.com")
+	if _, err := db.Exec("INSERT INTO direct_conversations (user_low_id, user_high_id, created_at) VALUES (?, ?, 1)", firstID, firstID); err == nil {
+		t.Fatal("expected normalized pair check")
+	}
+	conversationResult, err := db.Exec("INSERT INTO direct_conversations (user_low_id, user_high_id, created_at) VALUES (?, ?, 1)", firstID, secondID)
+	if err != nil {
+		t.Fatalf("insert direct conversation: %v", err)
+	}
+	conversationID, _ := conversationResult.LastInsertId()
+	if _, err := db.Exec("INSERT INTO direct_conversations (user_low_id, user_high_id, created_at) VALUES (?, ?, 2)", firstID, secondID); err == nil {
+		t.Fatal("expected unique direct pair")
+	}
+	groupResult, err := db.Exec("INSERT INTO groups (owner_user_id, title, description, created_at) VALUES (?, 'Chat group', 'Description', 1)", firstID)
+	if err != nil {
+		t.Fatalf("insert group: %v", err)
+	}
+	groupID, _ := groupResult.LastInsertId()
+
+	validID := "47cd9266-b43f-4a89-9338-4f9c197ff12a"
+	if _, err := db.Exec("INSERT INTO chat_messages (direct_conversation_id, sender_user_id, client_message_id, body, created_at) VALUES (?, ?, ?, 'hello', 1)", conversationID, firstID, validID); err != nil {
+		t.Fatalf("insert direct message: %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO chat_messages (sender_user_id, client_message_id, body, created_at) VALUES (?, 'missing-target', 'hello', 1)", firstID); err == nil {
+		t.Fatal("expected exactly one chat target")
+	}
+	if _, err := db.Exec("INSERT INTO chat_messages (direct_conversation_id, group_id, sender_user_id, client_message_id, body, created_at) VALUES (?, ?, ?, 'two-targets', 'hello', 1)", conversationID, groupID, firstID); err == nil {
+		t.Fatal("expected direct/group exclusivity")
+	}
+	for name, body := range map[string]string{
+		"empty":      "",
+		"whitespace": " ",
+		"untrimmed":  " message ",
+		"too long":   string(make([]byte, 2001)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := db.Exec("INSERT INTO chat_messages (group_id, sender_user_id, client_message_id, body, created_at) VALUES (?, ?, ?, ?, 1)", groupID, firstID, "invalid-"+name, body); err == nil {
+				t.Fatal("expected body constraint")
+			}
+		})
+	}
+	if _, err := db.Exec("INSERT INTO chat_messages (group_id, sender_user_id, client_message_id, body, created_at) VALUES (?, ?, ?, 'duplicate', 1)", groupID, firstID, validID); err == nil {
+		t.Fatal("expected sender/client_message_id uniqueness")
+	}
+	if _, err := db.Exec("INSERT INTO chat_messages (group_id, sender_user_id, client_message_id, body, created_at) VALUES (?, ?, ?, 'same key other sender', 1)", groupID, thirdID, validID); err != nil {
+		t.Fatalf("same client id for another sender: %v", err)
+	}
+	for _, index := range []string{
+		"idx_chat_messages_direct_created",
+		"idx_chat_messages_group_created",
+		"idx_chat_messages_sender_client",
+	} {
+		if !schemaObjectExists(t, db, "index", index) {
+			t.Fatalf("missing chat index %s", index)
+		}
+	}
+	if _, err := db.Exec("DELETE FROM direct_conversations WHERE id = ?", conversationID); err != nil {
+		t.Fatalf("delete direct conversation: %v", err)
+	}
+	var directMessages int
+	if err := db.QueryRow("SELECT COUNT(*) FROM chat_messages WHERE direct_conversation_id = ?", conversationID).Scan(&directMessages); err != nil || directMessages != 0 {
+		t.Fatalf("direct cascade count=%d err=%v", directMessages, err)
+	}
+	if _, err := db.Exec("DELETE FROM groups WHERE id = ?", groupID); err != nil {
+		t.Fatalf("delete chat group: %v", err)
+	}
+	var groupMessages int
+	if err := db.QueryRow("SELECT COUNT(*) FROM chat_messages WHERE group_id = ?", groupID).Scan(&groupMessages); err != nil || groupMessages != 0 {
+		t.Fatalf("group cascade count=%d err=%v", groupMessages, err)
 	}
 }
 

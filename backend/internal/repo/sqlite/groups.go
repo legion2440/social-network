@@ -115,6 +115,31 @@ func (r *GroupRepo) GetMembershipStatus(ctx context.Context, groupID, userID int
 	return &status, nil
 }
 
+func (r *GroupRepo) ListActiveMemberIDs(ctx context.Context, groupID int64) ([]int64, error) {
+	if groupID <= 0 {
+		return []int64{}, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT user_id
+		FROM group_memberships
+		WHERE group_id = ? AND status IN ('owner', 'member')
+		ORDER BY user_id ASC
+	`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (r *GroupRepo) UpdateMembershipStatus(
 	ctx context.Context,
 	groupID, userID int64,

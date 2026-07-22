@@ -17,8 +17,9 @@ func (h *Handler) authMiddleware(next http.Handler) http.Handler {
 			switch {
 			case sessionErr == nil:
 				r = r.WithContext(withCurrentUser(r.Context(), CurrentUser{
-					ID:           session.UserID,
-					SessionToken: session.Token,
+					ID:               session.UserID,
+					SessionToken:     session.Token,
+					SessionExpiresAt: session.ExpiresAt,
 				}))
 			case errors.Is(sessionErr, service.ErrUnauthorized):
 				ClearSessionCookie(w, h.cookieSecure)

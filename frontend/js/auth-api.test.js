@@ -274,3 +274,24 @@ test('follow mutations preserve exact backend errors', async () => {
     return true;
   });
 });
+
+test('chat history and list clients use cursor endpoints over same-origin HTTP', async () => {
+  const calls = [];
+  const api = createAuthAPI(async (path, options) => {
+    calls.push({ path, options });
+    return jsonResponse(200, path.startsWith('/api/chats?')
+      ? { chats: [], next_cursor: null }
+      : { messages: [], next_cursor: null });
+  });
+
+  await api.chats('chat cursor', 20);
+  await api.directMessages(7, 'dm cursor', 50);
+  await api.groupMessages(9, null, 20);
+
+  assert.deepEqual(calls.map(call => [call.path, call.options.method]), [
+    ['/api/chats?cursor=chat%20cursor&limit=20', 'GET'],
+    ['/api/chats/direct/7/messages?cursor=dm%20cursor&limit=50', 'GET'],
+    ['/api/groups/9/chat/messages?limit=20', 'GET']
+  ]);
+  assert.ok(calls.every(call => call.options.credentials === 'same-origin'));
+});

@@ -17,13 +17,16 @@ import (
 	httpserver "social-network/backend/internal/http"
 	"social-network/backend/internal/platform/clock"
 	"social-network/backend/internal/platform/id"
+	realtimews "social-network/backend/internal/realtime/ws"
 	"social-network/backend/internal/repo/sqlite"
 	"social-network/backend/internal/service"
 )
 
 type runtime struct {
-	db     *sql.DB
-	server *http.Server
+	db      *sql.DB
+	server  *http.Server
+	handler *httpserver.Handler
+	hub     *realtimews.Hub
 }
 
 func Run() error {
@@ -70,11 +73,20 @@ func runWithContext(ctx context.Context, cfg config.Config) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()
-		if err := runtime.server.Shutdown(shutdownCtx); err != nil {
+		runtime.handler.CloseAdmission()
+		if err := runtime.hub.BeginDrain(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("realtime shutdown: %w", err)
+		}
+		if err := runtime.server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 			return fmt.Errorf("http shutdown: %w", err)
 		}
 		if err := <-serverErr; err != nil {
 			return err
+		}
+		select {
+		case <-runtime.hub.Done():
+		case <-shutdownCtx.Done():
+			return fmt.Errorf("realtime shutdown: %w", shutdownCtx.Err())
 		}
 		return nil
 	}
@@ -122,6 +134,9 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 	postMedia := service.NewPostMediaDeliveryService(transactions, cfg.UploadDir)
 	comments := service.NewCommentService(transactions, appClock)
 	groups := service.NewGroupService(transactions, appClock)
+	chats := service.NewChatService(transactions, appClock)
+	hub := realtimews.NewHub(log.Default())
+	go hub.Run()
 	handler := httpserver.NewHandler(
 		db,
 		sessions,
@@ -135,14 +150,16 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		postMedia,
 		comments,
 		groups,
+		chats,
 		httpserver.NewCookieSessionTokenExtractor(config.SessionCookieName),
 		cfg.CookieSecure,
 		cfg.FrontendDir,
 		log.Default(),
 	)
+	handler.SetRealtimeHub(hub)
 
 	return &runtime{
-		db: db,
+		db: db, handler: handler, hub: hub,
 		server: &http.Server{
 			Handler:           handler.Routes(),
 			ReadTimeout:       15 * time.Second,
@@ -155,8 +172,22 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 }
 
 func (r *runtime) close() {
-	if r == nil || r.db == nil {
+	if r == nil {
 		return
 	}
-	_ = r.db.Close()
+	if r.handler != nil {
+		r.handler.CloseAdmission()
+	}
+	if r.hub != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = r.hub.BeginDrain(ctx)
+		cancel()
+		select {
+		case <-r.hub.Done():
+		case <-time.After(time.Second):
+		}
+	}
+	if r.db != nil {
+		_ = r.db.Close()
+	}
 }

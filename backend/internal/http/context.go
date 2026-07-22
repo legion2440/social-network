@@ -1,12 +1,16 @@
 package http
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type currentUserContextKey struct{}
 
 type CurrentUser struct {
-	ID           int64
-	SessionToken string
+	ID               int64
+	SessionToken     string
+	SessionExpiresAt time.Time
 }
 
 func withCurrentUser(ctx context.Context, user CurrentUser) context.Context {

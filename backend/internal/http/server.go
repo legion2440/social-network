@@ -5,8 +5,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
+	"sync/atomic"
 
 	"social-network/backend/internal/config"
+	realtimews "social-network/backend/internal/realtime/ws"
 	"social-network/backend/internal/service"
 )
 
@@ -23,6 +26,9 @@ type Handler struct {
 	postMedia    *service.PostMediaDeliveryService
 	comments     *service.CommentService
 	groups       *service.GroupService
+	chats        *service.ChatService
+	hub          *realtimews.Hub
+	admission    atomic.Bool
 	sessionToken SessionTokenExtractor
 	cookieSecure bool
 	frontend     http.Handler
@@ -42,6 +48,7 @@ func NewHandler(
 	postMedia *service.PostMediaDeliveryService,
 	comments *service.CommentService,
 	groups *service.GroupService,
+	chats *service.ChatService,
 	sessionToken SessionTokenExtractor,
 	cookieSecure bool,
 	frontendDir string,
@@ -53,7 +60,7 @@ func NewHandler(
 	if sessionToken == nil {
 		sessionToken = NewCookieSessionTokenExtractor(config.SessionCookieName)
 	}
-	return &Handler{
+	handler := &Handler{
 		db:           db,
 		sessions:     sessions,
 		media:        media,
@@ -66,10 +73,25 @@ func NewHandler(
 		postMedia:    postMedia,
 		comments:     comments,
 		groups:       groups,
+		chats:        chats,
 		sessionToken: sessionToken,
 		cookieSecure: cookieSecure,
 		frontend:     newFrontendHandler(frontendDir),
 		logger:       logger,
+	}
+	handler.admission.Store(true)
+	return handler
+}
+
+func (h *Handler) SetRealtimeHub(hub *realtimews.Hub) {
+	if h != nil {
+		h.hub = hub
+	}
+}
+
+func (h *Handler) CloseAdmission() {
+	if h != nil {
+		h.admission.Store(false)
 	}
 }
 
@@ -125,6 +147,9 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/groups/{id}/invitation", protected(h.handleGroupInvitationDecline))
 	mux.Handle("/api/groups/{id}/membership", protected(h.handleGroupMembership))
 	mux.Handle("/api/group-invitations", protected(h.handleGroupInvitationInbox))
+	mux.Handle("/api/chats", protected(h.handleChats))
+	mux.Handle("/api/chats/direct/{user_id}/messages", protected(h.handleDirectChatMessages))
+	mux.Handle("/api/groups/{id}/chat/messages", protected(h.handleGroupChatMessages))
 	mux.HandleFunc("/api/posts/", h.handleNotImplemented)
 	mux.Handle("/uploads/", protected(h.handleMediaDownload))
 	mux.Handle("/static/avatars/", http.FileServer(http.FS(avatarPlaceholderFiles)))
@@ -133,7 +158,6 @@ func (h *Handler) Routes() http.Handler {
 		"/api/auth",
 		"/api/follow",
 		"/api/events",
-		"/api/chats",
 		"/api/notifications",
 	} {
 		mux.HandleFunc(group, h.handleNotImplemented)
@@ -145,5 +169,15 @@ func (h *Handler) Routes() http.Handler {
 	})
 	mux.Handle("/", h.frontend)
 
-	return h.recoverMiddleware(mux)
+	return h.recoverMiddleware(h.admissionMiddleware(mux))
+}
+
+func (h *Handler) admissionMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !h.admission.Load() && (r.URL.Path == "/ws" || (strings.HasPrefix(r.URL.Path, "/api/") && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions)) {
+			writeError(w, http.StatusServiceUnavailable, "server is shutting down")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

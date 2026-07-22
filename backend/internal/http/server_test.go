@@ -22,6 +22,7 @@ import (
 
 	"social-network/backend/internal/config"
 	"social-network/backend/internal/domain"
+	realtimews "social-network/backend/internal/realtime/ws"
 	"social-network/backend/internal/repo/sqlite"
 	"social-network/backend/internal/service"
 
@@ -81,6 +82,7 @@ func (g *sequenceID) New() (string, error) {
 
 type testEnvironment struct {
 	db           *sql.DB
+	server       *Handler
 	handler      http.Handler
 	users        *sqlite.UserRepo
 	sessions     *service.SessionService
@@ -132,15 +134,59 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 	postMedia := service.NewPostMediaDeliveryService(transactions, uploadDir)
 	comments := service.NewCommentService(transactions, fixedClock{})
 	groups := service.NewGroupService(transactions, fixedClock{})
+	chats := service.NewChatService(transactions, fixedClock{})
+	hub := realtimews.NewHubWithNow(nil, fixedClock{}.Now)
+	go hub.Run()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = hub.BeginDrain(ctx)
+		select {
+		case <-hub.Done():
+		case <-ctx.Done():
+		}
+	})
+	handler := NewHandler(db, sessions, media, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, groups, chats, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil)
+	handler.SetRealtimeHub(hub)
 
 	return &testEnvironment{
 		db:        db,
-		handler:   NewHandler(db, sessions, media, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, groups, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil).Routes(),
+		server:    handler,
+		handler:   handler.Routes(),
 		users:     users,
 		sessions:  sessions,
 		follows:   follows,
 		posts:     posts,
 		uploadDir: uploadDir,
+	}
+}
+
+func TestClosedAdmissionRejectsMutationsAndWebSocketButKeepsReadsAvailable(t *testing.T) {
+	env := newTestEnvironment(t)
+	_, token := env.createUserAndSession(t, "shutdown-admission@example.com")
+	env.server.CloseAdmission()
+
+	for _, testCase := range []struct {
+		method string
+		path   string
+		token  string
+		want   int
+	}{
+		{method: http.MethodPost, path: "/api/auth/login", want: http.StatusServiceUnavailable},
+		{method: http.MethodGet, path: "/ws", token: token, want: http.StatusServiceUnavailable},
+		{method: http.MethodGet, path: "/api/health", want: http.StatusOK},
+		{method: http.MethodGet, path: "/api/auth/me", token: token, want: http.StatusOK},
+		{method: http.MethodGet, path: "/static/avatars/neutral.svg", want: http.StatusOK},
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(testCase.method, testCase.path, nil)
+		if testCase.token != "" {
+			addSessionCookie(request, testCase.token)
+		}
+		env.handler.ServeHTTP(recorder, request)
+		if recorder.Code != testCase.want {
+			t.Fatalf("%s %s: status=%d want=%d body=%q", testCase.method, testCase.path, recorder.Code, testCase.want, recorder.Body.String())
+		}
 	}
 }
 
@@ -281,6 +327,7 @@ func newSessionFailureHandlerWithFrontend(store *failingSessionRepo, frontendDir
 		sessions,
 		nil,
 		auth,
+		nil,
 		nil,
 		nil,
 		nil,
@@ -1514,13 +1561,13 @@ func TestAuthenticatedWebSocketUpgrade(t *testing.T) {
 	defer conn.Close()
 
 	var ready struct {
-		Type   string `json:"type"`
-		UserID int64  `json:"userId"`
+		Type          string  `json:"type"`
+		OnlineUserIDs []int64 `json:"online_user_ids"`
 	}
 	if err := conn.ReadJSON(&ready); err != nil {
 		t.Fatalf("read websocket ready message: %v", err)
 	}
-	if ready.Type != "ready" || ready.UserID != userID {
+	if ready.Type != "presence:init" || len(ready.OnlineUserIDs) != 0 || userID <= 0 {
 		t.Fatalf("unexpected ready message: %+v", ready)
 	}
 	if err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done")); err != nil {

@@ -6,9 +6,11 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"time"
 
 	"social-network/backend/internal/domain"
+	realtimews "social-network/backend/internal/realtime/ws"
 	"social-network/backend/internal/service"
 )
 
@@ -92,10 +94,21 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token, _ := h.sessionToken.Extract(r)
+	var sessionKey realtimews.SessionKey
+	if strings.TrimSpace(token) != "" {
+		sessionKey = realtimews.HashSessionToken(token)
+	}
 	if err := h.auth.Logout(r.Context(), token); err != nil {
 		h.logger.Printf("logout: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
+	}
+	if strings.TrimSpace(token) != "" && h.hub != nil {
+		if err := h.hub.RevokeSession(sessionKey); err != nil && !errors.Is(err, realtimews.ErrHubStopped) {
+			h.logger.Printf("logout realtime revoke: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
 	}
 	ClearSessionCookie(w, h.cookieSecure)
 	w.WriteHeader(http.StatusNoContent)

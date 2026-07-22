@@ -47,6 +47,7 @@ Current migrations:
 - `000007_create_posts`
 - `000008_create_post_comments`
 - `000009_create_groups`
+- `000010_create_chats`
 
 To inspect the current version with the SQLite CLI:
 
@@ -263,19 +264,69 @@ current user's invitation inbox uses `(created_at ASC, group_id ASC)`. All lists
 use opaque cursors, default to 20 items, and enforce a maximum of 50.
 
 Catalog, group detail, and member lists are available to every authenticated
-user. Join requests and sent invitations are owner-only. Invitations may target
-any existing user; follow relationships are irrelevant. Group membership does
-not expand access to private custom avatars: safe owner/member summaries emit a
-static gender placeholder whenever the viewer could not open the controlled
-avatar route under the existing profile privacy rules.
+user. Join requests and the sent-invitation list are owner-only; both owners and
+members may send an invitation. Invitations may target any existing user;
+follow relationships are irrelevant. Group membership does not expand access
+to private custom avatars: safe owner/member summaries emit a static gender
+placeholder whenever the viewer could not open the controlled avatar route
+under the existing profile privacy rules.
 
 The frontend uses these endpoints for creation, discovery, invitations, join
 requests, owner management, and leaving. Its group directory has a global
 request generation, group detail/members/requests/sent invitations use a
 per-group generation, and the invitation inbox has a separate generation.
 Successful mutations invalidate older reads and apply the returned group as the
-authoritative state. Group posts, comments, events, chat, and notifications are
-explicitly not implemented and no longer use mock group data.
+authoritative state. Group posts, comments, events, and notifications are
+explicitly not implemented and no longer use mock group data. Group chat uses
+the realtime chat implementation described below.
+
+## Chats and realtime
+
+`GET /api/chats` returns existing direct conversations and groups where the
+viewer is currently an owner or member. It does not return possible DM peers.
+Rows are ordered by activity descending, then direct chats before groups, then
+the internal entity ID descending. Groups without messages use the current membership's
+`updated_at` as activity, while a group with history uses its last message.
+
+`GET /api/chats/direct/{userID}/messages` and
+`GET /api/groups/{id}/chat/messages` return history in chronological display
+order. Direct history remains available after unfollow when a conversation
+already exists. Without an existing conversation, an eligible DM returns an
+empty page and an ineligible DM returns `403`. Group history is available only
+to current owners and members; rejoining restores the complete history. Chat
+lists and histories use opaque cursors, default to 20 rows, and allow at most
+50.
+
+Live messages use the authenticated same-origin `GET /ws` WebSocket. Client
+events are `chat:send`, `typing:start`, `typing:heartbeat`, and `typing:stop`;
+server events are `presence:init`, `presence:update`, `presence:remove`,
+`typing:update`, `chat:message`, and `chat:error`. Frames are limited to 16 KiB
+and message text is trimmed and limited to 1–2000 Unicode code points. A user
+may have up to eight active sockets. Presence and direct typing are visible
+only while an accepted follow exists in either direction. Group sends, typing,
+and history require current owner/member access.
+
+Every send carries a UUID `client_message_id`. SQLite enforces uniqueness per
+sender, so retrying the same canonical target and body returns the existing
+message without rebroadcasting it; reusing the UUID for different content
+returns a conflict. The frontend keeps an optimistic bubble for 15 seconds and
+retries with the same UUID. HTTP history, reconnect responses, and WebSocket
+responses deduplicate by server/message IDs.
+
+The Hub stores only `SHA-256(raw session token)` as its session identity. The
+raw token stays in the connection read loop and is checked against `sessions`
+inside each send/typing SQL transaction. Logout deletes the SQLite session and
+synchronously revokes that one Hub session before returning `204`; other
+browser sessions remain connected. Lease completion and revocation are ordered
+inside the Hub event loop, so a completion processed after revocation cannot
+enqueue an ack or broadcast. Current unfollow and group-leave hooks also remove
+presence/typing and suppress stale already-authorized realtime delivery.
+
+On shutdown, HTTP mutation/upgrade admission closes first, the Hub enters drain
+mode and rejects new operations, the HTTP server shuts down, and SQLite closes
+only after HTTP completion and `Hub.Done()`. Existing leases are canceled and
+must complete; a deadline forces final socket shutdown without treating an
+ordinary tab disconnect as session revocation.
 
 Supported environment variables:
 
@@ -325,18 +376,21 @@ Implemented endpoints:
 - `DELETE /api/groups/{id}/invitation`
 - `DELETE /api/groups/{id}/membership`
 - `GET /api/group-invitations`
+- `GET /api/chats` (authenticated cursor-paginated chat list)
+- `GET /api/chats/direct/{userID}/messages` (authenticated direct history)
+- `GET /api/groups/{id}/chat/messages` (authenticated owner/member history)
 - `GET /static/avatars/{male,female,neutral}.svg`
 - `GET /` and frontend assets (local development and browser smoke only)
 
 All other reserved API groups currently return JSON `501 Not Implemented`.
 
 The frontend feed, profiles, suggestions, follow controls, requests, follower
-lists, following lists, profile posts, and post comments use backend user IDs
-and live API state. Comments load lazily per opened post, paginate with the
-backend cursor, keep drafts on failures, and ignore stale responses across
-logout or access changes. Mock identities remain isolated to the
-not-yet-integrated direct-message section. Group-dependent mock posts,
-comments, events, chat, notifications, and right-rail events have been removed.
+lists, following lists, profile posts, post comments, direct chats, and group
+chats use backend IDs and live API state. Chat history paginates upward,
+reconnect reloads list/current history, optimistic sends are retryable, and
+stale responses are generation-gated across logout and access changes.
+Group-dependent mock posts, comments, events, notifications, and right-rail
+events have been removed.
 
 The local frontend file server does not replace the planned Docker topology.
 The final setup keeps the backend private and serves the frontend through a

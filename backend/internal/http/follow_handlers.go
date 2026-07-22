@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -28,6 +29,7 @@ func (h *Handler) handleFollow(w http.ResponseWriter, r *http.Request) {
 		if h.handleFollowServiceError(w, err) {
 			return
 		}
+		h.refreshRealtimeRelationship(current.ID, targetUserID)
 		writeJSON(w, http.StatusOK, followStatusResponse{Status: relationshipStatusResponse(follow.Status)})
 	case http.MethodGet:
 		relationship, err := h.follows.Relationship(r.Context(), current.ID, targetUserID)
@@ -42,6 +44,7 @@ func (h *Handler) handleFollow(w http.ResponseWriter, r *http.Request) {
 		if h.handleFollowServiceError(w, h.follows.Unfollow(r.Context(), current.ID, targetUserID)) {
 			return
 		}
+		h.refreshRealtimeRelationship(current.ID, targetUserID)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPut+", "+http.MethodDelete)
@@ -139,7 +142,25 @@ func (h *Handler) handleFollowRequestAccept(w http.ResponseWriter, r *http.Reque
 	if h.handleFollowServiceError(w, err) {
 		return
 	}
+	if h.hub != nil {
+		h.hub.RelationshipChanged(current.ID, follow.FollowerUserID, true)
+	}
 	writeJSON(w, http.StatusOK, followStatusResponse{Status: relationshipStatusResponse(follow.Status)})
+}
+
+func (h *Handler) refreshRealtimeRelationship(firstUserID, secondUserID int64) {
+	if h.hub == nil || h.follows == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	relationship, err := h.follows.Relationship(ctx, firstUserID, secondUserID)
+	if err != nil {
+		h.logger.Printf("realtime relationship refresh: %v", err)
+		return
+	}
+	eligible := relationship.Status == service.RelationshipAccepted || relationship.FollowsMe
+	h.hub.RelationshipChanged(firstUserID, secondUserID, eligible)
 }
 
 func (h *Handler) handleFollowRequestReject(w http.ResponseWriter, r *http.Request) {

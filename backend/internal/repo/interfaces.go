@@ -69,6 +69,18 @@ type GroupRepo interface {
 	ListMembers(ctx context.Context, groupID, viewerUserID int64, cursor *domain.GroupMemberCursor, limit int) ([]*domain.GroupMembership, error)
 	ListMemberships(ctx context.Context, groupID, viewerUserID int64, status domain.GroupMembershipStatus, cursor *domain.GroupMembershipCursor, limit int) ([]*domain.GroupMembership, error)
 	ListInvitationInbox(ctx context.Context, userID int64, cursor *domain.GroupInvitationCursor, limit int) ([]*domain.GroupInvitation, error)
+	ListActiveMemberIDs(ctx context.Context, groupID int64) ([]int64, error)
+}
+
+type ChatRepo interface {
+	GetDirectConversation(ctx context.Context, userLowID, userHighID int64) (*domain.DirectConversation, error)
+	EnsureDirectConversation(ctx context.Context, userLowID, userHighID int64, createdAt time.Time) (*domain.DirectConversation, error)
+	CreateMessage(ctx context.Context, message *domain.ChatMessage) (int64, error)
+	GetMessageByClientID(ctx context.Context, senderUserID int64, clientMessageID string) (*domain.ChatMessage, error)
+	ListDirectMessages(ctx context.Context, viewerUserID, targetUserID int64, cursor *domain.ChatMessageCursor, limit int) ([]*domain.ChatMessage, error)
+	ListGroupMessages(ctx context.Context, viewerUserID, groupID int64, cursor *domain.ChatMessageCursor, limit int) ([]*domain.ChatMessage, error)
+	ListChats(ctx context.Context, viewerUserID int64, cursor *domain.ChatListCursor, limit int) ([]*domain.ChatSummary, error)
+	ListDirectPeerIDs(ctx context.Context, userID int64) ([]int64, error)
 }
 
 type TransactionRepositories interface {
@@ -79,6 +91,7 @@ type TransactionRepositories interface {
 	Posts() PostRepo
 	Comments() CommentRepo
 	Groups() GroupRepo
+	Chats() ChatRepo
 }
 
 type TransactionManager interface {

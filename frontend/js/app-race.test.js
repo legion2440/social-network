@@ -23,6 +23,7 @@ global.AvatarURL = require('./avatar-url.js');
 global.UserModel = require('./user-model.js');
 global.PostModel = require('./post-model.js');
 global.CommentModel = require('./comment-model.js');
+global.ChatModel = require('./chat-model.js');
 global.AuthAPI = {};
 
 const { Component } = require('./app.js');
@@ -85,6 +86,27 @@ function rawGroup(id, status, members, ownerID) {
     members_count: members == null ? 1 : members,
     viewer_status: status || 'none',
     owner: rawUser(ownerID || 1)
+  };
+}
+
+function rawChatMessage(id, clientMessageID, kind, targetID, senderID, createdAt) {
+  return {
+    id,
+    client_message_id: clientMessageID,
+    chat: { kind, target_id: targetID },
+    sender: rawUser(senderID),
+    body: 'chat message ' + id,
+    created_at: createdAt || '2026-07-22T12:00:00Z'
+  };
+}
+
+function rawDirectChat(userID, lastMessage) {
+  return {
+    kind: 'direct',
+    target_id: userID,
+    user: rawUser(userID),
+    last_message: lastMessage || null,
+    activity_at: lastMessage ? lastMessage.created_at : '2026-07-22T11:00:00Z'
   };
 }
 
@@ -845,4 +867,214 @@ test('pending reject mutation cannot update state or refresh data after logout',
   assert.deepEqual(component.state.followRequests, []);
   assert.deepEqual(component.state.followRequestPendingByID, {});
   assert.equal(refreshes, 0);
+});
+
+test('chat list maps direct and group summaries and opens real HTTP history', async () => {
+  const component = createComponent();
+  const directMessage = rawChatMessage(
+    11, '441a59ff-4254-46d0-a9bd-ed29d8bb14ea', 'direct', 2, 2
+  );
+  global.AuthAPI.chats = async () => ({
+    chats: [
+      rawDirectChat(2, directMessage),
+      {
+        kind: 'group', target_id: 7, group: rawGroup(7, 'member', 3, 3),
+        last_message: null, activity_at: '2026-07-22T11:30:00Z'
+      }
+    ],
+    next_cursor: null
+  });
+  const histories = [];
+  global.AuthAPI.directMessages = async (userID, cursor, limit) => {
+    histories.push({ kind: 'direct', userID, cursor, limit });
+    return { messages: [directMessage], next_cursor: null };
+  };
+  global.AuthAPI.groupMessages = async () => ({ messages: [], next_cursor: null });
+
+  await component.loadChats(true);
+  await Promise.resolve();
+
+  assert.deepEqual(component.state.chatKeys, ['direct:2', 'group:7']);
+  assert.equal(component.state.activeChatKey, 'direct:2');
+  assert.deepEqual(histories, [{ kind: 'direct', userID: 2, cursor: null, limit: 20 }]);
+  assert.deepEqual(component.chatMessages('direct:2').messages.map(message => message.apiId), [11]);
+});
+
+test('late history for chat A never replaces active chat B', async () => {
+  const component = createComponent();
+  const historyA = deferred();
+  const historyB = deferred();
+  component.state.chatsByKey = {
+    'direct:2': ChatModel.normalizeChatSummary(rawDirectChat(2)),
+    'direct:3': ChatModel.normalizeChatSummary(rawDirectChat(3))
+  };
+  component.state.chatKeys = ['direct:2', 'direct:3'];
+  global.AuthAPI.directMessages = userID => userID === 2 ? historyA.promise : historyB.promise;
+
+  component.openChat('direct:2');
+  component.openChat('direct:3');
+  historyB.resolve({
+    messages: [rawChatMessage(32, 'e62617ed-e1bb-4483-81dd-a317d59aa23a', 'direct', 3, 3)],
+    next_cursor: null
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  historyA.resolve({
+    messages: [rawChatMessage(22, '6bbaef99-b778-4f98-bcc6-b51f52394403', 'direct', 2, 2)],
+    next_cursor: null
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(component.state.activeChatKey, 'direct:3');
+  assert.deepEqual(component.chatMessages(component.state.activeChatKey).messages.map(message => message.apiId), [32]);
+});
+
+test('optimistic message becomes one authoritative message and HTTP copy stays deduplicated', async () => {
+  const component = createComponent();
+  const key = 'direct:2';
+  component.state.chatsByKey = { [key]: ChatModel.normalizeChatSummary(rawDirectChat(2)) };
+  component.state.chatKeys = [key];
+  component.state.activeChatKey = key;
+  component.state.chatDraft = 'Hello';
+  component.state.wsStatus = 'connected';
+  const sent = [];
+  component.ws = { readyState: 1, send: payload => sent.push(JSON.parse(payload)) };
+
+  component.sendMsg();
+  assert.equal(sent.length, 1);
+  const clientID = sent[0].client_message_id;
+  const authoritative = rawChatMessage(90, clientID, 'direct', 2, 1);
+  component.handleRealtimeMessage(authoritative);
+  component.handleRealtimeMessage(authoritative);
+
+  const messages = component.chatMessages(key).messages;
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].apiId, 90);
+  assert.equal(messages[0].pending, false);
+  component.stopRealtime(false);
+});
+
+test('failed send retries with the exact same client_message_id', () => {
+  const component = createComponent();
+  const key = 'direct:2';
+  component.state.chatsByKey = { [key]: ChatModel.normalizeChatSummary(rawDirectChat(2)) };
+  component.state.chatKeys = [key];
+  component.state.activeChatKey = key;
+  component.state.chatDraft = 'Retry me';
+  component.state.wsStatus = 'connected';
+  const sent = [];
+  component.ws = { readyState: 1, send: payload => sent.push(JSON.parse(payload)) };
+
+  component.sendMsg();
+  const clientID = sent[0].client_message_id;
+  component.handleRealtimeError({ client_message_id: clientID, message: 'forbidden' });
+  component.retryMessage(clientID);
+
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].client_message_id, clientID);
+  assert.equal(component.chatMessages(key).messages.length, 1);
+  component.stopRealtime(false);
+});
+
+test('group leave purges chat and a late socket message cannot recreate it', () => {
+  const component = createComponent();
+  const key = 'group:7';
+  component.state.chatsByKey = {
+    [key]: ChatModel.normalizeChatSummary({
+      kind: 'group', target_id: 7, group: rawGroup(7, 'member', 3, 2),
+      last_message: null, activity_at: '2026-07-22T11:00:00Z'
+    })
+  };
+  component.state.chatKeys = [key];
+  component.state.activeChatKey = key;
+
+  component.purgeChat(key);
+  component.handleRealtimeMessage(rawChatMessage(
+    77, '0932903b-c2f1-4dca-9e52-c7ca9ac4f94c', 'group', 7, 2
+  ));
+
+  assert.equal(component.state.chatsByKey[key], undefined);
+  assert.equal(component.state.messagesByChatKey[key], undefined);
+});
+
+test('old WebSocket generation cannot mutate a newly authenticated session', () => {
+  const component = createComponent();
+  const previousWindow = global.window;
+  const previousWebSocket = global.WebSocket;
+  class FakeSocket {
+    constructor() {
+      this.readyState = 0;
+      this.sent = [];
+      FakeSocket.instances.push(this);
+    }
+    send(payload) { this.sent.push(payload); }
+    close() { this.readyState = 3; }
+  }
+  FakeSocket.instances = [];
+  global.window = { location: { protocol: 'http:', host: 'example.test' } };
+  global.WebSocket = FakeSocket;
+  try {
+    component.connectRealtime(component.authGate.current());
+    const oldSocket = FakeSocket.instances[0];
+    oldSocket.readyState = 1;
+    oldSocket.onopen();
+    component.stopRealtime(false);
+    component.state.authStatus = 'authenticated';
+    component.connectRealtime(component.authGate.current());
+    const currentSocket = FakeSocket.instances[1];
+    currentSocket.readyState = 1;
+    currentSocket.onopen();
+
+    oldSocket.onmessage({
+      data: JSON.stringify({ type: 'presence:init', online_user_ids: [99] })
+    });
+    assert.deepEqual(component.state.onlineUserIDs, {});
+    component.stopRealtime(false);
+  } finally {
+    global.window = previousWindow;
+    global.WebSocket = previousWebSocket;
+  }
+});
+
+test('deferred send callback cannot cross logout into another session', () => {
+  const component = createComponent();
+  const key = 'direct:2';
+  component.state.chatsByKey = { [key]: ChatModel.normalizeChatSummary(rawDirectChat(2)) };
+  component.state.chatKeys = [key];
+  component.state.activeChatKey = key;
+  component.state.chatDraft = 'must not cross sessions';
+  component.state.wsStatus = 'connected';
+  const sent = [];
+  component.ws = { readyState: 1, send: payload => sent.push(payload), close() {} };
+
+  const originalSetState = component.setState.bind(component);
+  let deferredSend = null;
+  component.setState = (patch, callback) => {
+    originalSetState(patch);
+    if (callback) deferredSend = callback;
+  };
+  component.sendMsg();
+  assert.equal(typeof deferredSend, 'function');
+
+  component.authGate.begin();
+  component.chatAccessGate(key).begin();
+  component.state.authStatus = 'anonymous';
+  component.stopRealtime(false);
+  deferredSend();
+
+  assert.deepEqual(sent, []);
+});
+
+test('typing state is keyed by chat and clears on stop', () => {
+  const component = createComponent();
+  const event = {
+    chat: { kind: 'group', target_id: 7 },
+    user: { id: 2, display_name: 'User 2' },
+    typing: true
+  };
+  component.handleTypingUpdate(event);
+  assert.equal(component.state.typingByChatKey['group:7']['2'].name, 'User 2');
+  component.handleTypingUpdate(Object.assign({}, event, { typing: false }));
+  assert.equal(component.state.typingByChatKey['group:7'], undefined);
 });

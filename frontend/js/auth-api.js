@@ -298,6 +298,21 @@
         return request('/api/groups/' + encodeURIComponent(String(groupID)) + '/membership', {
           method: 'DELETE', expectedStatus: 200
         });
+      },
+      chats: function (cursor, limit) {
+        return request(pagePath('/api/chats', cursor, limit), {
+          method: 'GET', expectedStatus: 200
+        });
+      },
+      directMessages: function (userID, cursor, limit) {
+        return request(pagePath('/api/chats/direct/' + encodeURIComponent(String(userID)) + '/messages', cursor, limit), {
+          method: 'GET', expectedStatus: 200
+        });
+      },
+      groupMessages: function (groupID, cursor, limit) {
+        return request(pagePath('/api/groups/' + encodeURIComponent(String(groupID)) + '/chat/messages', cursor, limit), {
+          method: 'GET', expectedStatus: 200
+        });
       }
     };
   }

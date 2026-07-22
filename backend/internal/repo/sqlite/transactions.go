@@ -40,6 +40,7 @@ func (m *TransactionManager) WithinTransaction(ctx context.Context, fn func(repo
 		posts:    &PostRepo{db: tx},
 		comments: &CommentRepo{db: tx},
 		groups:   &GroupRepo{db: tx},
+		chats:    &ChatRepo{db: tx},
 	}
 	if err := fn(repositories); err != nil {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
@@ -63,6 +64,7 @@ type transactionRepositories struct {
 	posts    *PostRepo
 	comments *CommentRepo
 	groups   *GroupRepo
+	chats    *ChatRepo
 }
 
 func (r *transactionRepositories) Users() repo.UserRepo {
@@ -91,4 +93,8 @@ func (r *transactionRepositories) Comments() repo.CommentRepo {
 
 func (r *transactionRepositories) Groups() repo.GroupRepo {
 	return r.groups
+}
+
+func (r *transactionRepositories) Chats() repo.ChatRepo {
+	return r.chats
 }
