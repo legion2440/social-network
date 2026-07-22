@@ -103,6 +103,58 @@ func (h *Handler) handleUserPosts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, newPostPageResponse(page))
 }
 
+func (h *Handler) handleGroupPosts(w http.ResponseWriter, r *http.Request) {
+	if h.posts == nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	groupID, ok := positivePathID(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid input")
+		return
+	}
+	current, _ := CurrentUserFromContext(r.Context())
+
+	switch r.Method {
+	case http.MethodGet:
+		cursor, limit, err := readPostPageQuery(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid input")
+			return
+		}
+		page, err := h.posts.GroupPosts(r.Context(), current.ID, groupID, cursor, limit)
+		if h.handlePostServiceError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, newPostPageResponse(page))
+	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, service.MaxMediaBodyBytes)
+		input, mediaFile, err := readCreateGroupPostInput(r)
+		if mediaFile != nil {
+			defer mediaFile.Close()
+		}
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
+		}
+		if err != nil {
+			if isMultipartTooLarge(err) {
+				writeError(w, http.StatusRequestEntityTooLarge, "media is too big (max 20MB)")
+				return
+			}
+			writeError(w, http.StatusBadRequest, "invalid input")
+			return
+		}
+		post, err := h.posts.CreateGroupPost(r.Context(), current.ID, groupID, input)
+		if h.handlePostServiceError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, newPostResponse(post))
+	default:
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
 func (h *Handler) handlePostMedia(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
@@ -214,6 +266,47 @@ func readCreatePostInput(r *http.Request) (service.CreatePostInput, multipart.Fi
 	return input, mediaFile, nil
 }
 
+func readCreateGroupPostInput(r *http.Request) (service.CreateGroupPostInput, multipart.File, error) {
+	if err := r.ParseMultipartForm(postMultipartMemory); err != nil {
+		return service.CreateGroupPostInput{}, nil, err
+	}
+	form := r.MultipartForm
+	if form == nil {
+		return service.CreateGroupPostInput{}, nil, service.ErrInvalidInput
+	}
+	for name := range form.Value {
+		if name != "text" {
+			return service.CreateGroupPostInput{}, nil, service.ErrInvalidInput
+		}
+	}
+	for name := range form.File {
+		if name != "media" {
+			return service.CreateGroupPostInput{}, nil, service.ErrInvalidInput
+		}
+	}
+	if len(form.Value["text"]) != 1 {
+		return service.CreateGroupPostInput{}, nil, service.ErrInvalidInput
+	}
+
+	input := service.CreateGroupPostInput{Text: form.Value["text"][0]}
+	mediaHeaders := form.File["media"]
+	if len(mediaHeaders) > 1 {
+		return service.CreateGroupPostInput{}, nil, service.ErrInvalidInput
+	}
+	if len(mediaHeaders) == 0 {
+		return input, nil, nil
+	}
+	if strings.TrimSpace(mediaHeaders[0].Filename) == "" {
+		return service.CreateGroupPostInput{}, nil, service.ErrInvalidInput
+	}
+	mediaFile, err := mediaHeaders[0].Open()
+	if err != nil {
+		return service.CreateGroupPostInput{}, nil, err
+	}
+	input.Media = &service.MediaUpload{OriginalName: mediaHeaders[0].Filename, Reader: mediaFile}
+	return input, mediaFile, nil
+}
+
 func readPostPageQuery(r *http.Request) (*domain.PostCursor, int, error) {
 	values := r.URL.Query()
 	for name := range values {
@@ -289,8 +382,9 @@ func (h *Handler) handlePostMediaError(w http.ResponseWriter, err error) bool {
 type postResponse struct {
 	ID            int64               `json:"id"`
 	Author        userSummaryResponse `json:"author"`
+	GroupID       *int64              `json:"group_id,omitempty"`
 	Text          string              `json:"text"`
-	Privacy       domain.PostPrivacy  `json:"privacy"`
+	Privacy       *domain.PostPrivacy `json:"privacy,omitempty"`
 	MediaURL      *string             `json:"media_url"`
 	CommentsCount int64               `json:"comments_count"`
 	CreatedAt     time.Time           `json:"created_at"`
@@ -303,6 +397,7 @@ func newPostResponse(post *domain.Post) *postResponse {
 	return &postResponse{
 		ID:            post.ID,
 		Author:        newUserSummaryResponse(post.Author),
+		GroupID:       post.GroupID,
 		Text:          post.Text,
 		Privacy:       post.Privacy,
 		MediaURL:      domain.PostMediaURL(post),

@@ -48,6 +48,13 @@ Current migrations:
 - `000008_create_post_comments`
 - `000009_create_groups`
 - `000010_create_chats`
+- `000011_add_group_posts`
+
+Migration `000011` rebuilds `posts` so personal and group publications share
+one table while keeping existing post IDs, selected audiences, comments,
+media links, timestamps, and AUTOINCREMENT state. Its down migration is
+allowed only while no group posts exist; the application rejects that down
+operation before `golang-migrate` can mark the database dirty.
 
 To inspect the current version with the SQLite CLI:
 
@@ -217,8 +224,10 @@ and `selected` posts additionally require the persisted audience row. Audience
 rows survive unfollow, so access disappears immediately and returns after the
 accepted relation is restored.
 
-Every post response contains the post ID, safe author summary, trimmed text,
-privacy, nullable `media_url`, `comments_count`, and creation time.
+Every personal post response contains the post ID, safe author summary,
+trimmed text, privacy, nullable `media_url`, `comments_count`, and creation
+time. Personal feed, profile-post queries, selected audiences, and profile
+post counts explicitly exclude group posts.
 `GET /api/posts/{id}/media` rechecks the same current access policy on every
 authenticated request. It returns `403` for an existing but forbidden post and
 `404` for absent media, ownership mismatch, missing metadata, or a missing
@@ -235,11 +244,13 @@ trimmed and must contain 1–5000 Unicode code points. Unknown or duplicate JSON
 fields and invalid values return `400`; an oversized body returns `413` and an
 unsupported content type returns `415`.
 
-Both endpoints recheck the same current post access policy used by feed,
-profile posts, and post media. Existing inaccessible posts return `403`, while
-unknown posts return `404`. Comments are created inside a SQL transaction, and
-a failed commit leaves no comment row. Comment responses contain only a safe
-author summary; editing, deletion, replies, likes, and realtime delivery are
+Both endpoints resolve access by post kind. Personal posts use the current
+profile/follow/audience policy; group posts require a current `owner` or
+`member` membership. Existing inaccessible posts return `403`, while unknown
+posts return `404`. Comments are created inside a SQL transaction, and a
+failed commit leaves no comment row. Comment author summaries are mapped for
+the current viewer, so group membership never exposes an inaccessible private
+custom avatar. Editing, deletion, replies, likes, and realtime delivery are
 outside this step.
 
 ## Groups
@@ -271,14 +282,27 @@ to private custom avatars: safe owner/member summaries emit a static gender
 placeholder whenever the viewer could not open the controlled avatar route
 under the existing profile privacy rules.
 
-The frontend uses these endpoints for creation, discovery, invitations, join
-requests, owner management, and leaving. Its group directory has a global
-request generation, group detail/members/requests/sent invitations use a
-per-group generation, and the invitation inbox has a separate generation.
-Successful mutations invalidate older reads and apply the returned group as the
-authoritative state. Group posts, comments, events, and notifications are
-explicitly not implemented and no longer use mock group data. Group chat uses
-the realtime chat implementation described below.
+`POST /api/groups/{id}/posts` creates a group post from strict multipart data:
+exactly one non-empty `text` field and at most one JPEG, PNG, GIF, or WebP
+`media` file up to 20 MB. Privacy, selected audiences, duplicate scalar fields,
+and unknown fields are rejected. `GET /api/groups/{id}/posts` uses the shared
+opaque post cursor and `(created_at DESC, id DESC)` order. Group responses
+contain `group_id` and omit `privacy`; personal responses do the reverse.
+Creation, listing, comments, and `/api/posts/{postID}/media` all require a
+current owner/member membership. Leaving immediately removes access, including
+for the post author, while rejoining restores the existing history.
+
+The frontend uses the group endpoints for creation, discovery, invitations,
+join requests, owner management, leaving, and the real Group Posts tab. Its
+group directory has a global request generation, group
+detail/members/requests/sent invitations use a per-group generation, group
+posts have an additional request generation, and the invitation inbox has a
+separate generation. Successful mutations invalidate older reads and apply the
+returned group as the authoritative state. A leave or realtime `chat:remove`
+revokes group content locally, purges posts/comments/drafts, and makes pending
+responses stale; only an authoritative rejoin response can clear that revoke
+state and trigger a fresh load. Events and notifications remain unimplemented.
+Group chat uses the realtime implementation described below.
 
 ## Chats and realtime
 

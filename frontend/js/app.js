@@ -53,6 +53,15 @@ function emptyCommentState() {
   };
 }
 
+function emptyGroupPostState() {
+  return {
+    groupPosts: [], groupPostsNextCursor: null,
+    groupPostsLoading: false, groupPostsPending: false, groupPostsError: '',
+    groupPostComposerText: '', groupPostComposerFile: null, groupPostComposerFileName: '',
+    groupPostComposerError: '', groupPostComposerPending: false
+  };
+}
+
 function emptyChatMessages() {
   return { messages: [], nextCursor: null, loading: false, pending: false, error: '', loaded: false };
 }
@@ -125,6 +134,7 @@ class Component extends DCLogic {
       groupInvitations: [], groupInvitationsNextCursor: null, groupInvitationsLoading: false, groupInvitationsError: '',
       groupMutationPendingByID: {}, groupMutationErrorByID: {},
       inviteOpen: false, groupInviteUserID: '',
+	  ...emptyGroupPostState(),
       createOpen: false, ngName: '', ngDesc: '', groupCreatePending: false, groupCreateError: '',
       ...emptyChatState(),
       notifs: [],
@@ -148,11 +158,13 @@ class Component extends DCLogic {
     this.groupMembersGate = UserModel.createRequestGate();
     this.groupRequestsGate = UserModel.createRequestGate();
     this.groupInvitationsGate = UserModel.createRequestGate();
+	this.groupPostsGate = UserModel.createRequestGate();
     this.chatsGate = UserModel.createRequestGate();
     this.activeChatGate = UserModel.createRequestGate();
     this.chatHistoryGatesByKey = {};
     this.chatAccessGatesByKey = {};
     this.revokedChatKeys = new Set();
+	this.revokedGroupContentIDs = new Set();
     this.ws = null;
     this.wsGeneration = 0;
     this.wsReconnectTimer = null;
@@ -221,6 +233,7 @@ class Component extends DCLogic {
       id: normalized.id,
       real: true,
       apiAuthorID: normalized.apiAuthorID,
+	  groupID: normalized.groupID,
       text: normalized.text,
       privacy: normalized.privacy,
       mediaUrl: normalized.mediaUrl,
@@ -372,7 +385,7 @@ class Component extends DCLogic {
     const authGeneration = this.authGate.current();
     const accessGate = this.commentAccessGate(postID);
     const accessGeneration = accessGate.current();
-    const countAtCreateStart = this.maxPostCommentsCount(postID, this.state.posts, this.state.profilePosts);
+	const countAtCreateStart = this.maxPostCommentsCount(postID, this.state.posts, this.state.profilePosts, this.state.groupPosts);
     this.patchCommentState(postID, { createPending: true, createError: '' });
     try {
       const response = await AuthAPI.createComment(postID, text);
@@ -387,7 +400,10 @@ class Component extends DCLogic {
           : post),
         profilePosts: current.profilePosts.map(post => Number(post.id) === postID
           ? Object.assign({}, post, { commentsCount: Math.max(Number(post.commentsCount) || 0, countAtCreateStart + 1) })
-          : post)
+		  : post),
+		groupPosts: current.groupPosts.map(post => Number(post.id) === postID
+		  ? Object.assign({}, post, { commentsCount: Math.max(Number(post.commentsCount) || 0, countAtCreateStart + 1) })
+		  : post)
       }));
       this.patchCommentState(postID, {
         comments: CommentModel.mergeComments(latest.comments, [comment]),
@@ -423,7 +439,7 @@ class Component extends DCLogic {
       const mapped = (page.posts || []).map(post => this.mapAPIPost(post));
       const apiUsersByID = this.mergeAPIUsers((page.posts || []).map(post => post.author));
       this.setState(current => {
-        const merged = this.mergePostCommentsCounts(mapped, current.posts, current.profilePosts);
+		const merged = this.mergePostCommentsCounts(mapped, current.posts, current.profilePosts, current.groupPosts);
         return {
           posts: reset ? merged : current.posts.concat(merged),
           apiUsersByID,
@@ -572,7 +588,7 @@ class Component extends DCLogic {
       const mapped = (page.posts || []).map(post => this.mapAPIPost(post));
       const apiUsersByID = this.mergeAPIUsers((page.posts || []).map(post => post.author));
       this.setState(current => {
-        const merged = this.mergePostCommentsCounts(mapped, current.posts, current.profilePosts);
+		const merged = this.mergePostCommentsCounts(mapped, current.posts, current.profilePosts, current.groupPosts);
         return {
           profilePosts: reset ? merged : current.profilePosts.concat(merged),
           apiUsersByID,
@@ -715,6 +731,7 @@ class Component extends DCLogic {
       this.groupMembersGate.begin();
       this.groupRequestsGate.begin();
       this.groupInvitationsGate.begin();
+	  this.groupPostsGate.begin();
       this.chatsGate.begin();
       this.activeChatGate.begin();
       Object.keys(this.chatHistoryGatesByKey).forEach(key => this.chatHistoryGatesByKey[key].begin());
@@ -722,6 +739,7 @@ class Component extends DCLogic {
       this.chatHistoryGatesByKey = {};
       this.chatAccessGatesByKey = {};
       this.revokedChatKeys.clear();
+	  this.revokedGroupContentIDs.clear();
       this.stopRealtime();
       Object.keys(this.groupGenerationsByID).forEach(key => this.groupGenerationsByID[key].begin());
       this.groupGenerationsByID = {};
@@ -753,8 +771,8 @@ class Component extends DCLogic {
         groupMutationErrorByID: {}, groupInviteUserID: '', inviteOpen: false,
         createOpen: false, ngName: '', ngDesc: '', groupCreatePending: false, groupCreateError: '',
         composerText: '', composerFile: null, composerFileName: '', composerError: '', composerPending: false,
-        privacy: 'public', privacyOpen: false
-      }, emptyChatState(), emptyRegistrationForm(), emptyProfileEditor()));
+		privacy: 'public', privacyOpen: false
+	  }, emptyGroupPostState(), emptyChatState(), emptyRegistrationForm(), emptyProfileEditor()));
     } catch (error) {
       if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
@@ -1089,6 +1107,157 @@ class Component extends DCLogic {
     }
   };
 
+  groupContentIsRevoked(groupID) {
+	return this.revokedGroupContentIDs.has(String(Number(groupID)));
+  }
+
+  clearGroupContent(groupID, revoke) {
+	groupID = Number(groupID);
+	if (!Number.isInteger(groupID) || groupID <= 0) return;
+	const key = String(groupID);
+	if (revoke) this.revokedGroupContentIDs.add(key);
+	if (Number(this.state.groupId) !== groupID) return;
+	this.groupPostsGate.begin();
+	const postIDs = this.state.groupPosts
+	  .filter(post => Number(post.groupID) === groupID)
+	  .map(post => post.id);
+	this.purgeCommentStates(postIDs);
+	const input = typeof document !== 'undefined' ? document.getElementById('group-post-media') : null;
+	if (input) input.value = '';
+	this.setState(emptyGroupPostState());
+  }
+
+  restoreGroupContent(groupID) {
+	groupID = Number(groupID);
+	if (!Number.isInteger(groupID) || groupID <= 0) return;
+	this.revokedGroupContentIDs.delete(String(groupID));
+	if (Number(this.state.groupId) !== groupID) return;
+	this.groupPostsGate.begin();
+	this.purgeCommentStates(this.state.groupPosts.map(post => post.id));
+	const input = typeof document !== 'undefined' ? document.getElementById('group-post-media') : null;
+	if (input) input.value = '';
+	this.setState(emptyGroupPostState(), () => {
+	  if (Number(this.state.groupId) === groupID) this.loadGroupPosts(groupID, true);
+	});
+  }
+
+  loadGroupPosts = async (groupID, reset = true) => {
+	groupID = Number(groupID);
+	if (!Number.isInteger(groupID) || groupID <= 0 || this.groupContentIsRevoked(groupID)) return;
+	const group = this.state.apiGroupsByID[String(groupID)];
+	if (group && group.state !== 'owner' && group.state !== 'member') return;
+	const authGeneration = this.authGate.current();
+	const accessGate = this.groupGeneration(groupID);
+	const accessGeneration = accessGate.current();
+	const generation = reset ? this.groupPostsGate.begin() : this.groupPostsGate.current();
+	if (!reset && this.state.groupPostsPending) return;
+	const cursor = reset ? null : this.state.groupPostsNextCursor;
+	if (!reset && !cursor) return;
+	this.setState({ groupPostsPending: true, groupPostsLoading: !!reset, groupPostsError: '' });
+	try {
+	  const page = await AuthAPI.groupPosts(groupID, cursor, 20);
+	  if (
+		!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+		!this.groupPostsGate.isCurrent(generation) || this.groupContentIsRevoked(groupID) ||
+		Number(this.state.groupId) !== groupID
+	  ) return;
+	  const rawPosts = page.posts || [];
+	  const mapped = rawPosts.map(post => this.mapAPIPost(post));
+	  const apiUsersByID = this.mergeAPIUsers(rawPosts.map(post => post.author));
+	  this.setState(current => {
+		const merged = this.mergePostCommentsCounts(mapped, current.posts, current.profilePosts, current.groupPosts);
+		const nextPosts = reset
+		  ? merged
+		  : current.groupPosts.concat(merged.filter(post => !current.groupPosts.some(item => item.id === post.id)));
+		return {
+		  apiUsersByID, groupPosts: nextPosts,
+		  groupPostsNextCursor: page.next_cursor || null,
+		  groupPostsPending: false, groupPostsLoading: false, groupPostsError: ''
+		};
+	  });
+	} catch (error) {
+	  if (
+		!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+		!this.groupPostsGate.isCurrent(generation) || Number(this.state.groupId) !== groupID
+	  ) return;
+	  if (error && error.status === 403) {
+		this.clearGroupContent(groupID, true);
+		return;
+	  }
+	  this.setState({
+		groupPostsPending: false, groupPostsLoading: false,
+		groupPostsError: requestErrorMessage(error, error && error.status === 404 ? 'Group not found.' : 'Could not load group posts.')
+	  });
+	}
+  };
+
+  pickGroupPostMedia = () => {
+	const input = document.getElementById('group-post-media');
+	if (input) input.click();
+  };
+
+  onGroupPostMedia = (event) => {
+	const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+	this.setState({
+	  groupPostComposerFile: file,
+	  groupPostComposerFileName: file ? file.name : '',
+	  groupPostComposerError: ''
+	});
+  };
+
+  removeGroupPostMedia = () => {
+	const input = document.getElementById('group-post-media');
+	if (input) input.value = '';
+	this.setState({ groupPostComposerFile: null, groupPostComposerFileName: '', groupPostComposerError: '' });
+  };
+
+  sendGroupPost = async () => {
+	const groupID = Number(this.state.groupId);
+	const group = this.state.apiGroupsByID[String(groupID)];
+	if (
+	  !Number.isInteger(groupID) || groupID <= 0 || this.groupContentIsRevoked(groupID) ||
+	  !group || (group.state !== 'owner' && group.state !== 'member') ||
+	  this.state.groupPostComposerPending || !this.state.groupPostComposerText.trim()
+	) return;
+	const authGeneration = this.authGate.current();
+	const accessGate = this.groupGeneration(groupID);
+	const accessGeneration = accessGate.current();
+	const form = PostModel.buildCreateGroupPostForm({
+	  text: this.state.groupPostComposerText,
+	  media: this.state.groupPostComposerFile
+	}, FormData);
+	this.setState({ groupPostComposerPending: true, groupPostComposerError: '' });
+	try {
+	  const response = await AuthAPI.createGroupPost(groupID, form);
+	  if (
+		!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+		this.groupContentIsRevoked(groupID) || Number(this.state.groupId) !== groupID
+	  ) return;
+	  this.groupPostsGate.begin();
+	  const post = this.mapAPIPost(response);
+	  const apiUsersByID = this.mergeAPIUsers([response.author]);
+	  const input = typeof document !== 'undefined' ? document.getElementById('group-post-media') : null;
+	  if (input) input.value = '';
+	  this.setState(current => ({
+		apiUsersByID,
+		groupPosts: [post].concat(current.groupPosts.filter(item => item.id !== post.id)),
+		groupPostsLoading: false, groupPostsPending: false,
+		groupPostComposerText: '', groupPostComposerFile: null, groupPostComposerFileName: '',
+		groupPostComposerError: '', groupPostComposerPending: false
+	  }));
+	} catch (error) {
+	  if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration)) return;
+	  if (error && error.status === 403) {
+		this.clearGroupContent(groupID, true);
+		return;
+	  }
+	  this.setState({
+		groupPostComposerPending: false,
+		groupPostComposerError: requestErrorMessage(error, 'Could not create the group post. Your draft was kept.')
+	  });
+	}
+  };
+
   groupGeneration(groupID) {
     const key = String(Number(groupID));
     if (!this.groupGenerationsByID[key]) this.groupGenerationsByID[key] = UserModel.createRequestGate();
@@ -1188,13 +1357,15 @@ class Component extends DCLogic {
     this.groupMembersGate.begin();
     this.groupRequestsGate.begin();
     this.groupInvitationsGate.begin();
-    this.setState({
+	this.groupPostsGate.begin();
+	this.purgeCommentStates(this.state.groupPosts.map(post => post.id));
+	this.setState(Object.assign({
       screen: 'group', groupId: groupID, groupTab: 'posts', inviteOpen: false,
       groupLoading: true, groupError: '', groupMembers: [], groupMembersNextCursor: null,
       groupMembersLoading: true, groupMembersError: '', groupRequests: [], groupRequestsNextCursor: null,
       groupRequestsLoading: false, groupRequestsError: '', groupInvitations: [], groupInvitationsNextCursor: null,
       groupInvitationsLoading: false, groupInvitationsError: '', groupInviteUserID: ''
-    });
+	}, emptyGroupPostState()));
     this.loadGroupDetail(groupID);
     this.loadGroupMembers(groupID, true);
   };
@@ -1223,6 +1394,9 @@ class Component extends DCLogic {
         this.loadGroupRequests(groupID, true);
         this.loadGroupInvitations(groupID, true);
       }
+	  if ((mapped.state === 'owner' || mapped.state === 'member') && !this.groupContentIsRevoked(groupID)) {
+		this.loadGroupPosts(groupID, true);
+	  }
     } catch (error) {
       if (
         !this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
@@ -1366,6 +1540,8 @@ class Component extends DCLogic {
         }
       }
       if (options && options.invalidateInbox) this.loadGroupInvitationInbox(true);
+	  if (options && options.purgeGroupContent) this.clearGroupContent(groupID, true);
+	  if (options && options.restoreGroupContent) this.restoreGroupContent(groupID);
       if (options && options.purgeChat) this.purgeChat(ChatModel.chatKey('group', groupID));
       if (options && options.refreshChats) this.loadChats(true);
       return true;
@@ -1390,7 +1566,9 @@ class Component extends DCLogic {
   };
 
   acceptGroupInvitation = (groupID) => this.runGroupMutation(
-    groupID, () => AuthAPI.acceptGroupInvitation(groupID), { invalidateInbox: true, refreshChats: true }
+	groupID, () => AuthAPI.acceptGroupInvitation(groupID), {
+	  invalidateInbox: true, refreshChats: true, restoreGroupContent: true
+	}
   );
 
   declineGroupInvitation = (groupID) => this.runGroupMutation(
@@ -1398,7 +1576,9 @@ class Component extends DCLogic {
   );
 
   leaveGroup = (groupID) => this.runGroupMutation(
-    groupID, () => AuthAPI.leaveGroup(groupID), { purgeChat: true, refreshChats: true }
+	groupID, () => AuthAPI.leaveGroup(groupID), {
+	  purgeChat: true, refreshChats: true, purgeGroupContent: true
+	}
   );
 
   acceptGroupRequest = (groupID, userID) => this.runGroupMutation(
@@ -1419,6 +1599,7 @@ class Component extends DCLogic {
       const raw = await AuthAPI.createGroup(title, description);
       if (!this.authGate.isCurrent(authGeneration)) return;
       this.applyAuthoritativeGroup(raw, false);
+	  this.revokedGroupContentIDs.delete(String(Number(raw.id)));
       this.loadChats(true);
       this.setState({
         groupCreatePending: false, groupCreateError: '', createOpen: false, ngName: '', ngDesc: ''
@@ -1776,8 +1957,11 @@ class Component extends DCLogic {
     }
     if (event.type === 'chat:remove') {
       if (!event.chat || event.chat.kind !== 'group') return;
+	  const groupID = Number(event.chat.target_id);
+	  if (!Number.isInteger(groupID) || groupID <= 0) return;
       let key;
       try { key = ChatModel.chatKey(event.chat.kind, event.chat.target_id); } catch (ignore) { return; }
+	  this.clearGroupContent(groupID, true);
       this.purgeChat(key);
       return;
     }
@@ -2320,6 +2504,7 @@ class Component extends DCLogic {
     };
     const gIsOwner = g.state === 'owner';
     const gCanChat = g.state === 'owner' || g.state === 'member';
+	const gCanContent = gCanChat && !this.groupContentIsRevoked(g.id);
     const gMutationPending = !!s.groupMutationPendingByID[String(g.id)];
     const gMutationError = s.groupMutationErrorByID[String(g.id)] || '';
     const gTabs = [
@@ -2364,6 +2549,9 @@ class Component extends DCLogic {
         pick: () => this.setState({ groupInviteUserID: String(id) })
       };
     });
+	const gPosts = s.groupPosts.map((post, index) => Object.assign(this.mapPost(post), {
+	  delay: (index * 0.05).toFixed(2) + 's'
+	}));
 
     // chat
     const chatMeta = chat => {
@@ -2645,13 +2833,37 @@ class Component extends DCLogic {
       gMutationHasError: !!gMutationError, gMutationError,
       gIsNone: g.state === 'none', gIsRequested: g.state === 'requested',
       gIsInvited: g.state === 'invited', gIsMember: g.state === 'member',
-      gCanChat, gOpenChat: () => this.openGroupChat(g.id),
+	  gCanChat, gCanContent, gContentLocked: !gCanContent,
+	  gOpenChat: () => this.openGroupChat(g.id),
       gRequestJoin: () => this.requestGroupJoin(g.id),
       gAcceptInvitation: () => this.acceptGroupInvitation(g.id),
       gDeclineInvitation: () => this.declineGroupInvitation(g.id),
       gLeave: () => this.leaveGroup(g.id),
       gBack: () => this.go('groups'),
       gTabs, gTabPosts: s.groupTab === 'posts', gTabEvents: s.groupTab === 'events', gTabMembers: s.groupTab === 'members',
+	  gPosts,
+	  groupPostsLoading: s.groupPostsLoading,
+	  groupPostsHasError: !!s.groupPostsError, groupPostsError: s.groupPostsError,
+	  groupPostsEmpty: !s.groupPostsLoading && !s.groupPostsError && gPosts.length === 0,
+	  groupPostsHasMore: !!s.groupPostsNextCursor,
+	  groupPostsLoadMoreDisabled: s.groupPostsPending,
+	  retryGroupPosts: () => this.loadGroupPosts(g.id, true),
+	  loadMoreGroupPosts: () => this.loadGroupPosts(g.id, false),
+	  groupPostComposerText: s.groupPostComposerText,
+	  onGroupPostComposerText: (event) => this.setState({
+		groupPostComposerText: event.target.value, groupPostComposerError: ''
+	  }),
+	  groupPostComposerFileName: s.groupPostComposerFileName,
+	  groupPostComposerHasFile: !!s.groupPostComposerFile,
+	  groupPostComposerPending: s.groupPostComposerPending,
+	  groupPostComposerHasError: !!s.groupPostComposerError,
+	  groupPostComposerError: s.groupPostComposerError,
+	  groupPostComposerDisabled: s.groupPostComposerPending || !s.groupPostComposerText.trim(),
+	  groupPostComposerButtonLabel: s.groupPostComposerPending ? 'Posting…' : 'Post',
+	  pickGroupPostMedia: this.pickGroupPostMedia,
+	  onGroupPostMedia: this.onGroupPostMedia,
+	  removeGroupPostMedia: this.removeGroupPostMedia,
+	  sendGroupPost: this.sendGroupPost,
       gMembers, gRequests, gInvitations,
       gHasRequests: gRequests.length > 0,
       gHasInvitations: gInvitations.length > 0,

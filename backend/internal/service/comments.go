@@ -82,7 +82,7 @@ func (s *CommentService) List(
 			return err
 		}
 		var err error
-		comments, err = repositories.Comments().ListByPost(ctx, postID, cursor, limit+1)
+		comments, err = repositories.Comments().ListByPost(ctx, viewerUserID, postID, cursor, limit+1)
 		return err
 	})
 	if err != nil {

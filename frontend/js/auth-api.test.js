@@ -216,6 +216,28 @@ test('posts client sends multipart unchanged and builds cursor requests', async 
   assert.ok(calls.every(call => call.options.credentials === 'same-origin'));
 });
 
+test('group posts client keeps multipart intact and uses cursor pagination', async () => {
+  const calls = [];
+  const formData = { kind: 'group-post-form-data-test-double' };
+  const api = createAuthAPI(async (path, options) => {
+    calls.push({ path, options });
+    return options.method === 'POST'
+      ? jsonResponse(201, { id: 51, group_id: 9 })
+      : jsonResponse(200, { posts: [], next_cursor: null });
+  });
+
+  await api.groupPosts(9, 'group cursor', 20);
+  assert.deepEqual(await api.createGroupPost(9, formData), { id: 51, group_id: 9 });
+
+  assert.equal(calls[0].path, '/api/groups/9/posts?cursor=group%20cursor&limit=20');
+  assert.equal(calls[0].options.method, 'GET');
+  assert.equal(calls[1].path, '/api/groups/9/posts');
+  assert.equal(calls[1].options.method, 'POST');
+  assert.equal(calls[1].options.body, formData);
+  assert.equal(calls[1].options.headers['Content-Type'], undefined);
+  assert.ok(calls.every(call => call.options.credentials === 'same-origin'));
+});
+
 test('comment create sends strict JSON to the post comments endpoint', async () => {
   let call;
   const api = createAuthAPI(async (path, options) => {

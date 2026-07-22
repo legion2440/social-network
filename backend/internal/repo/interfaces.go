@@ -50,12 +50,13 @@ type PostRepo interface {
 	GetAccessibleByID(ctx context.Context, viewerUserID, postID int64) (*domain.Post, error)
 	ListFeed(ctx context.Context, viewerUserID int64, cursor *domain.PostCursor, limit int) ([]*domain.Post, error)
 	ListByAuthor(ctx context.Context, viewerUserID, authorUserID int64, cursor *domain.PostCursor, limit int) ([]*domain.Post, error)
+	ListByGroup(ctx context.Context, viewerUserID, groupID int64, cursor *domain.PostCursor, limit int) ([]*domain.Post, error)
 	CountAccessibleByAuthor(ctx context.Context, viewerUserID, authorUserID int64) (int64, error)
 }
 
 type CommentRepo interface {
 	Create(ctx context.Context, comment *domain.Comment) (int64, error)
-	ListByPost(ctx context.Context, postID int64, cursor *domain.CommentCursor, limit int) ([]*domain.Comment, error)
+	ListByPost(ctx context.Context, viewerUserID, postID int64, cursor *domain.CommentCursor, limit int) ([]*domain.Comment, error)
 }
 
 type GroupRepo interface {

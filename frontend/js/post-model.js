@@ -33,6 +33,7 @@
       id: String(post.id),
       apiAuthorID: authorID,
       isOwn: authorID === Number(currentUserID),
+	  groupID: post.group_id == null ? null : Number(post.group_id),
       text: String(post.text || ''),
       privacy: post.privacy,
       mediaUrl: post.media_url || '',
@@ -49,8 +50,17 @@
     };
   }
 
+  function buildCreateGroupPostForm(draft, FormDataCtor) {
+    if (!draft || typeof FormDataCtor !== 'function') throw new TypeError('draft and FormData are required');
+    var form = new FormDataCtor();
+    form.append('text', String(draft.text || '').trim());
+    if (draft.media) form.append('media', draft.media, draft.media.name);
+    return form;
+  }
+
   return {
     buildCreatePostForm: buildCreatePostForm,
+	buildCreateGroupPostForm: buildCreateGroupPostForm,
     normalizePostResponse: normalizePostResponse
   };
 });

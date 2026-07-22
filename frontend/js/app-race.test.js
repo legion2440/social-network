@@ -67,6 +67,14 @@ function rawPost(id, authorID) {
   };
 }
 
+function rawGroupPost(id, groupID, authorID, commentsCount) {
+  const post = rawPost(id, authorID);
+  delete post.privacy;
+  post.group_id = groupID;
+  post.comments_count = commentsCount || 0;
+  return post;
+}
+
 function rawComment(id, postID, authorID, createdAt) {
   return {
     id,
@@ -74,6 +82,13 @@ function rawComment(id, postID, authorID, createdAt) {
     text: 'comment ' + id,
     created_at: createdAt || '2026-07-21T12:00:00Z',
     author: rawUser(authorID)
+  };
+}
+
+function emptyCommentStateForTest() {
+  return {
+    comments: [], loading: false, pending: false, error: '', nextCursor: null,
+    draft: '', createPending: false, createError: '', loaded: false
   };
 }
 
@@ -898,6 +913,190 @@ test('chat list maps direct and group summaries and opens real HTTP history', as
   assert.equal(component.state.activeChatKey, 'direct:2');
   assert.deepEqual(histories, [{ kind: 'direct', userID: 2, cursor: null, limit: 20 }]);
   assert.deepEqual(component.chatMessages('direct:2').messages.map(message => message.apiId), [11]);
+});
+
+test('group posts expose a real composer only to active owner or member access', () => {
+  const component = createComponent();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+
+  let view = component.renderVals();
+  assert.equal(view.gCanContent, true);
+  assert.equal(view.gContentLocked, false);
+  assert.equal(typeof view.sendGroupPost, 'function');
+
+  component.state.apiGroupsByID['7'] = component.mapAPIGroup(rawGroup(7, 'requested', 1, 2));
+  view = component.renderVals();
+  assert.equal(view.gCanContent, false);
+  assert.equal(view.gContentLocked, true);
+});
+
+test('group switch and reset gates reject stale group post pages', async () => {
+  const component = createComponent();
+  const groupA = deferred();
+  const groupB = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = {
+    '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
+    '8': component.mapAPIGroup(rawGroup(8, 'member', 2, 2))
+  };
+  global.AuthAPI.groupPosts = groupID => groupID === 7 ? groupA.promise : groupB.promise;
+
+  const first = component.loadGroupPosts(7, true);
+  component.state.groupId = 8;
+  const second = component.loadGroupPosts(8, true);
+  groupB.resolve({ posts: [rawGroupPost(80, 8, 2)], next_cursor: null });
+  await second;
+  groupA.resolve({ posts: [rawGroupPost(70, 7, 2)], next_cursor: null });
+  await first;
+
+  assert.deepEqual(component.state.groupPosts.map(post => post.id), ['80']);
+  assert.equal(component.state.groupPosts[0].groupID, 8);
+});
+
+test('authoritative group post survives an older pending page', async () => {
+  const component = createComponent();
+  const stalePage = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.groupPostComposerText = 'new group post';
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'owner', 1, 1)) };
+  global.AuthAPI.groupPosts = () => stalePage.promise;
+  global.AuthAPI.createGroupPost = async () => rawGroupPost(72, 7, 1);
+
+  const staleLoad = component.loadGroupPosts(7, true);
+  await component.sendGroupPost();
+  stalePage.resolve({ posts: [rawGroupPost(71, 7, 1)], next_cursor: null });
+  await staleLoad;
+
+  assert.deepEqual(component.state.groupPosts.map(post => post.id), ['72']);
+  assert.equal(component.state.groupPostComposerText, '');
+  assert.equal(component.state.groupPostComposerPending, false);
+});
+
+test('chat remove purges group posts, comments, drafts and pending content responses', async () => {
+  const component = createComponent();
+  const stalePage = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.groupPosts = [component.mapAPIPost(rawGroupPost(71, 7, 2))];
+  component.state.groupPostComposerText = 'discarded draft';
+  component.state.groupPostComposerFile = { name: 'discarded.png' };
+  component.state.groupPostComposerFileName = 'discarded.png';
+  component.state.commentsByPostID = {
+    '71': Object.assign({}, emptyCommentStateForTest(), { draft: 'discarded comment', loaded: true })
+  };
+  component.state.openComments = { '71': true };
+  global.AuthAPI.groupPosts = () => stalePage.promise;
+
+  const pending = component.loadGroupPosts(7, true);
+  component.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
+  stalePage.resolve({ posts: [rawGroupPost(72, 7, 2)], next_cursor: null });
+  await pending;
+
+  assert.deepEqual(component.state.groupPosts, []);
+  assert.equal(component.state.commentsByPostID['71'], undefined);
+  assert.equal(component.state.openComments['71'], undefined);
+  assert.equal(component.state.groupPostComposerText, '');
+  assert.equal(component.state.groupPostComposerFile, null);
+  assert.equal(component.groupContentIsRevoked(7), true);
+  assert.equal(component.renderVals().gCanContent, false);
+});
+
+test('chat remove for another group does not clear the active group content', () => {
+  const component = createComponent();
+  component.state.screen = 'group';
+  component.state.groupId = 8;
+  component.state.apiGroupsByID = {
+    '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
+    '8': component.mapAPIGroup(rawGroup(8, 'member', 2, 2))
+  };
+  component.state.groupPosts = [component.mapAPIPost(rawGroupPost(81, 8, 2))];
+  component.state.groupPostComposerText = 'keep active draft';
+
+  component.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
+
+  assert.deepEqual(component.state.groupPosts.map(post => post.id), ['81']);
+  assert.equal(component.state.groupPostComposerText, 'keep active draft');
+  assert.equal(component.groupContentIsRevoked(7), true);
+  assert.equal(component.groupContentIsRevoked(8), false);
+});
+
+test('local leave purges group content and authoritative rejoin loads fresh history', async () => {
+  const component = createComponent();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.groupPosts = [component.mapAPIPost(rawGroupPost(71, 7, 1))];
+  component.state.commentsByPostID = {
+    '71': Object.assign({}, emptyCommentStateForTest(), { draft: 'leave draft', loaded: true })
+  };
+  global.AuthAPI.leaveGroup = async () => rawGroup(7, 'none', 1, 2);
+  global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
+  global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null });
+
+  await component.leaveGroup(7);
+  assert.equal(component.groupContentIsRevoked(7), true);
+  assert.deepEqual(component.state.groupPosts, []);
+  assert.equal(component.state.commentsByPostID['71'], undefined);
+
+  component.state.apiGroupsByID['7'] = component.mapAPIGroup(rawGroup(7, 'invited', 1, 2));
+  global.AuthAPI.acceptGroupInvitation = async () => rawGroup(7, 'member', 2, 2);
+  global.AuthAPI.groupInvitationInbox = async () => ({ invitations: [], next_cursor: null });
+  global.AuthAPI.groupPosts = async () => ({ posts: [rawGroupPost(72, 7, 1)], next_cursor: null });
+  await component.acceptGroupInvitation(7);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(component.groupContentIsRevoked(7), false);
+  assert.deepEqual(component.state.groupPosts.map(post => post.id), ['72']);
+});
+
+test('group comment count is monotonic across group and personal copies', async () => {
+  const component = createComponent();
+  const create = deferred();
+  const groupPost = component.mapAPIPost(rawGroupPost(91, 7, 2, 4));
+  component.state.groupPosts = [groupPost];
+  component.state.posts = [Object.assign({}, groupPost, { commentsCount: 3 })];
+  component.state.commentsByPostID = {
+    '91': Object.assign({}, emptyCommentStateForTest(), { draft: 'new comment' })
+  };
+  global.AuthAPI.createComment = () => create.promise;
+
+  const pending = component.createComment(91);
+  component.state.groupPosts = [Object.assign({}, groupPost, { commentsCount: 5 })];
+  create.resolve(rawComment(99, 91, 1));
+  await pending;
+
+  assert.equal(component.state.groupPosts[0].commentsCount, 5);
+  assert.equal(component.state.posts[0].commentsCount, 5);
+});
+
+test('logout invalidates pending group post load and create operations', async () => {
+  const component = createComponent();
+  const load = deferred();
+  const create = deferred();
+  component.state.screen = 'group';
+  component.state.groupId = 7;
+  component.state.groupPostComposerText = 'pending create';
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  global.AuthAPI.groupPosts = () => load.promise;
+  global.AuthAPI.createGroupPost = () => create.promise;
+  global.AuthAPI.logout = async () => null;
+
+  const pendingLoad = component.loadGroupPosts(7, true);
+  const pendingCreate = component.sendGroupPost();
+  await component.logout();
+  load.resolve({ posts: [rawGroupPost(71, 7, 2)], next_cursor: null });
+  create.resolve(rawGroupPost(72, 7, 1));
+  await Promise.all([pendingLoad, pendingCreate]);
+
+  assert.equal(component.state.authStatus, 'anonymous');
+  assert.deepEqual(component.state.groupPosts, []);
+  assert.equal(component.state.groupPostComposerText, '');
 });
 
 test('late history for chat A never replaces active chat B', async () => {

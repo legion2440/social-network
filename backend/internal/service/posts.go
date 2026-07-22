@@ -30,6 +30,11 @@ type CreatePostInput struct {
 	Media           *MediaUpload
 }
 
+type CreateGroupPostInput struct {
+	Text  string
+	Media *MediaUpload
+}
+
 type PostPage struct {
 	Posts      []*domain.Post
 	NextCursor *string
@@ -117,11 +122,12 @@ func (s *PostService) Create(ctx context.Context, authorUserID int64, input Crea
 			mediaID = &createdMediaID
 		}
 
+		privacy := input.Privacy
 		post = &domain.Post{
 			AuthorUserID: authorUserID,
 			Author:       author,
 			Text:         text,
-			Privacy:      input.Privacy,
+			Privacy:      &privacy,
 			MediaID:      mediaID,
 			CreatedAt:    now,
 		}
@@ -133,6 +139,94 @@ func (s *PostService) Create(ctx context.Context, authorUserID int64, input Crea
 			if err := repositories.Posts().AddSelectedUsers(ctx, post.ID, selectedUserIDs); err != nil {
 				return err
 			}
+		}
+		if staged != nil {
+			if err := staged.Finalize(); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if staged != nil {
+		staged.Keep()
+	}
+	return post, nil
+}
+
+func (s *PostService) CreateGroupPost(
+	ctx context.Context,
+	authorUserID, groupID int64,
+	input CreateGroupPostInput,
+) (*domain.Post, error) {
+	if s == nil || s.transactions == nil || s.clock == nil || s.media == nil || authorUserID <= 0 || groupID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	text := strings.TrimSpace(input.Text)
+	if !utf8.ValidString(text) {
+		return nil, ErrInvalidInput
+	}
+	runeCount := utf8.RuneCountInString(text)
+	if runeCount < 1 || runeCount > MaxPostTextRunes {
+		return nil, ErrInvalidInput
+	}
+
+	var staged *StagedMedia
+	var err error
+	if input.Media != nil {
+		staged, err = s.media.Stage(*input.Media)
+		if err != nil {
+			return nil, err
+		}
+		defer staged.Discard()
+	}
+
+	now := s.clock.Now()
+	var post *domain.Post
+	err = s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+		if _, err := authorizeGroupContentAccess(ctx, repositories, authorUserID, groupID); err != nil {
+			return err
+		}
+		author, err := repositories.Users().GetByID(ctx, authorUserID)
+		if errors.Is(err, repo.ErrNotFound) {
+			return ErrUnauthorized
+		}
+		if err != nil {
+			return err
+		}
+
+		var mediaID *int64
+		if staged != nil {
+			createdMediaID, err := repositories.Media().Create(
+				ctx, authorUserID, staged.MIME, staged.Size, staged.StorageKey, staged.OriginalName, now,
+			)
+			if err != nil {
+				return err
+			}
+			createdMedia, err := repositories.Media().GetByID(ctx, createdMediaID)
+			if err != nil {
+				return err
+			}
+			if createdMedia.OwnerUserID != authorUserID {
+				return fmt.Errorf("post media %d is not owned by user %d", createdMediaID, authorUserID)
+			}
+			mediaID = &createdMediaID
+		}
+
+		storedGroupID := groupID
+		post = &domain.Post{
+			AuthorUserID: authorUserID,
+			Author:       author,
+			GroupID:      &storedGroupID,
+			Text:         text,
+			MediaID:      mediaID,
+			CreatedAt:    now,
+		}
+		post.ID, err = repositories.Posts().Create(ctx, post)
+		if err != nil {
+			return err
 		}
 		if staged != nil {
 			if err := staged.Finalize(); err != nil {
@@ -187,6 +281,30 @@ func (s *PostService) UserPosts(
 		}
 		var err error
 		posts, err = repositories.Posts().ListByAuthor(ctx, viewerUserID, authorUserID, cursor, limit+1)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return buildPostPage(posts, limit), nil
+}
+
+func (s *PostService) GroupPosts(
+	ctx context.Context,
+	viewerUserID, groupID int64,
+	cursor *domain.PostCursor,
+	limit int,
+) (*PostPage, error) {
+	if s == nil || s.transactions == nil || viewerUserID <= 0 || groupID <= 0 || !validPostPage(cursor, limit) {
+		return nil, ErrInvalidInput
+	}
+	var posts []*domain.Post
+	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+		if _, err := authorizeGroupContentAccess(ctx, repositories, viewerUserID, groupID); err != nil {
+			return err
+		}
+		var err error
+		posts, err = repositories.Posts().ListByGroup(ctx, viewerUserID, groupID, cursor, limit+1)
 		return err
 	})
 	if err != nil {

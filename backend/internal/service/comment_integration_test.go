@@ -27,10 +27,11 @@ func TestCreateCommentRollsBackWhenTransactionFails(t *testing.T) {
 	users := sqlite.NewUserRepo(db)
 	authorID := createPostTestUser(t, ctx, users, "comment-rollback-author@example.com", now)
 	commenterID := createPostTestUser(t, ctx, users, "comment-rollback-user@example.com", now)
+	privacy := domain.PostPublic
 	postID, err := sqlite.NewPostRepo(db).Create(ctx, &domain.Post{
 		AuthorUserID: authorID,
 		Text:         "comment target",
-		Privacy:      domain.PostPublic,
+		Privacy:      &privacy,
 		CreatedAt:    now,
 	})
 	if err != nil {
@@ -68,10 +69,11 @@ func TestCreateCommentCountsTrimmedUnicodeCodePoints(t *testing.T) {
 	users := sqlite.NewUserRepo(db)
 	authorID := createPostTestUser(t, ctx, users, "comment-unicode-author@example.com", now)
 	commenterID := createPostTestUser(t, ctx, users, "comment-unicode-user@example.com", now)
+	privacy := domain.PostPublic
 	postID, err := sqlite.NewPostRepo(db).Create(ctx, &domain.Post{
 		AuthorUserID: authorID,
 		Text:         "Unicode comments",
-		Privacy:      domain.PostPublic,
+		Privacy:      &privacy,
 		CreatedAt:    now,
 	})
 	if err != nil {

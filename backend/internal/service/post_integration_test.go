@@ -114,6 +114,57 @@ func TestCreatePostCountsTrimmedUnicodeCodePoints(t *testing.T) {
 	}
 }
 
+func TestCreateGroupPostRollbackRemovesFinalFileAndRows(t *testing.T) {
+	root := t.TempDir()
+	db, err := sqlite.Open(context.Background(), filepath.Join(root, "social-network.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	now := time.Date(2026, time.July, 22, 10, 0, 0, 0, time.UTC)
+	users := sqlite.NewUserRepo(db)
+	ownerID := createPostTestUser(t, ctx, users, "group-post-rollback@example.com", now)
+	transactions := sqlite.NewTransactionManager(db)
+	group, err := service.NewGroupService(transactions, fixedPostClock{now: now}).Create(ctx, ownerID, "Rollback group", "Description")
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	uploadDir := filepath.Join(root, "uploads")
+	stager, err := service.NewMediaStager(&authTestIDGenerator{}, uploadDir, service.MaxMediaBytes)
+	if err != nil {
+		t.Fatalf("new post media stager: %v", err)
+	}
+	posts := service.NewPostService(
+		failAfterCallbackTransactions{delegate: transactions}, fixedPostClock{now: now}, stager,
+	)
+	png := []byte("\x89PNG\r\n\x1a\ngroup-rollback-image")
+	post, err := posts.CreateGroupPost(ctx, ownerID, group.ID, service.CreateGroupPostInput{
+		Text:  "rollback group post",
+		Media: &service.MediaUpload{OriginalName: "group.png", Reader: bytes.NewReader(png)},
+	})
+	if !errors.Is(err, errForcedCommitFailure) || post != nil {
+		t.Fatalf("expected forced transaction failure, post=%+v err=%v", post, err)
+	}
+	for _, table := range []string{"posts", "post_selected_users", "post_comments", "media"} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("rollback left %d rows in %s", count, table)
+		}
+	}
+	files, err := os.ReadDir(uploadDir)
+	if err != nil {
+		t.Fatalf("read uploads: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("rollback left files: %+v", files)
+	}
+}
+
 type fixedPostClock struct {
 	now time.Time
 }

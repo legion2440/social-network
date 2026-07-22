@@ -187,6 +187,7 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "follows", "follower_user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "follows", "followed_user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "posts", "author_user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "posts", "group_id", "groups", "id", "CASCADE")
 	assertForeignKey(t, db, "posts", "media_id", "media", "id", "SET NULL")
 	assertForeignKey(t, db, "post_selected_users", "post_id", "posts", "id", "CASCADE")
 	assertForeignKey(t, db, "post_selected_users", "user_id", "users", "id", "CASCADE")
@@ -200,6 +201,223 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "chat_messages", "direct_conversation_id", "direct_conversations", "id", "CASCADE")
 	assertForeignKey(t, db, "chat_messages", "group_id", "groups", "id", "CASCADE")
 	assertForeignKey(t, db, "chat_messages", "sender_user_id", "users", "id", "CASCADE")
+}
+
+func TestGroupPostSchemaConstraintsAndIndex(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "social-network.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	userResult, err := db.Exec(`
+		INSERT INTO users (email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
+		VALUES ('group-post-schema@example.com', 'hash', 'Group', 'Poster', '22-07-1992', 1, 1)
+	`)
+	if err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	userID, _ := userResult.LastInsertId()
+	groupResult, err := db.Exec(`INSERT INTO groups (owner_user_id, title, description, created_at) VALUES (?, 'Posts', 'Description', 1)`, userID)
+	if err != nil {
+		t.Fatalf("insert group: %v", err)
+	}
+	groupID, _ := groupResult.LastInsertId()
+
+	if _, err := db.Exec(`INSERT INTO posts (author_user_id, text, privacy, created_at) VALUES (?, 'personal', 'public', 1)`, userID); err != nil {
+		t.Fatalf("insert personal post: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO posts (author_user_id, group_id, text, created_at) VALUES (?, ?, 'group', 1)`, userID, groupID); err != nil {
+		t.Fatalf("insert group post: %v", err)
+	}
+	for name, statement := range map[string]string{
+		"personal without privacy": `INSERT INTO posts (author_user_id, text, created_at) VALUES (?, 'invalid', 1)`,
+		"group with privacy":       `INSERT INTO posts (author_user_id, group_id, text, privacy, created_at) VALUES (?, ?, 'invalid', 'public', 1)`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var err error
+			if name == "group with privacy" {
+				_, err = db.Exec(statement, userID, groupID)
+			} else {
+				_, err = db.Exec(statement, userID)
+			}
+			if err == nil {
+				t.Fatal("expected one-of constraint failure")
+			}
+		})
+	}
+	if !schemaObjectExists(t, db, "index", "idx_posts_group_created") {
+		t.Fatal("missing group post pagination index")
+	}
+}
+
+func TestMigration11PreservesPersonalPostGraphAndAutoincrement(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "migration-11.db")
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("enable foreign keys: %v", err)
+	}
+
+	migrator, sourceDriver, err := newMigrator(db)
+	if err != nil {
+		t.Fatalf("new migrator: %v", err)
+	}
+	if err := migrator.Migrate(10); err != nil {
+		t.Fatalf("migrate to version 10: %v", err)
+	}
+	_ = sourceDriver.Close()
+
+	if _, err := db.Exec(`
+		INSERT INTO users (id, email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
+		VALUES
+			(1, 'migration-author@example.com', 'hash', 'Migration', 'Author', '22-07-1992', 1, 1),
+			(2, 'migration-reader@example.com', 'hash', 'Migration', 'Reader', '22-07-1992', 1, 1)
+	`); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	mediaResult, err := db.Exec(`
+		INSERT INTO media (owner_user_id, mime, size, storage_key, original_name, created_at)
+		VALUES (1, 'image/png', 8, 'migration.png', 'migration.png', 2)
+	`)
+	if err != nil {
+		t.Fatalf("seed media: %v", err)
+	}
+	mediaID, _ := mediaResult.LastInsertId()
+	if _, err := db.Exec(`
+		INSERT INTO posts (id, author_user_id, text, privacy, media_id, created_at)
+		VALUES (41, 1, 'selected migration post', 'selected', ?, 3)
+	`, mediaID); err != nil {
+		t.Fatalf("seed post: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO post_selected_users (post_id, user_id) VALUES (41, 2)`); err != nil {
+		t.Fatalf("seed audience: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO post_comments (id, post_id, author_user_id, text, created_at)
+		VALUES (71, 41, 2, 'preserved comment', 4)
+	`); err != nil {
+		t.Fatalf("seed comment: %v", err)
+	}
+
+	if err := migrateUp(db); err != nil {
+		t.Fatalf("migrate to version 11: %v", err)
+	}
+	assertMigrationVersion(t, db, 11, false)
+	var (
+		groupID       sql.NullInt64
+		privacy       string
+		gotMediaID    int64
+		commentsCount int64
+	)
+	if err := db.QueryRow(`
+		SELECT group_id, privacy, media_id,
+			(SELECT COUNT(*) FROM post_comments WHERE post_id = posts.id)
+		FROM posts WHERE id = 41
+	`).Scan(&groupID, &privacy, &gotMediaID, &commentsCount); err != nil {
+		t.Fatalf("read migrated post: %v", err)
+	}
+	if groupID.Valid || privacy != "selected" || gotMediaID != mediaID || commentsCount != 1 {
+		t.Fatalf("migrated post mismatch: group=%+v privacy=%q media=%d comments=%d", groupID, privacy, gotMediaID, commentsCount)
+	}
+	var audienceUserID, commentID int64
+	if err := db.QueryRow(`SELECT user_id FROM post_selected_users WHERE post_id = 41`).Scan(&audienceUserID); err != nil || audienceUserID != 2 {
+		t.Fatalf("migrated audience: user=%d err=%v", audienceUserID, err)
+	}
+	if err := db.QueryRow(`SELECT id FROM post_comments WHERE post_id = 41`).Scan(&commentID); err != nil || commentID != 71 {
+		t.Fatalf("migrated comment: id=%d err=%v", commentID, err)
+	}
+	result, err := db.Exec(`INSERT INTO posts (author_user_id, text, privacy, created_at) VALUES (1, 'next post', 'public', 5)`)
+	if err != nil {
+		t.Fatalf("insert post after migration: %v", err)
+	}
+	nextID, _ := result.LastInsertId()
+	if nextID <= 41 {
+		t.Fatalf("AUTOINCREMENT did not advance beyond migrated IDs: %d", nextID)
+	}
+}
+
+func TestMigration11DownRefusesGroupPostsWithoutDirtyState(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "migration-11-down.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+		INSERT INTO users (id, email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
+		VALUES (1, 'down-owner@example.com', 'hash', 'Down', 'Owner', '22-07-1992', 1, 1)
+	`); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO groups (id, owner_user_id, title, description, created_at) VALUES (1, 1, 'Down', 'Description', 1)`); err != nil {
+		t.Fatalf("seed group: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO posts (id, author_user_id, group_id, text, created_at) VALUES (10, 1, 1, 'keep me', 1)`); err != nil {
+		t.Fatalf("seed group post: %v", err)
+	}
+
+	if err := migrateDown(db); err == nil {
+		t.Fatal("expected down migration refusal")
+	}
+	assertMigrationVersion(t, db, 11, false)
+	var text string
+	if err := db.QueryRow(`SELECT text FROM posts WHERE id = 10`).Scan(&text); err != nil || text != "keep me" {
+		t.Fatalf("group post changed after refused down: text=%q err=%v", text, err)
+	}
+}
+
+func TestMigration11DownPreservesPersonalPostGraph(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "migration-11-personal-down.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+		INSERT INTO users (id, email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
+		VALUES
+			(1, 'down-author@example.com', 'hash', 'Down', 'Author', '22-07-1992', 1, 1),
+			(2, 'down-reader@example.com', 'hash', 'Down', 'Reader', '22-07-1992', 1, 1)
+	`); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO posts (id, author_user_id, text, privacy, created_at) VALUES (31, 1, 'personal down', 'selected', 2)`); err != nil {
+		t.Fatalf("seed post: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO post_selected_users (post_id, user_id) VALUES (31, 2)`); err != nil {
+		t.Fatalf("seed audience: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO post_comments (id, post_id, author_user_id, text, created_at) VALUES (61, 31, 2, 'down comment', 3)`); err != nil {
+		t.Fatalf("seed comment: %v", err)
+	}
+	if err := guardGroupPostsDownMigration(db); err != nil {
+		t.Fatalf("preflight personal down: %v", err)
+	}
+	migrator, sourceDriver, err := newMigrator(db)
+	if err != nil {
+		t.Fatalf("new migrator: %v", err)
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("migrate version 11 down: %v", err)
+	}
+	_ = sourceDriver.Close()
+	assertMigrationVersion(t, db, 10, false)
+	if _, exists := tableColumns(t, db, "posts")["group_id"]; exists {
+		t.Fatal("posts.group_id remained after version 11 down")
+	}
+	var postID, audienceUserID, commentID int64
+	if err := db.QueryRow(`SELECT id FROM posts WHERE id = 31 AND privacy = 'selected'`).Scan(&postID); err != nil || postID != 31 {
+		t.Fatalf("personal post after down: id=%d err=%v", postID, err)
+	}
+	if err := db.QueryRow(`SELECT user_id FROM post_selected_users WHERE post_id = 31`).Scan(&audienceUserID); err != nil || audienceUserID != 2 {
+		t.Fatalf("audience after down: user=%d err=%v", audienceUserID, err)
+	}
+	if err := db.QueryRow(`SELECT id FROM post_comments WHERE post_id = 31`).Scan(&commentID); err != nil || commentID != 61 {
+		t.Fatalf("comment after down: id=%d err=%v", commentID, err)
+	}
 }
 
 func TestGroupSchemaConstraintsIndexesAndCascades(t *testing.T) {

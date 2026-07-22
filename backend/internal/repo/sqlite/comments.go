@@ -33,21 +33,32 @@ func (r *CommentRepo) Create(ctx context.Context, comment *domain.Comment) (int6
 
 func (r *CommentRepo) ListByPost(
 	ctx context.Context,
-	postID int64,
+	viewerUserID, postID int64,
 	cursor *domain.CommentCursor,
 	limit int,
 ) ([]*domain.Comment, error) {
-	if r == nil || r.db == nil || postID <= 0 || limit <= 0 {
+	if r == nil || r.db == nil || viewerUserID <= 0 || postID <= 0 || limit <= 0 {
 		return []*domain.Comment{}, nil
 	}
 	query := `
 		SELECT
 			c.id, c.post_id, c.author_user_id, c.text, c.created_at,
-			u.id, u.first_name, u.last_name, u.nickname, u.avatar_media_id, u.is_private
+			u.id, u.first_name, u.last_name, u.gender, u.nickname,
+			CASE
+				WHEN u.avatar_media_id IS NULL THEN NULL
+				WHEN u.id = ? OR u.is_private = 0 OR EXISTS (
+					SELECT 1 FROM follows avatar_follow
+					WHERE avatar_follow.follower_user_id = ?
+						AND avatar_follow.followed_user_id = u.id
+						AND avatar_follow.status = 'accepted'
+				) THEN u.avatar_media_id
+				ELSE NULL
+			END,
+			u.is_private
 		FROM post_comments c
 		JOIN users u ON u.id = c.author_user_id
 		WHERE c.post_id = ?`
-	args := []any{postID}
+	args := []any{viewerUserID, viewerUserID, postID}
 	if cursor != nil {
 		timestamp := timeToUnix(cursor.CreatedAt)
 		query += ` AND (c.created_at > ? OR (c.created_at = ? AND c.id > ?))`
@@ -81,6 +92,7 @@ func scanComment(row rowScanner) (*domain.Comment, error) {
 		comment       domain.Comment
 		author        domain.User
 		createdAt     int64
+		gender        sql.NullString
 		nickname      sql.NullString
 		avatarMediaID sql.NullInt64
 		isPrivate     int
@@ -94,6 +106,7 @@ func scanComment(row rowScanner) (*domain.Comment, error) {
 		&author.ID,
 		&author.FirstName,
 		&author.LastName,
+		&gender,
 		&nickname,
 		&avatarMediaID,
 		&isPrivate,
@@ -103,6 +116,11 @@ func scanComment(row rowScanner) (*domain.Comment, error) {
 		}
 		return nil, err
 	}
+	parsedGender, err := genderFromNullString(gender)
+	if err != nil {
+		return nil, err
+	}
+	author.Gender = parsedGender
 	author.Nickname = stringFromNullString(nickname)
 	if avatarMediaID.Valid {
 		value := avatarMediaID.Int64

@@ -138,6 +138,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/groups", protected(h.handleGroups))
 	mux.Handle("/api/groups/{id}", protected(h.handleGroupDetail))
 	mux.Handle("/api/groups/{id}/members", protected(h.handleGroupMembers))
+	mux.Handle("/api/groups/{id}/posts", protected(h.handleGroupPosts))
 	mux.Handle("/api/groups/{id}/join-request", protected(h.handleGroupJoinRequest))
 	mux.Handle("/api/groups/{id}/join-requests", protected(h.handleGroupJoinRequests))
 	mux.Handle("/api/groups/{id}/join-requests/{user_id}/accept", protected(h.handleGroupJoinRequestAccept))

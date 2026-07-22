@@ -58,6 +58,7 @@ test('post response mapping keeps controlled media and author fields', () => {
   assert.equal(mapped.privacy, 'selected');
   assert.equal(mapped.mediaUrl, '/api/posts/42/media');
   assert.equal(mapped.commentsCount, 8);
+	assert.equal(mapped.groupID, null);
   assert.deepEqual(mapped.author, {
     apiId: 7,
     firstName: 'Ada',
@@ -66,4 +67,30 @@ test('post response mapping keeps controlled media and author fields', () => {
     avatarUrl: '/api/users/7/avatar?v=9',
     isPrivate: true
   });
+});
+
+test('group post FormData and response omit personal privacy state', () => {
+  const media = { name: 'group.gif' };
+  const form = PostModel.buildCreateGroupPostForm({ text: '  group hello  ', media }, FakeFormData);
+  assert.deepEqual(form.entries, [
+    ['text', 'group hello'],
+    ['media', media, 'group.gif']
+  ]);
+
+  const mapped = PostModel.normalizePostResponse({
+    id: 51,
+    group_id: 9,
+    author: {
+      id: 7, first_name: 'Ada', last_name: 'Lovelace', nickname: null,
+      avatar_url: '/static/avatars/neutral.svg', is_private: false
+    },
+    text: 'Group post',
+    media_url: null,
+    comments_count: 2,
+    created_at: '2026-07-22T10:00:00Z'
+  }, 1);
+
+  assert.equal(mapped.groupID, 9);
+  assert.equal(mapped.privacy, undefined);
+  assert.equal(mapped.commentsCount, 2);
 });

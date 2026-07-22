@@ -656,9 +656,54 @@
       </div>
 
       <sc-if value="{{gTabPosts}}" hint-placeholder-val="{{true}}">
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:28px;text-align:center;color:var(--text3);font:700 13px/1.5 'Manrope',sans-serif">
-          Group posts are not implemented yet.
-        </div>
+		<sc-if value="{{gContentLocked}}" hint-placeholder-val="{{false}}">
+		  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:34px 24px;text-align:center;color:var(--text3);font:700 13px/1.55 'Manrope',sans-serif">
+			Join this group to read posts and take part in the conversation.
+		  </div>
+		</sc-if>
+		<sc-if value="{{gCanContent}}" hint-placeholder-val="{{true}}">
+		  <div style="display:flex;flex-direction:column;gap:16px">
+			<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:16px 18px">
+			  <textarea rows="3" maxlength="5000" placeholder="Share something with the group…" value="{{groupPostComposerText}}" onchange="{{onGroupPostComposerText}}" style="width:100%;border:none;background:transparent;color:var(--text);font:500 14.5px/1.5 'Manrope',sans-serif;outline:none"></textarea>
+			  <input id="group-post-media" type="file" accept="image/jpeg,image/png,image/gif,image/webp" onchange="{{onGroupPostMedia}}" style="display:none">
+			  <sc-if value="{{groupPostComposerHasFile}}" hint-placeholder-val="{{false}}"><div style="margin-top:8px;padding:8px 10px;border-radius:11px;background:var(--surface2);display:flex;align-items:center;gap:8px;font:650 11.5px 'Manrope',sans-serif;color:var(--text2)"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{groupPostComposerFileName}}</span><button type="button" onclick="{{removeGroupPostMedia}}" style="margin-left:auto;border:none;background:transparent;color:var(--danger);font:800 11px 'Manrope',sans-serif;cursor:pointer">Remove</button></div></sc-if>
+			  <sc-if value="{{groupPostComposerHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="margin-top:8px;color:var(--danger);font:650 12px/1.4 'Manrope',sans-serif">{{groupPostComposerError}}</div></sc-if>
+			  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+				<button type="button" onclick="{{pickGroupPostMedia}}" disabled="{{groupPostComposerPending}}" style="padding:8px 14px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--text2);font:800 12px 'Manrope',sans-serif;cursor:pointer">Add image</button>
+				<button type="button" onclick="{{sendGroupPost}}" disabled="{{groupPostComposerDisabled}}" style="padding:8px 18px;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 12px 'Manrope',sans-serif;cursor:pointer">{{groupPostComposerButtonLabel}}</button>
+			  </div>
+			</div>
+
+			<sc-if value="{{groupPostsLoading}}" hint-placeholder-val="{{false}}"><div style="padding:28px;text-align:center;font:650 13px 'Manrope',sans-serif;color:var(--text3)">Loading group posts…</div></sc-if>
+			<sc-if value="{{groupPostsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="padding:16px;text-align:center;border:1px solid color-mix(in oklab,var(--danger) 35%,var(--border));border-radius:14px;color:var(--danger);font:650 12.5px 'Manrope',sans-serif">{{groupPostsError}} <button onclick="{{retryGroupPosts}}" style="border:none;background:transparent;color:var(--accent);font:800 12px 'Manrope',sans-serif;cursor:pointer">Retry</button></div></sc-if>
+			<sc-if value="{{groupPostsEmpty}}" hint-placeholder-val="{{false}}"><div style="padding:28px;text-align:center;color:var(--text3);font:650 13px 'Manrope',sans-serif">No group posts yet.</div></sc-if>
+			<sc-for list="{{gPosts}}" as="p" hint-placeholder-count="2">
+			  <article style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;animation:fadeUp .35s ease both;animation-delay:{{p.delay}}">
+				<div style="display:flex;gap:12px;align-items:center">
+				  <div onclick="{{p.goProfile}}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 13px 'Manrope',sans-serif;flex:none;background:{{p.user.color}};overflow:hidden;cursor:pointer">
+					<sc-if value="{{p.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{p.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if>
+					<sc-if value="{{p.user.noAvatar}}" hint-placeholder-val="{{true}}">{{p.user.initials}}</sc-if>
+				  </div>
+				  <div style="flex:1"><button onclick="{{p.goProfile}}" style="border:none;background:transparent;padding:0;color:var(--text);font:750 14px 'Manrope',sans-serif;cursor:pointer">{{p.user.name}}</button><div style="font:600 12px 'Manrope',sans-serif;color:var(--text3)">{{p.time}}</div></div>
+				</div>
+				<p style="margin:12px 0 0;font:500 15px/1.55 'Manrope',sans-serif;white-space:pre-wrap">{{p.text}}</p>
+				<sc-if value="{{p.hasImage}}" hint-placeholder-val="{{false}}"><img src="{{p.mediaUrl}}" alt="Group post media" style="display:block;width:100%;max-height:440px;margin-top:13px;border-radius:14px;border:1px solid var(--border);object-fit:cover"></sc-if>
+				<div style="display:flex;margin-top:12px;border-top:1px solid var(--border);padding-top:9px"><button onclick="{{p.onToggleComments}}" style="display:flex;align-items:center;gap:7px;padding:7px 13px;border:none;border-radius:999px;background:transparent;color:var(--text2);font:700 13px 'Manrope',sans-serif;cursor:pointer"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>{{p.commentCount}}</button></div>
+				<sc-if value="{{p.showComments}}" hint-placeholder-val="{{false}}">
+				  <div style="margin-top:10px;display:flex;flex-direction:column;gap:9px;animation:drop .2s ease both">
+					<sc-if value="{{p.commentsLoading}}" hint-placeholder-val="{{false}}"><div style="padding:7px;color:var(--text3);font:600 12px 'Manrope',sans-serif">Loading comments…</div></sc-if>
+					<sc-if value="{{p.commentsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="padding:7px;color:var(--danger);font:600 12px 'Manrope',sans-serif">{{p.commentsError}} <button onclick="{{p.retryComments}}" style="border:none;background:transparent;color:var(--accent);font:800 12px 'Manrope',sans-serif;cursor:pointer">Retry</button></div></sc-if>
+					<sc-for list="{{p.comments}}" as="c" hint-placeholder-count="1"><div style="display:flex;gap:9px"><div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:700 10px 'Manrope',sans-serif;flex:none;background:{{c.user.color}};overflow:hidden"><sc-if value="{{c.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img src="{{c.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt="" style="width:100%;height:100%;display:block;object-fit:cover"></sc-if><sc-if value="{{c.user.noAvatar}}" hint-placeholder-val="{{true}}">{{c.user.initials}}</sc-if></div><div style="flex:1;padding:8px 11px;border-radius:12px;background:var(--surface2)"><div style="font:750 11.5px 'Manrope',sans-serif">{{c.user.name}} <span style="font-weight:600;color:var(--text3)">· {{c.time}}</span></div><div style="margin-top:2px;font:500 13px/1.45 'Manrope',sans-serif;white-space:pre-wrap">{{c.text}}</div></div></div></sc-for>
+					<sc-if value="{{p.commentsHasMore}}" hint-placeholder-val="{{false}}"><button onclick="{{p.loadMoreComments}}" disabled="{{p.commentsPending}}" style="align-self:flex-start;border:none;background:transparent;color:var(--accent);font:800 11.5px 'Manrope',sans-serif;cursor:pointer">Load more comments</button></sc-if>
+					<div style="display:flex;gap:8px"><input value="{{p.draft}}" onchange="{{p.onDraft}}" onkeydown="{{p.onKey}}" disabled="{{p.commentCreatePending}}" placeholder="Write a comment…" style="flex:1;padding:9px 12px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font:500 12.5px 'Manrope',sans-serif;outline-color:var(--accent)"><button onclick="{{p.onSendComment}}" disabled="{{p.commentSendDisabled}}" style="padding:8px 14px;border:none;border-radius:999px;background:var(--accent);color:#fff;font:800 11.5px 'Manrope',sans-serif;cursor:pointer">{{p.commentSendLabel}}</button></div>
+					<sc-if value="{{p.commentCreateHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="color:var(--danger);font:600 11.5px 'Manrope',sans-serif">{{p.commentCreateError}}</div></sc-if>
+				  </div>
+				</sc-if>
+			  </article>
+			</sc-for>
+			<sc-if value="{{groupPostsHasMore}}" hint-placeholder-val="{{false}}"><button onclick="{{loadMoreGroupPosts}}" disabled="{{groupPostsLoadMoreDisabled}}" style="align-self:center;padding:9px 20px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text2);font:800 12px 'Manrope',sans-serif;cursor:pointer">Load more posts</button></sc-if>
+		  </div>
+		</sc-if>
       </sc-if>
 
       <sc-if value="{{gTabEvents}}" hint-placeholder-val="{{false}}">

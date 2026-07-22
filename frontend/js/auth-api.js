@@ -144,6 +144,19 @@
           expectedStatus: 200
         });
       },
+      groupPosts: function (groupID, cursor, limit) {
+        return request(pagePath('/api/groups/' + encodeURIComponent(String(groupID)) + '/posts', cursor, limit), {
+          method: 'GET',
+          expectedStatus: 200
+        });
+      },
+      createGroupPost: function (groupID, formData) {
+        return request('/api/groups/' + encodeURIComponent(String(groupID)) + '/posts', {
+          method: 'POST',
+          body: formData,
+          expectedStatus: 201
+        });
+      },
       postComments: function (postID, cursor, limit) {
         return request(pagePath('/api/posts/' + encodeURIComponent(String(postID)) + '/comments', cursor, limit), {
           method: 'GET',

@@ -21,8 +21,9 @@ type Post struct {
 	ID            int64
 	AuthorUserID  int64
 	Author        *User
+	GroupID       *int64
 	Text          string
-	Privacy       PostPrivacy
+	Privacy       *PostPrivacy
 	MediaID       *int64
 	CommentsCount int64
 	CreatedAt     time.Time
