@@ -174,6 +174,34 @@ func TestGroupEventsCreateListAccessValidationAndPagination(t *testing.T) {
 	}
 }
 
+func TestGroupEventResponseRequiresActiveMembership(t *testing.T) {
+	env := newTestEnvironment(t)
+	_, ownerToken := env.createUserAndSession(t, "event-response-owner@example.com")
+	invitedID, invitedToken := env.createUserAndSession(t, "event-response-invited@example.com")
+	_, requestedToken := env.createUserAndSession(t, "event-response-requested@example.com")
+	_, outsiderToken := env.createUserAndSession(t, "event-response-outsider@example.com")
+	group := createGroupForTest(t, env, ownerToken, "Response access group")
+	base := "/api/groups/" + strconv.FormatInt(group.ID, 10)
+
+	inviteRecorder := httptest.NewRecorder()
+	env.handler.ServeHTTP(inviteRecorder, groupJSONRequest(http.MethodPost, base+"/invitations", ownerToken, fmt.Sprintf(`{"user_id":%d}`, invitedID)))
+	if inviteRecorder.Code != http.StatusOK {
+		t.Fatalf("invite event user: status=%d body=%q", inviteRecorder.Code, inviteRecorder.Body.String())
+	}
+	groupMutation(t, env, http.MethodPost, base+"/join-request", requestedToken, http.StatusOK)
+	event := createGroupEventThroughHTTP(t, env, ownerToken, group.ID, "Protected RSVP", testNow.Add(time.Hour), http.StatusCreated)
+
+	for name, token := range map[string]string{
+		"invited":   invitedToken,
+		"requested": requestedToken,
+		"outsider":  outsiderToken,
+	} {
+		t.Run(name, func(t *testing.T) {
+			respondToGroupEvent(t, env, token, group.ID, event.ID, "going", http.StatusForbidden)
+		})
+	}
+}
+
 func TestGroupEventResponsesCountsLeaveRejoinAndCrossGroup(t *testing.T) {
 	env := newTestEnvironment(t)
 	ownerID, ownerToken := env.createUserAndSession(t, "event-rsvp-owner@example.com")
