@@ -1,0 +1,58 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: social-network-backend:local
+    environment:
+      SOCIAL_NETWORK_HTTP_ADDR: 0.0.0.0:8080
+      SOCIAL_NETWORK_DB_PATH: /data/db/social-network.db
+      SOCIAL_NETWORK_UPLOAD_DIR: /data/uploads
+      SOCIAL_NETWORK_FRONTEND_DIR: /app/frontend-disabled
+      SOCIAL_NETWORK_COOKIE_SECURE: "false"
+    expose:
+      - "8080"
+    volumes:
+      - db:/data/db
+      - uploads:/data/uploads
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+    networks:
+      - private
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: social-network-frontend:local
+    environment:
+      BACKEND_UPSTREAM: backend:8080
+      XDG_CONFIG_HOME: /tmp/caddy/config
+      XDG_DATA_HOME: /tmp/caddy/data
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${SOCIAL_NETWORK_PORT:-8080}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+    networks:
+      - private
+
+networks:
+  private:
+    driver: bridge
+
+volumes:
+  db:
+    name: social-network-db
+  uploads:
+    name: social-network-uploads

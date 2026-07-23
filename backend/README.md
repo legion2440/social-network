@@ -28,6 +28,15 @@ directory. For local development the same Go server also serves the frontend
 from `../frontend` by default, so browser requests and the session cookie stay
 same-origin.
 
+## Docker deployment
+
+The repository root contains the supported two-container deployment. Caddy
+serves the static frontend and proxies backend routes over a private Docker
+network; the Go backend is not published on a host port. SQLite and uploaded
+files use separate persistent named volumes. See [`../README.md`](../README.md)
+for image builds, standalone and Compose launch instructions, healthchecks,
+runtime hardening, persistence, and project-scoped cleanup.
+
 ## Database migrations
 
 Versioned SQLite migrations are embedded from
