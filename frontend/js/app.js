@@ -2235,7 +2235,7 @@ class Component extends DCLogic {
     const queued = this.state.chatReadQueuedThroughByKey[key];
     const sent = this.chatReadSentCandidateByKey[key];
     if (queued && this.compareChatReadCandidates(candidate, queued) <= 0) {
-      if (!this.chatReadInFlightByKey[key] && this.state.chatReadErrorByKey[key]) {
+      if (!this.chatReadInFlightByKey[key]) {
         this.drainChatReadQueue(key);
       }
       return;
@@ -2673,7 +2673,6 @@ class Component extends DCLogic {
       const chatReadErrorByKey = Object.assign({}, current.chatReadErrorByKey);
       const chatReadQueuedThroughByKey = Object.assign({}, current.chatReadQueuedThroughByKey);
       const chatReadThroughMessageIDByKey = Object.assign({}, current.chatReadThroughMessageIDByKey);
-      const removedUnread = Math.max(0, Number(chatUnreadByKey[key]) || 0);
       delete chatsByKey[key];
       delete messagesByChatKey[key];
       delete typingByChatKey[key];
@@ -2687,7 +2686,6 @@ class Component extends DCLogic {
         chatsByKey, messagesByChatKey, typingByChatKey, chatKeys, chatUnreadByKey,
         chatReadPendingByKey, chatReadErrorByKey, chatReadQueuedThroughByKey,
         chatReadThroughMessageIDByKey,
-        chatUnreadCount: Math.max(0, Number(current.chatUnreadCount || 0) - removedUnread),
         activeChatKey: current.activeChatKey === key ? (chatKeys[0] || null) : current.activeChatKey
       };
     });

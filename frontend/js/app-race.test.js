@@ -1979,6 +1979,92 @@ test('chat read queue serializes newer displayed markers without comparing serve
   }
 });
 
+test('chat read queue resumes a newer marker after visibility eligibility returns', async () => {
+  const component = createComponent();
+  const originalDocument = global.document;
+  global.document = { visibilityState: 'visible' };
+  try {
+    const key = 'direct:2';
+    const firstRaw = rawChatMessage(913, 'f84956f7-55f4-4784-806a-c4910321dc9f', 'direct', 2, 2, '2026-07-22T12:00:00Z');
+    const secondRaw = rawChatMessage(914, '1994b1e8-91bf-411f-a1e0-af27567159f9', 'direct', 2, 2, '2026-07-22T12:00:01Z');
+    component.state.screen = 'chat';
+    component.state.activeChatKey = key;
+    component.state.chatsByKey = { [key]: ChatModel.normalizeChatSummary(rawDirectChat(2, firstRaw, 2)) };
+    component.state.chatKeys = [key];
+    component.state.messagesByChatKey = {
+      [key]: {
+        messages: [ChatModel.normalizeMessage(firstRaw)], nextCursor: null,
+        loading: false, pending: false, error: '', loaded: true
+      }
+    };
+    const firstRead = deferred();
+    const secondRead = deferred();
+    const calls = [];
+    global.AuthAPI.markDirectChatRead = (userID, messageID) => {
+      calls.push([userID, messageID]);
+      return calls.length === 1 ? firstRead.promise : secondRead.promise;
+    };
+
+    component.enqueueChatRead(key);
+    await Promise.resolve();
+    component.state.messagesByChatKey[key].messages.push(ChatModel.normalizeMessage(secondRaw));
+    component.enqueueChatRead(key);
+    global.document.visibilityState = 'hidden';
+    firstRead.resolve({
+      chat: { kind: 'direct', target_id: 2 },
+      chat_unread_count: 1, unread_count: 1, revision: 5,
+      read_through_message_id: 913
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(calls, [[2, 913]]);
+    assert.equal(component.state.chatReadQueuedThroughByKey[key].id, 914);
+
+    global.document.visibilityState = 'visible';
+    component.handleVisibilityChange();
+    await Promise.resolve();
+    assert.deepEqual(calls, [[2, 913], [2, 914]]);
+
+    secondRead.resolve({
+      chat: { kind: 'direct', target_id: 2 },
+      chat_unread_count: 0, unread_count: 0, revision: 6,
+      read_through_message_id: 914
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(component.state.chatReadQueuedThroughByKey[key], undefined);
+  } finally {
+    global.document = originalDocument;
+  }
+});
+
+test('purging a stale per-chat unread key never subtracts from authoritative total', () => {
+  const component = createComponent();
+  const groupKey = 'group:9';
+  const directKey = 'direct:2';
+  const groupMessage = rawChatMessage(915, 'd90dc1da-27f1-4070-830b-ce5b77ac4349', 'group', 9, 2);
+  const directMessage = rawChatMessage(916, '3bbdf006-b330-43a7-9465-a87caa8b361c', 'direct', 2, 2);
+  component.state.chatsByKey = {
+    [groupKey]: ChatModel.normalizeChatSummary({
+      kind: 'group', target_id: 9, group: rawGroup(9, 'member', 2, 1),
+      last_message: groupMessage, activity_at: groupMessage.created_at, unread_count: 5
+    }),
+    [directKey]: ChatModel.normalizeChatSummary(rawDirectChat(2, directMessage, 1))
+  };
+  component.state.chatKeys = [groupKey, directKey];
+  component.state.chatUnreadByKey = { [groupKey]: 5, [directKey]: 1 };
+  component.state.chatUnreadCount = 1;
+  component.state.chatUnreadRevision = 7;
+
+  component.purgeChat(groupKey);
+
+  assert.equal(component.state.chatsByKey[groupKey], undefined);
+  assert.equal(component.state.chatUnreadByKey[groupKey], undefined);
+  assert.equal(component.state.chatUnreadByKey[directKey], 1);
+  assert.equal(component.state.chatUnreadCount, 1);
+  assert.equal(component.state.chatUnreadRevision, 7);
+});
+
 test('background preload and hidden tab do not mark read but entering Messages with loaded history does', async () => {
   const component = createComponent();
   const originalDocument = global.document;
