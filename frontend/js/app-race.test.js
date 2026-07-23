@@ -1764,6 +1764,38 @@ test('older action revision cannot block a still-current group source or revoked
   assert.equal(component.state.notifications.find(item => item.id === 42).resolution, null);
 });
 
+test('group revoke during pending invitation action resolves notification without restoring access', async () => {
+  const component = createComponent();
+  const action = deferred();
+  const freshNotifications = deferred();
+  const invitation = NotificationModel.normalize(rawNotification(42, 'group_invitation', { groupID: 9 }));
+  component.state.notifications = [invitation];
+  component.state.notificationUnreadCount = 1;
+  component.state.apiGroupsByID['9'] = component.mapAPIGroup(rawGroup(9, 'invited', 1));
+  global.AuthAPI.actOnNotification = () => action.promise;
+  global.AuthAPI.notifications = () => freshNotifications.promise;
+
+  const pending = component.actOnNotification(42, 'accept');
+  component.handleRealtimeEvent(JSON.stringify({
+    type: 'chat:remove', chat: { kind: 'group', target_id: 9 }
+  }));
+  action.resolve({
+    notification: rawNotification(42, 'group_invitation', {
+      groupID: 9, resolution: 'accepted', readAt: '2026-07-23T11:00:00Z'
+    }),
+    unread_count: 0,
+    revision: 1,
+    source: { kind: 'group', group: rawGroup(9, 'member', 2) }
+  });
+  await pending;
+
+  const resolved = component.state.notifications.find(item => item.id === 42);
+  assert.equal(resolved.resolution, 'accepted');
+  assert.equal(component.state.notificationUnreadCount, 0);
+  assert.equal(component.state.apiGroupsByID['9'].state, 'invited');
+  assert.equal(component.groupAccessIsRevoked(9), true);
+});
+
 test('new actionable lifecycle invalidates source from an older pending action', async () => {
   const component = createComponent();
   const action = deferred();

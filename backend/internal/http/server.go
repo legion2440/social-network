@@ -14,27 +14,28 @@ import (
 )
 
 type Handler struct {
-	db            *sql.DB
-	sessions      *service.SessionService
-	media         *service.MediaService
-	auth          *service.AuthService
-	profile       *service.ProfileService
-	follows       *service.FollowService
-	users         *service.UserService
-	avatars       *service.AvatarDeliveryService
-	posts         *service.PostService
-	postMedia     *service.PostMediaDeliveryService
-	comments      *service.CommentService
-	groups        *service.GroupService
-	groupEvents   *service.GroupEventService
-	notifications *service.NotificationService
-	chats         *service.ChatService
-	hub           *realtimews.Hub
-	admission     atomic.Bool
-	sessionToken  SessionTokenExtractor
-	cookieSecure  bool
-	frontend      http.Handler
-	logger        *log.Logger
+	db                 *sql.DB
+	sessions           *service.SessionService
+	media              *service.MediaService
+	auth               *service.AuthService
+	profile            *service.ProfileService
+	follows            *service.FollowService
+	users              *service.UserService
+	avatars            *service.AvatarDeliveryService
+	posts              *service.PostService
+	postMedia          *service.PostMediaDeliveryService
+	comments           *service.CommentService
+	groups             *service.GroupService
+	groupEvents        *service.GroupEventService
+	notifications      *service.NotificationService
+	chats              *service.ChatService
+	hub                *realtimews.Hub
+	groupAccessChanged func(groupID, userID int64, active bool)
+	admission          atomic.Bool
+	sessionToken       SessionTokenExtractor
+	cookieSecure       bool
+	frontend           http.Handler
+	logger             *log.Logger
 }
 
 func NewHandler(
@@ -92,6 +93,17 @@ func NewHandler(
 func (h *Handler) SetRealtimeHub(hub *realtimews.Hub) {
 	if h != nil {
 		h.hub = hub
+		if hub == nil {
+			h.groupAccessChanged = nil
+		} else {
+			h.groupAccessChanged = hub.GroupAccessChanged
+		}
+	}
+}
+
+func (h *Handler) changeRealtimeGroupAccess(groupID, userID int64, active bool) {
+	if h != nil && h.groupAccessChanged != nil {
+		h.groupAccessChanged(groupID, userID, active)
 	}
 }
 

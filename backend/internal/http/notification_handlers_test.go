@@ -210,6 +210,19 @@ func TestNotificationGroupInvitationLifecycleIsolation(t *testing.T) {
 	inviteeID, inviteeToken := env.createUserAndSession(t, "notification-group-invitee@example.com")
 	group := createGroupForTest(t, env, ownerToken, "Notification lifecycle group")
 	base := "/api/groups/" + strconv.FormatInt(group.ID, 10)
+	type groupAccessCall struct {
+		groupID int64
+		userID  int64
+		active  bool
+	}
+	var groupAccessCalls []groupAccessCall
+	env.server.groupAccessChanged = func(groupID, userID int64, active bool) {
+		groupAccessCalls = append(groupAccessCalls, groupAccessCall{
+			groupID: groupID,
+			userID:  userID,
+			active:  active,
+		})
+	}
 	invite := func() {
 		rec := httptest.NewRecorder()
 		env.handler.ServeHTTP(rec, groupJSONRequest(http.MethodPost, base+"/invitations", ownerToken, fmt.Sprintf(`{"user_id":%d}`, inviteeID)))
@@ -241,6 +254,32 @@ func TestNotificationGroupInvitationLifecycleIsolation(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&actionResult); err != nil || actionResult.Source == nil ||
 		actionResult.Source.Group == nil || actionResult.Source.Group.ViewerStatus != "member" || actionResult.Source.Group.MembersCount != 2 {
 		t.Fatalf("accept invitation source: %+v err=%v", actionResult, err)
+	}
+	if len(groupAccessCalls) != 1 || groupAccessCalls[0] != (groupAccessCall{
+		groupID: group.ID,
+		userID:  inviteeID,
+		active:  true,
+	}) {
+		t.Fatalf("accept invitation realtime hooks: %+v", groupAccessCalls)
+	}
+
+	groupMutation(t, env, http.MethodDelete, base+"/membership", inviteeToken, http.StatusOK)
+	if len(groupAccessCalls) != 2 || groupAccessCalls[1] != (groupAccessCall{
+		groupID: group.ID,
+		userID:  inviteeID,
+		active:  false,
+	}) {
+		t.Fatalf("leave realtime hooks: %+v", groupAccessCalls)
+	}
+
+	rec = notificationActionForTest(t, env, inviteeToken, secondID, "accept", http.StatusOK)
+	if err := json.NewDecoder(rec.Body).Decode(&actionResult); err != nil ||
+		actionResult.Notification.Resolution == nil ||
+		*actionResult.Notification.Resolution != domain.NotificationAccepted {
+		t.Fatalf("idempotent invitation accept after leave: %+v err=%v", actionResult, err)
+	}
+	if len(groupAccessCalls) != 2 {
+		t.Fatalf("idempotent accept repeated group access hook: %+v", groupAccessCalls)
 	}
 }
 

@@ -131,7 +131,7 @@ func (h *Handler) handleNotificationAction(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) applyNotificationActionRealtime(result *service.NotificationActionResult, action service.NotificationAction) {
-	if h == nil || h.hub == nil || result == nil || result.Notification == nil {
+	if h == nil || result == nil || result.Notification == nil {
 		return
 	}
 	notification := result.Notification
@@ -140,11 +140,11 @@ func (h *Handler) applyNotificationActionRealtime(result *service.NotificationAc
 		h.refreshRealtimeRelationship(notification.RecipientUserID, notification.ActorUserID)
 	case domain.NotificationGroupInvitation:
 		if action == service.NotificationActionAccept && notification.GroupID != nil {
-			h.hub.GroupAccessChanged(*notification.GroupID, notification.RecipientUserID, true)
+			h.changeRealtimeGroupAccess(*notification.GroupID, notification.RecipientUserID, true)
 		}
 	case domain.NotificationGroupJoinRequest:
 		if action == service.NotificationActionAccept && notification.GroupID != nil {
-			h.hub.GroupAccessChanged(*notification.GroupID, notification.ActorUserID, true)
+			h.changeRealtimeGroupAccess(*notification.GroupID, notification.ActorUserID, true)
 		}
 	}
 }

@@ -187,8 +187,8 @@ func (h *Handler) handleOwnerGroupTransition(w http.ResponseWriter, r *http.Requ
 	if h.handleGroupServiceError(w, err) {
 		return
 	}
-	if accept && h.hub != nil {
-		h.hub.GroupAccessChanged(groupID, userID, true)
+	if accept {
+		h.changeRealtimeGroupAccess(groupID, userID, true)
 	}
 	h.publishNotificationEffects(result.NotificationEffects)
 	writeJSON(w, http.StatusOK, newGroupResponse(result.Group))
@@ -270,8 +270,8 @@ func (h *Handler) handleOwnInvitationTransition(w http.ResponseWriter, r *http.R
 	if h.handleGroupServiceError(w, err) {
 		return
 	}
-	if accept && h.hub != nil {
-		h.hub.GroupAccessChanged(groupID, current.ID, true)
+	if accept {
+		h.changeRealtimeGroupAccess(groupID, current.ID, true)
 	}
 	h.publishNotificationEffects(result.NotificationEffects)
 	writeJSON(w, http.StatusOK, newGroupResponse(result.Group))
@@ -293,9 +293,7 @@ func (h *Handler) handleGroupMembership(w http.ResponseWriter, r *http.Request) 
 	if h.handleGroupServiceError(w, err) {
 		return
 	}
-	if h.hub != nil {
-		h.hub.GroupAccessChanged(groupID, current.ID, false)
-	}
+	h.changeRealtimeGroupAccess(groupID, current.ID, false)
 	h.publishNotificationEffects(result.NotificationEffects)
 	writeJSON(w, http.StatusOK, newGroupResponse(result.Group))
 }
