@@ -357,11 +357,19 @@ test('chat history and list clients use cursor endpoints over same-origin HTTP',
   await api.chats('chat cursor', 20);
   await api.directMessages(7, 'dm cursor', 50);
   await api.groupMessages(9, null, 20);
+  await api.markDirectChatRead(7, 123);
+  await api.markGroupChatRead(9, 456);
 
   assert.deepEqual(calls.map(call => [call.path, call.options.method]), [
     ['/api/chats?cursor=chat%20cursor&limit=20', 'GET'],
     ['/api/chats/direct/7/messages?cursor=dm%20cursor&limit=50', 'GET'],
-    ['/api/groups/9/chat/messages?limit=20', 'GET']
+    ['/api/groups/9/chat/messages?limit=20', 'GET'],
+    ['/api/chats/direct/7/read', 'PUT'],
+    ['/api/groups/9/chat/read', 'PUT']
   ]);
+  assert.deepEqual(JSON.parse(calls[3].options.body), { through_message_id: 123 });
+  assert.deepEqual(JSON.parse(calls[4].options.body), { through_message_id: 456 });
+  assert.equal(calls[3].options.headers['Content-Type'], 'application/json');
+  assert.equal(calls[4].options.headers['Content-Type'], 'application/json');
   assert.ok(calls.every(call => call.options.credentials === 'same-origin'));
 });

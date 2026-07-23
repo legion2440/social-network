@@ -34,6 +34,7 @@ type ChatSendResult struct {
 	Message          *domain.ChatMessage
 	Created          bool
 	RecipientUserIDs []int64
+	UnreadEffects    *ChatUnreadEffects
 }
 
 type ChatMessagePage struct {
@@ -42,8 +43,19 @@ type ChatMessagePage struct {
 }
 
 type ChatPage struct {
-	Chats      []*domain.ChatSummary
-	NextCursor *string
+	Chats       []*domain.ChatSummary
+	NextCursor  *string
+	UnreadCount int64
+	Revision    int64
+}
+
+type ChatUnreadEffects struct {
+	StatesByUser map[int64]*domain.ChatUnreadState
+}
+
+type ChatReadResult struct {
+	State   *domain.ChatUnreadState
+	Changed bool
 }
 
 type ChatService struct {
@@ -77,7 +89,10 @@ func (s *ChatService) Send(ctx context.Context, senderUserID int64, rawSessionTo
 		return nil, ErrUnauthorized
 	}
 
-	result := &ChatSendResult{RecipientUserIDs: make([]int64, 0)}
+	result := &ChatSendResult{
+		RecipientUserIDs: make([]int64, 0),
+		UnreadEffects:    emptyChatUnreadEffects(),
+	}
 	err = s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
 		if err := authorizeChatSession(
 			ctx, repositories.Sessions(), rawSessionToken, senderUserID, s.clock.Now(),
@@ -103,6 +118,14 @@ func (s *ChatService) Send(ctx context.Context, senderUserID int64, rawSessionTo
 		}
 
 		createdAt := s.clock.Now()
+		if err := repositories.Chats().EnsureUserState(ctx, senderUserID); err != nil {
+			return err
+		}
+		for _, recipient := range recipients {
+			if err := repositories.Chats().EnsureUserState(ctx, recipient.UserID); err != nil {
+				return err
+			}
+		}
 		message := &domain.ChatMessage{
 			SenderUserID: senderUserID, ClientMessageID: input.ClientMessageID,
 			Chat: input.Chat, Body: input.Body, CreatedAt: createdAt,
@@ -114,10 +137,47 @@ func (s *ChatService) Send(ctx context.Context, senderUserID int64, rawSessionTo
 			if err != nil {
 				return err
 			}
+			previousMarker, err := repositories.Chats().LatestDirectMessageID(ctx, conversation.ID)
+			if err != nil {
+				return err
+			}
+			if err := repositories.Chats().EnsureDirectReadState(
+				ctx, senderUserID, conversation.ID, previousMarker, createdAt,
+			); err != nil {
+				return err
+			}
+			if err := repositories.Chats().EnsureDirectReadState(
+				ctx, input.Chat.TargetID, conversation.ID, previousMarker, createdAt,
+			); err != nil {
+				return err
+			}
 			message.DirectConversationID = &conversation.ID
 		case domain.ChatGroup:
 			groupID := input.Chat.TargetID
 			message.GroupID = &groupID
+			previousMarker, err := repositories.Chats().LatestGroupMessageID(ctx, groupID)
+			if err != nil {
+				return err
+			}
+			for _, recipient := range recipients {
+				if recipient.MembershipID == nil {
+					return errors.New("group chat recipient membership is missing")
+				}
+				if err := repositories.Chats().EnsureGroupReadState(
+					ctx, *recipient.MembershipID, previousMarker, createdAt,
+				); err != nil {
+					return err
+				}
+			}
+			senderMembership, err := repositories.Groups().GetMembership(ctx, groupID, senderUserID)
+			if err != nil {
+				return err
+			}
+			if err := repositories.Chats().EnsureGroupReadState(
+				ctx, senderMembership.ID, previousMarker, createdAt,
+			); err != nil {
+				return err
+			}
 		}
 		message.ID, err = repositories.Chats().CreateMessage(ctx, message)
 		if errors.Is(err, repo.ErrConflict) {
@@ -141,7 +201,46 @@ func (s *ChatService) Send(ctx context.Context, senderUserID int64, rawSessionTo
 		}
 		result.Message = message
 		result.Created = true
-		result.RecipientUserIDs = recipients
+		for _, recipient := range recipients {
+			switch input.Chat.Kind {
+			case domain.ChatDirect:
+				if err := repositories.Chats().IncrementDirectUnread(
+					ctx, recipient.UserID, *message.DirectConversationID, createdAt,
+				); err != nil {
+					return err
+				}
+				if _, err := repositories.Chats().BumpRevision(ctx, recipient.UserID); err != nil {
+					return err
+				}
+				state, err := repositories.Chats().DirectUnreadState(
+					ctx, recipient.UserID, *message.DirectConversationID,
+				)
+				if err != nil {
+					return err
+				}
+				result.UnreadEffects.StatesByUser[recipient.UserID] = state
+			case domain.ChatGroup:
+				if recipient.MembershipID == nil {
+					return errors.New("group chat recipient membership is missing")
+				}
+				if err := repositories.Chats().IncrementGroupUnread(
+					ctx, *recipient.MembershipID, createdAt,
+				); err != nil {
+					return err
+				}
+				if _, err := repositories.Chats().BumpRevision(ctx, recipient.UserID); err != nil {
+					return err
+				}
+				state, err := repositories.Chats().GroupUnreadState(
+					ctx, recipient.UserID, *recipient.MembershipID, input.Chat.TargetID,
+				)
+				if err != nil {
+					return err
+				}
+				result.UnreadEffects.StatesByUser[recipient.UserID] = state
+			}
+			result.RecipientUserIDs = append(result.RecipientUserIDs, recipient.UserID)
+		}
 		return nil
 	})
 	if err != nil {
@@ -164,7 +263,12 @@ func authorizeChatSession(ctx context.Context, sessions repo.SessionRepo, rawTok
 	return nil
 }
 
-func authorizeChatSend(ctx context.Context, repositories repo.TransactionRepositories, senderUserID int64, chat domain.ChatRef) ([]int64, error) {
+func authorizeChatSend(
+	ctx context.Context,
+	repositories repo.TransactionRepositories,
+	senderUserID int64,
+	chat domain.ChatRef,
+) ([]domain.ChatRecipient, error) {
 	switch chat.Kind {
 	case domain.ChatDirect:
 		if chat.TargetID == senderUserID {
@@ -182,7 +286,7 @@ func authorizeChatSend(ctx context.Context, repositories repo.TransactionReposit
 		if !allowed {
 			return nil, ErrForbidden
 		}
-		return []int64{chat.TargetID}, nil
+		return []domain.ChatRecipient{{UserID: chat.TargetID}}, nil
 	case domain.ChatGroup:
 		if _, err := repositories.Groups().Get(ctx, chat.TargetID, senderUserID); errors.Is(err, repo.ErrNotFound) {
 			return nil, ErrNotFound
@@ -199,11 +303,21 @@ func authorizeChatSend(ctx context.Context, repositories repo.TransactionReposit
 		if status == nil || (*status != domain.GroupOwner && *status != domain.GroupMember) {
 			return nil, ErrForbidden
 		}
-		ids, err := repositories.Groups().ListActiveMemberIDs(ctx, chat.TargetID)
+		memberships, err := repositories.Groups().ListActiveMemberships(ctx, chat.TargetID)
 		if err != nil {
 			return nil, err
 		}
-		return removeUserID(ids, senderUserID), nil
+		recipients := make([]domain.ChatRecipient, 0, len(memberships))
+		for _, membership := range memberships {
+			if membership == nil || membership.UserID == senderUserID {
+				continue
+			}
+			membershipID := membership.ID
+			recipients = append(recipients, domain.ChatRecipient{
+				UserID: membership.UserID, MembershipID: &membershipID,
+			})
+		}
+		return recipients, nil
 	default:
 		return nil, ErrInvalidInput
 	}
@@ -289,16 +403,28 @@ func (s *ChatService) List(ctx context.Context, viewerUserID int64, cursor *doma
 	if s == nil || s.transactions == nil || viewerUserID <= 0 || !validChatListPage(cursor, limit) {
 		return nil, ErrInvalidInput
 	}
-	var chats []*domain.ChatSummary
+	var (
+		chats       []*domain.ChatSummary
+		unreadCount int64
+		revision    int64
+	)
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
 		var err error
 		chats, err = repositories.Chats().ListChats(ctx, viewerUserID, cursor, limit+1)
+		if err != nil {
+			return err
+		}
+		unreadCount, err = repositories.Chats().TotalUnreadCount(ctx, viewerUserID)
+		if err != nil {
+			return err
+		}
+		revision, err = repositories.Chats().CurrentRevision(ctx, viewerUserID)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	page := &ChatPage{Chats: chats}
+	page := &ChatPage{Chats: chats, UnreadCount: unreadCount, Revision: revision}
 	if len(chats) > limit {
 		page.Chats = chats[:limit]
 		last := page.Chats[len(page.Chats)-1]
@@ -332,11 +458,111 @@ func (s *ChatService) AuthorizeTyping(ctx context.Context, userID int64, rawSess
 		if err := authorizeChatSession(ctx, repositories.Sessions(), strings.TrimSpace(rawSessionToken), userID, s.clock.Now()); err != nil {
 			return err
 		}
-		var err error
-		recipients, err = authorizeChatSend(ctx, repositories, userID, chat)
-		return err
+		authorized, err := authorizeChatSend(ctx, repositories, userID, chat)
+		if err != nil {
+			return err
+		}
+		recipients = make([]int64, 0, len(authorized))
+		for _, recipient := range authorized {
+			recipients = append(recipients, recipient.UserID)
+		}
+		return nil
 	})
 	return recipients, err
+}
+
+func (s *ChatService) MarkRead(
+	ctx context.Context,
+	userID int64,
+	chat domain.ChatRef,
+	throughMessageID int64,
+) (*ChatReadResult, error) {
+	if s == nil || s.transactions == nil || s.clock == nil || userID <= 0 ||
+		!chat.Kind.Valid() || chat.TargetID <= 0 || throughMessageID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	result := &ChatReadResult{}
+	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+		now := s.clock.Now().UTC()
+		switch chat.Kind {
+		case domain.ChatDirect:
+			if chat.TargetID == userID {
+				return ErrInvalidInput
+			}
+			low, high := normalizeUserPair(userID, chat.TargetID)
+			conversation, err := repositories.Chats().GetDirectConversation(ctx, low, high)
+			if errors.Is(err, repo.ErrNotFound) {
+				return ErrNotFound
+			}
+			if err != nil {
+				return err
+			}
+			if _, err := repositories.Chats().GetDirectMessage(
+				ctx, conversation.ID, throughMessageID,
+			); errors.Is(err, repo.ErrNotFound) {
+				return ErrNotFound
+			} else if err != nil {
+				return err
+			}
+			result.Changed, err = repositories.Chats().AdvanceDirectRead(
+				ctx, userID, conversation.ID, throughMessageID, now,
+			)
+			if err != nil {
+				return err
+			}
+			if result.Changed {
+				if _, err := repositories.Chats().BumpRevision(ctx, userID); err != nil {
+					return err
+				}
+			}
+			result.State, err = repositories.Chats().DirectUnreadState(ctx, userID, conversation.ID)
+			return err
+		case domain.ChatGroup:
+			if _, err := repositories.Groups().Get(ctx, chat.TargetID, userID); errors.Is(err, repo.ErrNotFound) {
+				return ErrNotFound
+			} else if err != nil {
+				return err
+			}
+			membership, err := repositories.Groups().GetMembership(ctx, chat.TargetID, userID)
+			if errors.Is(err, repo.ErrNotFound) {
+				return ErrForbidden
+			}
+			if err != nil {
+				return err
+			}
+			if membership.Status != domain.GroupOwner && membership.Status != domain.GroupMember {
+				return ErrForbidden
+			}
+			if _, err := repositories.Chats().GetGroupMessage(
+				ctx, chat.TargetID, throughMessageID,
+			); errors.Is(err, repo.ErrNotFound) {
+				return ErrNotFound
+			} else if err != nil {
+				return err
+			}
+			result.Changed, err = repositories.Chats().AdvanceGroupRead(
+				ctx, membership.ID, chat.TargetID, throughMessageID, now,
+			)
+			if err != nil {
+				return err
+			}
+			if result.Changed {
+				if _, err := repositories.Chats().BumpRevision(ctx, userID); err != nil {
+					return err
+				}
+			}
+			result.State, err = repositories.Chats().GroupUnreadState(
+				ctx, userID, membership.ID, chat.TargetID,
+			)
+			return err
+		default:
+			return ErrInvalidInput
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func buildChatMessagePage(messages []*domain.ChatMessage, limit int) *ChatMessagePage {
@@ -446,6 +672,10 @@ func removeUserID(ids []int64, userID int64) []int64 {
 		result = append(result, id)
 	}
 	return result
+}
+
+func emptyChatUnreadEffects() *ChatUnreadEffects {
+	return &ChatUnreadEffects{StatesByUser: make(map[int64]*domain.ChatUnreadState)}
 }
 
 func chatKindRank(kind domain.ChatKind) int {

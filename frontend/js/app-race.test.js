@@ -153,13 +153,14 @@ function rawChatMessage(id, clientMessageID, kind, targetID, senderID, createdAt
   };
 }
 
-function rawDirectChat(userID, lastMessage) {
+function rawDirectChat(userID, lastMessage, unreadCount) {
   return {
     kind: 'direct',
     target_id: userID,
     user: rawUser(userID),
     last_message: lastMessage || null,
-    activity_at: lastMessage ? lastMessage.created_at : '2026-07-22T11:00:00Z'
+    activity_at: lastMessage ? lastMessage.created_at : '2026-07-22T11:00:00Z',
+    unread_count: unreadCount || 0
   };
 }
 
@@ -947,7 +948,7 @@ test('chat list maps direct and group summaries and opens real HTTP history', as
   await component.loadChats(true);
   await Promise.resolve();
 
-  assert.deepEqual(component.state.chatKeys, ['direct:2', 'group:7']);
+  assert.deepEqual(component.state.chatKeys, ['direct:2', 'group:7'], component.state.chatsError);
   assert.equal(component.state.activeChatKey, 'direct:2');
   assert.deepEqual(histories, [{ kind: 'direct', userID: 2, cursor: null, limit: 20 }]);
   assert.deepEqual(component.chatMessages('direct:2').messages.map(message => message.apiId), [11]);
@@ -1882,4 +1883,211 @@ test('logout invalidates pending notification list and action responses', async 
   assert.deepEqual(nextComponent.state.notifications, []);
   assert.equal(nextComponent.state.authStatus, 'anonymous');
   assert.equal(nextComponent.state.apiGroupsByID['9'], undefined);
+});
+
+test('chat unread list pages merge per key while total and revision stay authoritative', async () => {
+  const component = createComponent();
+  const first = rawChatMessage(901, '7613951b-ebc1-4e5d-8a93-80813c9f8b41', 'direct', 2, 2);
+  const unseen = rawChatMessage(902, '49d10445-dd15-4b0c-a587-b7b7f6f8641e', 'direct', 3, 3);
+  component.state.chatsByKey = {
+    'direct:3': ChatModel.normalizeChatSummary(rawDirectChat(3, unseen, 5))
+  };
+  component.state.chatKeys = ['direct:3'];
+  component.state.chatUnreadByKey = { 'direct:3': 5 };
+  component.state.chatUnreadCount = 5;
+  component.state.chatUnreadRevision = 2;
+  component.state.chatsNextCursor = 'next';
+  global.AuthAPI.chats = async () => ({
+    chats: [rawDirectChat(2, first, 2)],
+    next_cursor: null,
+    unread_count: 7,
+    revision: 4
+  });
+  global.AuthAPI.directMessages = async () => ({ messages: [first], next_cursor: null });
+
+  await component.loadChats(false);
+  assert.equal(component.state.chatUnreadByKey['direct:2'], 2);
+  assert.equal(component.state.chatUnreadByKey['direct:3'], 5);
+  assert.equal(component.state.chatUnreadCount, 7);
+  assert.equal(component.state.chatUnreadRevision, 4);
+
+  global.AuthAPI.chats = async () => ({
+    chats: [rawDirectChat(2, first, 0)],
+    next_cursor: null,
+    unread_count: 0,
+    revision: 3
+  });
+  await component.loadChats(true);
+  assert.equal(component.state.chatUnreadByKey['direct:2'], 2);
+  assert.equal(component.state.chatUnreadCount, 7);
+  assert.equal(component.state.chatUnreadRevision, 4);
+});
+
+test('chat read queue serializes newer displayed markers without comparing server marker tuples', async () => {
+  const component = createComponent();
+  const originalDocument = global.document;
+  global.document = { visibilityState: 'visible' };
+  try {
+    const key = 'direct:2';
+    const firstRaw = rawChatMessage(911, '88496c88-ce4c-4355-a80f-53f2314de34c', 'direct', 2, 2, '2026-07-22T12:00:00Z');
+    const secondRaw = rawChatMessage(912, '4c407901-ad46-49bf-88ed-a415998352f4', 'direct', 2, 2, '2026-07-22T12:00:01Z');
+    component.state.screen = 'chat';
+    component.state.activeChatKey = key;
+    component.state.chatsByKey = { [key]: ChatModel.normalizeChatSummary(rawDirectChat(2, firstRaw, 2)) };
+    component.state.chatKeys = [key];
+    component.state.messagesByChatKey = {
+      [key]: {
+        messages: [ChatModel.normalizeMessage(firstRaw)], nextCursor: null,
+        loading: false, pending: false, error: '', loaded: true
+      }
+    };
+    const firstRead = deferred();
+    const secondRead = deferred();
+    const calls = [];
+    global.AuthAPI.markDirectChatRead = (userID, messageID) => {
+      calls.push([userID, messageID]);
+      return calls.length === 1 ? firstRead.promise : secondRead.promise;
+    };
+
+    component.enqueueChatRead(key);
+    await Promise.resolve();
+    assert.deepEqual(calls, [[2, 911]]);
+    component.state.messagesByChatKey[key].messages.push(ChatModel.normalizeMessage(secondRaw));
+    component.enqueueChatRead(key);
+    firstRead.resolve({
+      chat: { kind: 'direct', target_id: 2 },
+      chat_unread_count: 1, unread_count: 1, revision: 5,
+      read_through_message_id: 911
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(calls, [[2, 911], [2, 912]]);
+
+    secondRead.resolve({
+      chat: { kind: 'direct', target_id: 2 },
+      chat_unread_count: 0, unread_count: 0, revision: 6,
+      read_through_message_id: 912
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(component.state.chatReadPendingByKey[key], undefined);
+    assert.equal(component.state.chatReadQueuedThroughByKey[key], undefined);
+    assert.equal(component.state.chatReadThroughMessageIDByKey[key], 912);
+    assert.equal(component.state.chatUnreadRevision, 6);
+  } finally {
+    global.document = originalDocument;
+  }
+});
+
+test('background preload and hidden tab do not mark read but entering Messages with loaded history does', async () => {
+  const component = createComponent();
+  const originalDocument = global.document;
+  const key = 'direct:2';
+  const message = rawChatMessage(921, 'f7acb070-e715-432e-b9c2-cb79209496f8', 'direct', 2, 2);
+  component.state.activeChatKey = key;
+  component.state.chatsByKey = { [key]: ChatModel.normalizeChatSummary(rawDirectChat(2, message, 1)) };
+  component.state.chatKeys = [key];
+  global.AuthAPI.directMessages = async () => ({ messages: [message], next_cursor: null });
+  const reads = [];
+  global.AuthAPI.markDirectChatRead = async (userID, messageID) => {
+    reads.push([userID, messageID]);
+    return {
+      chat: { kind: 'direct', target_id: userID },
+      chat_unread_count: 0, unread_count: 0, revision: 2,
+      read_through_message_id: messageID
+    };
+  };
+  global.AuthAPI.chats = async () => ({
+    chats: [rawDirectChat(2, message, 1)], next_cursor: null, unread_count: 1, revision: 1
+  });
+  try {
+    global.document = { visibilityState: 'visible' };
+    await component.loadChatHistory(key, true, 'background');
+    assert.deepEqual(reads, []);
+
+    global.document.visibilityState = 'hidden';
+    component.state.screen = 'chat';
+    component.enqueueChatRead(key);
+    assert.deepEqual(reads, []);
+
+    global.document.visibilityState = 'visible';
+    component.state.screen = 'feed';
+    component.go('chat');
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(reads, [[2, 921]]);
+  } finally {
+    global.document = originalDocument;
+  }
+});
+
+test('pending chat read cannot revive unread state after group revoke or logout', async () => {
+  const component = createComponent();
+  const originalDocument = global.document;
+  global.document = { visibilityState: 'visible' };
+  try {
+    const key = 'group:9';
+    const message = rawChatMessage(931, '64cb59ab-338c-452e-bf66-1761881967ec', 'group', 9, 2);
+    component.state.screen = 'chat';
+    component.state.activeChatKey = key;
+    component.state.apiGroupsByID = { '9': component.mapAPIGroup(rawGroup(9, 'member', 2, 1)) };
+    component.state.chatsByKey = {
+      [key]: ChatModel.normalizeChatSummary({
+        kind: 'group', target_id: 9, group: rawGroup(9, 'member', 2, 1),
+        last_message: message, activity_at: message.created_at, unread_count: 1
+      })
+    };
+    component.state.chatKeys = [key];
+    component.state.messagesByChatKey = {
+      [key]: {
+        messages: [ChatModel.normalizeMessage(message)], nextCursor: null,
+        loading: false, pending: false, error: '', loaded: true
+      }
+    };
+    const read = deferred();
+    global.AuthAPI.markGroupChatRead = () => read.promise;
+    component.enqueueChatRead(key);
+    await Promise.resolve();
+    component.handleRealtimeEvent(JSON.stringify({
+      type: 'chat:remove', chat: { kind: 'group', target_id: 9 }
+    }));
+    read.resolve({
+      chat: { kind: 'group', target_id: 9 },
+      chat_unread_count: 0, unread_count: 0, revision: 8,
+      read_through_message_id: 931
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(component.state.chatsByKey[key], undefined);
+    assert.equal(component.state.chatUnreadRevision, 0);
+
+    const directKey = 'direct:2';
+    const directMessage = rawChatMessage(932, 'f7cb3ba4-1488-4c94-8d8d-f21a93528248', 'direct', 2, 2);
+    component.state.screen = 'chat';
+    component.state.activeChatKey = directKey;
+    component.state.chatsByKey = { [directKey]: ChatModel.normalizeChatSummary(rawDirectChat(2, directMessage, 1)) };
+    component.state.messagesByChatKey = {
+      [directKey]: {
+        messages: [ChatModel.normalizeMessage(directMessage)], nextCursor: null,
+        loading: false, pending: false, error: '', loaded: true
+      }
+    };
+    const directRead = deferred();
+    global.AuthAPI.markDirectChatRead = () => directRead.promise;
+    global.AuthAPI.logout = async () => null;
+    component.enqueueChatRead(directKey);
+    await Promise.resolve();
+    await component.logout();
+    directRead.resolve({
+      chat: { kind: 'direct', target_id: 2 },
+      chat_unread_count: 0, unread_count: 0, revision: 9,
+      read_through_message_id: 932
+    });
+    await Promise.resolve();
+    assert.equal(component.state.authStatus, 'anonymous');
+    assert.equal(component.state.chatUnreadRevision, 0);
+    assert.deepEqual(component.state.chatReadPendingByKey, {});
+  } finally {
+    global.document = originalDocument;
+  }
 });

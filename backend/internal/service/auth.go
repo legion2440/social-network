@@ -119,6 +119,9 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthR
 		if err := repositories.Notifications().EnsureUserState(ctx, user.ID); err != nil {
 			return err
 		}
+		if err := repositories.Chats().EnsureUserState(ctx, user.ID); err != nil {
+			return err
+		}
 
 		if stagedAvatar != nil {
 			mediaID, err := repositories.Media().Create(

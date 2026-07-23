@@ -374,6 +374,22 @@
         return request(pagePath('/api/groups/' + encodeURIComponent(String(groupID)) + '/chat/messages', cursor, limit), {
           method: 'GET', expectedStatus: 200
         });
+      },
+      markDirectChatRead: function (userID, throughMessageID) {
+        return request('/api/chats/direct/' + encodeURIComponent(String(userID)) + '/read', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ through_message_id: throughMessageID }),
+          expectedStatus: 200
+        });
+      },
+      markGroupChatRead: function (groupID, throughMessageID) {
+        return request('/api/groups/' + encodeURIComponent(String(groupID)) + '/chat/read', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ through_message_id: throughMessageID }),
+          expectedStatus: 200
+        });
       }
     };
   }

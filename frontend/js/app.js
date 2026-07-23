@@ -92,6 +92,9 @@ function emptyChatState() {
     chatsByKey: {}, chatKeys: [], chatsNextCursor: null,
     chatsLoading: false, chatsPending: false, chatsError: '',
     activeChatKey: null, messagesByChatKey: {}, onlineUserIDs: {}, typingByChatKey: {},
+    chatUnreadByKey: {}, chatUnreadCount: 0, chatUnreadRevision: 0,
+    chatReadPendingByKey: {}, chatReadErrorByKey: {},
+    chatReadQueuedThroughByKey: {}, chatReadThroughMessageIDByKey: {},
     wsStatus: 'disconnected', wsReconnectAttempt: 0,
     chatDraft: '', chatError: '', emojiOpen: false
   };
@@ -194,6 +197,9 @@ class Component extends DCLogic {
     this.activeChatGate = UserModel.createRequestGate();
     this.chatHistoryGatesByKey = {};
     this.chatAccessGatesByKey = {};
+    this.chatReadGatesByKey = {};
+    this.chatReadInFlightByKey = {};
+    this.chatReadSentCandidateByKey = {};
     this.revokedChatKeys = new Set();
     this.revokedGroupAccessIDs = new Set();
     this.ws = null;
@@ -207,11 +213,19 @@ class Component extends DCLogic {
     this.chatScrollAnchor = null;
     this.scrollChatToBottom = false;
     this.chatSendLock = false;
+    this.handleVisibilityChange = () => {
+      if (this.documentIsVisible() && this.state && this.state.activeChatKey) {
+        this.enqueueChatRead(this.state.activeChatKey);
+      }
+    };
   }
 
   componentDidMount() {
     document.documentElement.dataset.theme = this.state.theme;
     this.applyTokens();
+    if (document && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    }
     this.loadCurrentUser();
   }
   componentDidUpdate() {
@@ -224,7 +238,12 @@ class Component extends DCLogic {
       this.scrollChatToBottom = false;
     }
   }
-  componentWillUnmount() { this.stopRealtime(); }
+  componentWillUnmount() {
+    if (typeof document !== 'undefined' && document && typeof document.removeEventListener === 'function') {
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    }
+    this.stopRealtime();
+  }
   applyTokens() {
     const el = document.documentElement;
     el.style.setProperty('--accent', this.props.accent || '#5661d8');
@@ -1040,8 +1059,12 @@ class Component extends DCLogic {
       this.activeChatGate.begin();
       Object.keys(this.chatHistoryGatesByKey).forEach(key => this.chatHistoryGatesByKey[key].begin());
       Object.keys(this.chatAccessGatesByKey).forEach(key => this.chatAccessGatesByKey[key].begin());
+      Object.keys(this.chatReadGatesByKey).forEach(key => this.chatReadGatesByKey[key].begin());
       this.chatHistoryGatesByKey = {};
       this.chatAccessGatesByKey = {};
+      this.chatReadGatesByKey = {};
+      this.chatReadInFlightByKey = {};
+      this.chatReadSentCandidateByKey = {};
       this.revokedChatKeys.clear();
       this.revokedGroupAccessIDs.clear();
       this.stopRealtime();
@@ -1088,13 +1111,17 @@ class Component extends DCLogic {
 
   go = (screen) => {
     if (screen !== 'chat') this.stopTyping();
-    this.setState({ screen, privacyOpen: false, emojiOpen: false });
-    if (screen === 'chat') this.loadChats(true);
-    if (screen === 'notifications') this.loadNotifications(true);
-    if (screen === 'groups') {
-      this.loadGroups(true);
-      this.loadGroupInvitationInbox(true);
-    }
+    this.setState({ screen, privacyOpen: false, emojiOpen: false }, () => {
+      if (screen === 'chat') {
+        if (this.state.activeChatKey) this.enqueueChatRead(this.state.activeChatKey);
+        this.loadChats(true, 'user-open');
+      }
+      if (screen === 'notifications') this.loadNotifications(true);
+      if (screen === 'groups') {
+        this.loadGroups(true);
+        this.loadGroupInvitationInbox(true);
+      }
+    });
   };
   openProfile = async (targetUserID) => {
     if (targetUserID === 'me') targetUserID = USERS.me.apiId;
@@ -2159,8 +2186,162 @@ class Component extends DCLogic {
     return this.chatAccessGatesByKey[key];
   }
 
+  chatReadGate(key) {
+    if (!this.chatReadGatesByKey[key]) this.chatReadGatesByKey[key] = UserModel.createRequestGate();
+    return this.chatReadGatesByKey[key];
+  }
+
   chatMessages(key) {
     return this.state.messagesByChatKey[key] || emptyChatMessages();
+  }
+
+  documentIsVisible() {
+    return typeof document === 'undefined' || !document || document.visibilityState === undefined ||
+      document.visibilityState === 'visible';
+  }
+
+  compareChatReadCandidates(left, right) {
+    if (!left) return right ? -1 : 0;
+    if (!right) return 1;
+    const leftTime = Date.parse(left.createdAt) || 0;
+    const rightTime = Date.parse(right.createdAt) || 0;
+    if (leftTime !== rightTime) return leftTime - rightTime;
+    return Number(left.id) - Number(right.id);
+  }
+
+  latestAuthoritativeChatCandidate(key) {
+    const messages = this.chatMessages(key).messages || [];
+    let latest = null;
+    messages.forEach(message => {
+      const id = Number(message && message.apiId);
+      if (!Number.isInteger(id) || id <= 0 || !message.createdAt) return;
+      const candidate = { id, createdAt: String(message.createdAt) };
+      if (!latest || this.compareChatReadCandidates(candidate, latest) > 0) latest = candidate;
+    });
+    return latest;
+  }
+
+  chatReadEligible(key) {
+    const chat = ChatModel.parseChatKey(key);
+    if (!chat || this.state.screen !== 'chat' || this.state.activeChatKey !== key ||
+        !this.documentIsVisible() || !this.chatMessages(key).loaded || this.revokedChatKeys.has(key)) return false;
+    return chat.kind !== 'group' || !this.groupAccessIsRevoked(chat.target_id);
+  }
+
+  enqueueChatRead(key) {
+    if (!this.chatReadEligible(key)) return;
+    const candidate = this.latestAuthoritativeChatCandidate(key);
+    if (!candidate) return;
+    const queued = this.state.chatReadQueuedThroughByKey[key];
+    const sent = this.chatReadSentCandidateByKey[key];
+    if (queued && this.compareChatReadCandidates(candidate, queued) <= 0) {
+      if (!this.chatReadInFlightByKey[key] && this.state.chatReadErrorByKey[key]) {
+        this.drainChatReadQueue(key);
+      }
+      return;
+    }
+    if (!queued && sent && this.compareChatReadCandidates(candidate, sent) <= 0) return;
+    this.setState(current => ({
+      chatReadQueuedThroughByKey: Object.assign({}, current.chatReadQueuedThroughByKey, { [key]: candidate }),
+      chatReadErrorByKey: Object.assign({}, current.chatReadErrorByKey, { [key]: '' })
+    }), () => this.drainChatReadQueue(key));
+  }
+
+  drainChatReadQueue = async key => {
+    if (this.chatReadInFlightByKey[key] || !this.chatReadEligible(key)) return;
+    const chat = ChatModel.parseChatKey(key);
+    const sentCandidate = this.state.chatReadQueuedThroughByKey[key];
+    if (!chat || !sentCandidate) return;
+    const authGeneration = this.authGate.current();
+    const accessGate = this.chatAccessGate(key);
+    const accessGeneration = accessGate.current();
+    const readGate = this.chatReadGate(key);
+    const readGeneration = readGate.current();
+    this.chatReadInFlightByKey[key] = true;
+    this.chatReadSentCandidateByKey[key] = sentCandidate;
+    this.setState(current => ({
+      chatReadPendingByKey: Object.assign({}, current.chatReadPendingByKey, { [key]: true })
+    }));
+    try {
+      const response = chat.kind === 'direct'
+        ? await AuthAPI.markDirectChatRead(chat.target_id, sentCandidate.id)
+        : await AuthAPI.markGroupChatRead(chat.target_id, sentCandidate.id);
+      if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+          !readGate.isCurrent(readGeneration)) return;
+      this.applyChatUnreadPayload(response);
+      const queued = this.state.chatReadQueuedThroughByKey[key];
+      const hasNewer = queued && this.compareChatReadCandidates(queued, sentCandidate) > 0;
+      const pending = Object.assign({}, this.state.chatReadPendingByKey);
+      const queuedByKey = Object.assign({}, this.state.chatReadQueuedThroughByKey);
+      if (!hasNewer) {
+        delete pending[key];
+        delete queuedByKey[key];
+      }
+      this.setState({
+        chatReadPendingByKey: pending,
+        chatReadQueuedThroughByKey: queuedByKey,
+        chatReadErrorByKey: Object.assign({}, this.state.chatReadErrorByKey, { [key]: '' })
+      });
+    } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
+          !readGate.isCurrent(readGeneration)) return;
+      if (chat.kind === 'group' && error && (error.status === 403 || error.status === 404)) {
+        this.purgeChat(key);
+        return;
+      }
+      const pending = Object.assign({}, this.state.chatReadPendingByKey);
+      delete pending[key];
+      this.setState({
+        chatReadPendingByKey: pending,
+        chatReadErrorByKey: Object.assign({}, this.state.chatReadErrorByKey, {
+          [key]: requestErrorMessage(error, 'Could not mark conversation as read.')
+        })
+      });
+    } finally {
+      if (this.authGate.isCurrent(authGeneration) && accessGate.isCurrent(accessGeneration) &&
+          readGate.isCurrent(readGeneration)) {
+        delete this.chatReadInFlightByKey[key];
+        const queued = this.state.chatReadQueuedThroughByKey[key];
+        if (queued && this.compareChatReadCandidates(queued, sentCandidate) > 0) {
+          this.drainChatReadQueue(key);
+        }
+      }
+    }
+  };
+
+  applyChatUnreadPayload(payload) {
+    const revision = Number(payload && payload.revision);
+    const unreadCount = Number(payload && payload.unread_count);
+    const chatUnreadCount = Number(payload && payload.chat_unread_count);
+    let key;
+    try {
+      key = ChatModel.chatKey(payload && payload.chat && payload.chat.kind, payload && payload.chat && payload.chat.target_id);
+    } catch (ignore) {
+      return false;
+    }
+    if (!Number.isInteger(revision) || revision < Number(this.state.chatUnreadRevision || 0) ||
+        !Number.isInteger(unreadCount) || unreadCount < 0 ||
+        !Number.isInteger(chatUnreadCount) || chatUnreadCount < 0) return false;
+    this.setState(current => {
+      if (revision < Number(current.chatUnreadRevision || 0)) return {};
+      const chatUnreadByKey = Object.assign({}, current.chatUnreadByKey);
+      const chatsByKey = Object.assign({}, current.chatsByKey);
+      const readThrough = Object.assign({}, current.chatReadThroughMessageIDByKey);
+      const chat = ChatModel.parseChatKey(key);
+      const canApplyKey = !!chatsByKey[key] &&
+        !(chat && chat.kind === 'group' && this.groupAccessIsRevoked(chat.target_id));
+      if (canApplyKey) {
+        chatUnreadByKey[key] = chatUnreadCount;
+        chatsByKey[key] = Object.assign({}, chatsByKey[key], { unreadCount: chatUnreadCount });
+      }
+      const markerID = Number(payload.read_through_message_id);
+      if (Number.isInteger(markerID) && markerID > 0) readThrough[key] = markerID;
+      return {
+        chatsByKey, chatUnreadByKey, chatUnreadCount: unreadCount, chatUnreadRevision: revision,
+        chatReadThroughMessageIDByKey: readThrough
+      };
+    });
+    return true;
   }
 
   startAuthenticatedRealtime(authGeneration) {
@@ -2255,7 +2436,7 @@ class Component extends DCLogic {
     }
   }
 
-  loadChats = async (reset = true) => {
+  loadChats = async (reset = true, historyReason = 'background') => {
     const authGeneration = this.authGate.current();
     const generation = reset ? this.chatsGate.begin() : this.chatsGate.current();
     if (!reset && this.state.chatsPending) return;
@@ -2279,6 +2460,16 @@ class Component extends DCLogic {
         if (chat.last_message && chat.last_message.sender) rawUsers.push(chat.last_message.sender);
       });
       const normalized = rawChats.map(ChatModel.normalizeChatSummary);
+      const revision = page.revision === undefined
+        ? Number(this.state.chatUnreadRevision || 0)
+        : Number(page.revision);
+      const unreadCount = page.unread_count === undefined
+        ? Number(this.state.chatUnreadCount || 0)
+        : Number(page.unread_count);
+      if (!Number.isInteger(revision) || revision < 0 ||
+          !Number.isInteger(unreadCount) || unreadCount < 0) {
+        throw new TypeError('invalid chat page');
+      }
       normalized.forEach(chat => {
         if (chat.kind === 'group' && !this.groupAccessIsRevoked(chat.targetID)) {
           this.revokedChatKeys.delete(chat.key);
@@ -2290,19 +2481,51 @@ class Component extends DCLogic {
       const apiUsersByID = this.mergeAPIUsers(rawUsers);
       this.setState(current => {
         const chatsByKey = ChatModel.mergeChatSummaries(current.chatsByKey, normalized);
+        const chatUnreadByKey = Object.assign({}, current.chatUnreadByKey);
+        if (revision >= Number(current.chatUnreadRevision || 0)) {
+          normalized.forEach(chat => {
+            chatUnreadByKey[chat.key] = chat.unreadCount;
+            if (chatsByKey[chat.key]) {
+              chatsByKey[chat.key] = Object.assign({}, chatsByKey[chat.key], {
+                unreadCount: chat.unreadCount
+              });
+            }
+          });
+        } else {
+          normalized.forEach(chat => {
+            if (chatsByKey[chat.key]) {
+              chatsByKey[chat.key] = Object.assign({}, chatsByKey[chat.key], {
+                unreadCount: Math.max(0, Number(chatUnreadByKey[chat.key]) || 0)
+              });
+            }
+          });
+        }
         const activeChatKey = current.activeChatKey || ChatModel.sortedChatKeys(chatsByKey)[0] || null;
-        return {
+        const patch = {
           apiUsersByID,
           apiGroupsByID: this.mergeGroupResponses(rawGroups, current.apiGroupsByID),
           chatsByKey,
           chatKeys: ChatModel.sortedChatKeys(chatsByKey),
+          chatUnreadByKey,
           activeChatKey,
           chatsNextCursor: page.next_cursor || null,
           chatsPending: false, chatsLoading: false, chatsError: ''
         };
+        if (revision >= Number(current.chatUnreadRevision || 0)) {
+          patch.chatUnreadCount = unreadCount;
+          patch.chatUnreadRevision = revision;
+        }
+        return patch;
       }, () => {
-        if (this.state.activeChatKey && (reset || !this.chatMessages(this.state.activeChatKey).loaded)) {
-          this.loadChatHistory(this.state.activeChatKey, true);
+        const activeHistory = this.state.activeChatKey
+          ? this.chatMessages(this.state.activeChatKey)
+          : emptyChatMessages();
+        const shouldReloadHistory = this.state.activeChatKey &&
+          (!activeHistory.loaded || (reset && historyReason !== 'user-open'));
+        if (shouldReloadHistory) {
+          this.loadChatHistory(this.state.activeChatKey, true, historyReason);
+        } else if (historyReason === 'user-open' && this.state.activeChatKey) {
+          this.enqueueChatRead(this.state.activeChatKey);
         }
       });
     } catch (error) {
@@ -2314,7 +2537,7 @@ class Component extends DCLogic {
     }
   };
 
-  loadChatHistory = async (key, reset = true) => {
+  loadChatHistory = async (key, reset = true, reason = 'background') => {
     const chat = ChatModel.parseChatKey(key);
     if (!chat) return;
     const authGeneration = this.authGate.current();
@@ -2356,6 +2579,8 @@ class Component extends DCLogic {
           loading: false, pending: false, error: '', loaded: true
         });
         return { apiUsersByID, messagesByChatKey };
+      }, () => {
+        if (reason === 'user-open') this.enqueueChatRead(key);
       });
     } catch (error) {
       if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration) ||
@@ -2388,7 +2613,8 @@ class Component extends DCLogic {
       screen: 'chat', activeChatKey: key, emojiOpen: false, chatDraft: '', chatError: ''
     }, () => {
       const history = this.chatMessages(key);
-      if (!history.loaded) this.loadChatHistory(key, true);
+      if (!history.loaded) this.loadChatHistory(key, true, 'user-open');
+      else this.enqueueChatRead(key);
     });
   };
 
@@ -2432,6 +2658,9 @@ class Component extends DCLogic {
     this.revokedChatKeys.add(key);
     this.chatAccessGate(key).begin();
     this.chatHistoryGate(key).begin();
+    this.chatReadGate(key).begin();
+    delete this.chatReadInFlightByKey[key];
+    delete this.chatReadSentCandidateByKey[key];
     if (this.typingChatKey === key) this.stopTyping(false);
     const history = this.chatMessages(key);
     history.messages.forEach(message => this.settlePendingMessage(message.clientMessageID));
@@ -2439,12 +2668,26 @@ class Component extends DCLogic {
       const chatsByKey = Object.assign({}, current.chatsByKey);
       const messagesByChatKey = Object.assign({}, current.messagesByChatKey);
       const typingByChatKey = Object.assign({}, current.typingByChatKey);
+      const chatUnreadByKey = Object.assign({}, current.chatUnreadByKey);
+      const chatReadPendingByKey = Object.assign({}, current.chatReadPendingByKey);
+      const chatReadErrorByKey = Object.assign({}, current.chatReadErrorByKey);
+      const chatReadQueuedThroughByKey = Object.assign({}, current.chatReadQueuedThroughByKey);
+      const chatReadThroughMessageIDByKey = Object.assign({}, current.chatReadThroughMessageIDByKey);
+      const removedUnread = Math.max(0, Number(chatUnreadByKey[key]) || 0);
       delete chatsByKey[key];
       delete messagesByChatKey[key];
       delete typingByChatKey[key];
+      delete chatUnreadByKey[key];
+      delete chatReadPendingByKey[key];
+      delete chatReadErrorByKey[key];
+      delete chatReadQueuedThroughByKey[key];
+      delete chatReadThroughMessageIDByKey[key];
       const chatKeys = ChatModel.sortedChatKeys(chatsByKey);
       return {
-        chatsByKey, messagesByChatKey, typingByChatKey, chatKeys,
+        chatsByKey, messagesByChatKey, typingByChatKey, chatKeys, chatUnreadByKey,
+        chatReadPendingByKey, chatReadErrorByKey, chatReadQueuedThroughByKey,
+        chatReadThroughMessageIDByKey,
+        chatUnreadCount: Math.max(0, Number(current.chatUnreadCount || 0) - removedUnread),
         activeChatKey: current.activeChatKey === key ? (chatKeys[0] || null) : current.activeChatKey
       };
     });
@@ -2516,6 +2759,10 @@ class Component extends DCLogic {
       this.handleTypingUpdate(event);
       return;
     }
+    if (event.type === 'chat:unread') {
+      this.applyChatUnreadPayload(event);
+      return;
+    }
     if (event.type === 'chat:message' && event.message) {
       this.handleRealtimeMessage(event.message);
       return;
@@ -2559,6 +2806,7 @@ class Component extends DCLogic {
         chatKeys: ChatModel.sortedChatKeys(chatsByKey), chatError: ''
       };
     }, () => {
+      if (this.state.activeChatKey === key) this.enqueueChatRead(key);
       if (!wasKnown) this.loadChats(true);
     });
   }
@@ -2930,7 +3178,7 @@ class Component extends DCLogic {
     const s = this.state;
     const me = USERS.me;
     const notifUnread = s.notificationUnreadCount;
-    const chatUnread = 0;
+    const chatUnread = Math.max(0, Number(s.chatUnreadCount) || 0);
 
     const navDefs = [
       { k: 'feed', label: 'Home', icon: IC.home, badge: 0 },
@@ -3173,13 +3421,17 @@ class Component extends DCLogic {
       const chat = s.chatsByKey[key];
       const meta = chatMeta(chat);
       const last = chat.lastMessage;
+      const unread = Math.max(0, Number(s.chatUnreadByKey[key] !== undefined
+        ? s.chatUnreadByKey[key]
+        : chat.unreadCount) || 0);
       return {
         title: meta.title, initials: meta.initials, color: meta.color,
         avatarUrl: meta.avatarUrl, hasAvatar: meta.hasAvatar, noAvatar: meta.noAvatar,
         preview: last
           ? (Number(last.senderID) === Number(me.apiId) ? 'You: ' : '') + last.body
           : 'No messages yet',
-        previewColor: 'var(--text3)', previewW: '500',
+        previewColor: unread > 0 ? 'var(--text)' : 'var(--text3)', previewW: unread > 0 ? '750' : '500',
+        hasUnread: unread > 0, unread: num(unread > 99 ? '99+' : unread),
         time: last ? this.formatPostTime(last.createdAt) : '',
         online: meta.online,
         bg: key === s.activeChatKey ? 'var(--soft)' : 'transparent',
@@ -3541,7 +3793,7 @@ class Component extends DCLogic {
       chatsLoadMoreDisabled: s.chatsPending,
       historyLoading: activeHistory.loading,
       historyHasError: !!activeHistory.error, historyError: activeHistory.error,
-      retryHistory: () => s.activeChatKey && this.loadChatHistory(s.activeChatKey, true),
+      retryHistory: () => s.activeChatKey && this.loadChatHistory(s.activeChatKey, true, 'user-open'),
       historyHasMore: !!activeHistory.nextCursor,
       loadMoreHistory: () => s.activeChatKey && this.loadChatHistory(s.activeChatKey, false),
       historyLoadMoreDisabled: activeHistory.pending,

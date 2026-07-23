@@ -512,6 +512,161 @@ func TestChatHistoryAndMixedListCursorsDoNotDuplicateRows(t *testing.T) {
 	}
 }
 
+func TestPersistedDirectUnreadIsIdempotentMonotonicAndSurvivesUnfollow(t *testing.T) {
+	fixture := newChatFixture(t)
+	ctx := context.Background()
+	fixture.acceptFollow(t, 0, 1)
+	chat := domain.ChatRef{Kind: domain.ChatDirect, TargetID: fixture.userIDs[1]}
+
+	first, err := fixture.chats.Send(ctx, fixture.userIDs[0], fixture.tokens[0], service.ChatSendInput{
+		ClientMessageID: chatClientID(8001), Chat: chat, Body: "first unread",
+	})
+	if err != nil || !first.Created {
+		t.Fatalf("first send: result=%+v err=%v", first, err)
+	}
+	state := first.UnreadEffects.StatesByUser[fixture.userIDs[1]]
+	if state == nil || state.ChatUnreadCount != 1 || state.UnreadCount != 1 || state.Revision != 1 {
+		t.Fatalf("first unread effect=%+v", state)
+	}
+	duplicate, err := fixture.chats.Send(ctx, fixture.userIDs[0], fixture.tokens[0], service.ChatSendInput{
+		ClientMessageID: chatClientID(8001), Chat: chat, Body: "first unread",
+	})
+	if err != nil || duplicate.Created || len(duplicate.UnreadEffects.StatesByUser) != 0 {
+		t.Fatalf("duplicate send: result=%+v err=%v", duplicate, err)
+	}
+	var revision, unread int64
+	if err := fixture.db.QueryRow(`
+		SELECT user_state.revision, read_state.unread_count
+		FROM chat_user_states user_state
+		JOIN direct_chat_read_states read_state ON read_state.user_id = user_state.user_id
+		WHERE user_state.user_id = ?
+	`, fixture.userIDs[1]).Scan(&revision, &unread); err != nil || revision != 1 || unread != 1 {
+		t.Fatalf("state after duplicate: revision=%d unread=%d err=%v", revision, unread, err)
+	}
+
+	read, err := fixture.chats.MarkRead(
+		ctx, fixture.userIDs[1],
+		domain.ChatRef{Kind: domain.ChatDirect, TargetID: fixture.userIDs[0]},
+		first.Message.ID,
+	)
+	if err != nil || !read.Changed || read.State.ChatUnreadCount != 0 ||
+		read.State.UnreadCount != 0 || read.State.Revision != 2 ||
+		read.State.ReadThroughMessageID == nil || *read.State.ReadThroughMessageID != first.Message.ID {
+		t.Fatalf("first read=%+v err=%v", read, err)
+	}
+	repeated, err := fixture.chats.MarkRead(
+		ctx, fixture.userIDs[1],
+		domain.ChatRef{Kind: domain.ChatDirect, TargetID: fixture.userIDs[0]},
+		first.Message.ID,
+	)
+	if err != nil || repeated.Changed || repeated.State.Revision != 2 {
+		t.Fatalf("idempotent read=%+v err=%v", repeated, err)
+	}
+
+	fixture.clock.Set(fixture.clock.Now().Add(time.Second))
+	second, err := fixture.chats.Send(ctx, fixture.userIDs[0], fixture.tokens[0], service.ChatSendInput{
+		ClientMessageID: chatClientID(8002), Chat: chat, Body: "second unread",
+	})
+	if err != nil || second.UnreadEffects.StatesByUser[fixture.userIDs[1]].Revision != 3 {
+		t.Fatalf("second send=%+v err=%v", second, err)
+	}
+	older, err := fixture.chats.MarkRead(
+		ctx, fixture.userIDs[1],
+		domain.ChatRef{Kind: domain.ChatDirect, TargetID: fixture.userIDs[0]},
+		first.Message.ID,
+	)
+	if err != nil || older.Changed || older.State.ChatUnreadCount != 1 || older.State.Revision != 3 {
+		t.Fatalf("older marker=%+v err=%v", older, err)
+	}
+	if err := fixture.follows.Delete(ctx, fixture.userIDs[0], fixture.userIDs[1]); err != nil {
+		t.Fatalf("unfollow: %v", err)
+	}
+	afterUnfollow, err := fixture.chats.MarkRead(
+		ctx, fixture.userIDs[1],
+		domain.ChatRef{Kind: domain.ChatDirect, TargetID: fixture.userIDs[0]},
+		second.Message.ID,
+	)
+	if err != nil || !afterUnfollow.Changed || afterUnfollow.State.ChatUnreadCount != 0 ||
+		afterUnfollow.State.Revision != 4 {
+		t.Fatalf("read after unfollow=%+v err=%v", afterUnfollow, err)
+	}
+	if _, err := fixture.chats.MarkRead(
+		ctx, fixture.userIDs[1],
+		domain.ChatRef{Kind: domain.ChatDirect, TargetID: fixture.userIDs[2]},
+		second.Message.ID,
+	); !errors.Is(err, service.ErrNotFound) {
+		t.Fatalf("foreign conversation marker error=%v", err)
+	}
+}
+
+func TestGroupUnreadUsesPhysicalMembershipLifecycle(t *testing.T) {
+	fixture := newChatFixture(t)
+	ctx := context.Background()
+	group, err := fixture.groups.Create(ctx, fixture.userIDs[0], "Unread lifecycle", "Physical membership state")
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	if _, err := fixture.groups.Invite(ctx, fixture.userIDs[0], group.ID, fixture.userIDs[1]); err != nil {
+		t.Fatalf("invite member: %v", err)
+	}
+	if _, err := fixture.groups.AcceptInvitation(ctx, fixture.userIDs[1], group.ID); err != nil {
+		t.Fatalf("accept invitation: %v", err)
+	}
+	var firstMembershipID int64
+	if err := fixture.db.QueryRow(`
+		SELECT id FROM group_memberships WHERE group_id = ? AND user_id = ?
+	`, group.ID, fixture.userIDs[1]).Scan(&firstMembershipID); err != nil {
+		t.Fatalf("first membership id: %v", err)
+	}
+
+	message, err := fixture.chats.Send(ctx, fixture.userIDs[0], fixture.tokens[0], service.ChatSendInput{
+		ClientMessageID: chatClientID(8101),
+		Chat:            domain.ChatRef{Kind: domain.ChatGroup, TargetID: group.ID},
+		Body:            "group unread",
+	})
+	if err != nil || message.UnreadEffects.StatesByUser[fixture.userIDs[1]].ChatUnreadCount != 1 {
+		t.Fatalf("group send=%+v err=%v", message, err)
+	}
+	leave, err := fixture.groups.LeaveWithEffects(ctx, fixture.userIDs[1], group.ID)
+	if err != nil {
+		t.Fatalf("leave group: %v", err)
+	}
+	leaveState := leave.ChatUnreadEffects.StatesByUser[fixture.userIDs[1]]
+	if leaveState == nil || leaveState.ChatUnreadCount != 0 || leaveState.UnreadCount != 0 || leaveState.Revision != 2 {
+		t.Fatalf("leave unread effect=%+v", leaveState)
+	}
+	var oldStates int
+	if err := fixture.db.QueryRow(`
+		SELECT COUNT(*) FROM group_chat_read_states WHERE membership_id = ?
+	`, firstMembershipID).Scan(&oldStates); err != nil || oldStates != 0 {
+		t.Fatalf("old lifecycle state: count=%d err=%v", oldStates, err)
+	}
+
+	fixture.clock.Set(fixture.clock.Now().Add(time.Second))
+	if _, err := fixture.groups.Invite(ctx, fixture.userIDs[0], group.ID, fixture.userIDs[1]); err != nil {
+		t.Fatalf("reinvite member: %v", err)
+	}
+	if _, err := fixture.groups.AcceptInvitation(ctx, fixture.userIDs[1], group.ID); err != nil {
+		t.Fatalf("reaccept invitation: %v", err)
+	}
+	var newMembershipID, markerID, unread int64
+	if err := fixture.db.QueryRow(`
+		SELECT membership.id, state.last_read_message_id, state.unread_count
+		FROM group_memberships membership
+		JOIN group_chat_read_states state ON state.membership_id = membership.id
+		WHERE membership.group_id = ? AND membership.user_id = ?
+	`, group.ID, fixture.userIDs[1]).Scan(&newMembershipID, &markerID, &unread); err != nil {
+		t.Fatalf("new lifecycle state: %v", err)
+	}
+	if newMembershipID == firstMembershipID || markerID != message.Message.ID || unread != 0 {
+		t.Fatalf("new lifecycle: old=%d new=%d marker=%d unread=%d", firstMembershipID, newMembershipID, markerID, unread)
+	}
+	history, err := fixture.chats.GroupHistory(ctx, fixture.userIDs[1], group.ID, nil, 20)
+	if err != nil || len(history.Messages) != 1 || history.Messages[0].ID != message.Message.ID {
+		t.Fatalf("history after rejoin=%+v err=%v", history, err)
+	}
+}
+
 func TestChatCursorsRoundTripAndRejectMalformedValues(t *testing.T) {
 	messageCursor := domain.ChatMessageCursor{CreatedAt: time.Unix(1_700_000_000, 0).UTC(), ID: 42}
 	decodedMessage, err := service.DecodeChatMessageCursor(service.EncodeChatMessageCursor(messageCursor))

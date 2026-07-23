@@ -103,7 +103,8 @@
       userID: raw.kind === 'direct' ? Number(raw.user.id) : null,
       groupID: raw.kind === 'group' ? Number(raw.group.id) : null,
       lastMessage: raw.last_message ? normalizeMessage(raw.last_message) : null,
-      activityAt: String(raw.activity_at || ''), transient: false
+      activityAt: String(raw.activity_at || ''), transient: false,
+      unreadCount: Math.max(0, Number(raw.unread_count) || 0)
     };
   }
 

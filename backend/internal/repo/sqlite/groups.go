@@ -168,6 +168,31 @@ func (r *GroupRepo) ListActiveMemberIDs(ctx context.Context, groupID int64) ([]i
 	return ids, rows.Err()
 }
 
+func (r *GroupRepo) ListActiveMemberships(ctx context.Context, groupID int64) ([]*domain.GroupMembership, error) {
+	if groupID <= 0 {
+		return []*domain.GroupMembership{}, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, group_id, user_id, status, created_at, updated_at
+		FROM group_memberships
+		WHERE group_id = ? AND status IN ('owner', 'member')
+		ORDER BY user_id ASC
+	`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	memberships := make([]*domain.GroupMembership, 0)
+	for rows.Next() {
+		membership, err := scanBareGroupMembership(rows)
+		if err != nil {
+			return nil, err
+		}
+		memberships = append(memberships, membership)
+	}
+	return memberships, rows.Err()
+}
+
 func (r *GroupRepo) UpdateMembershipStatusByID(
 	ctx context.Context,
 	membershipID int64,

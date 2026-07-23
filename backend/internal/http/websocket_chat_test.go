@@ -76,6 +76,8 @@ func TestWebSocketPersistsRoutesAndRevokesOnlyLogoutSession(t *testing.T) {
 	readWebSocketEvent(t, sibling, "presence:init")
 	recipient := dialTestWebSocket(t, server.URL, secondToken)
 	readWebSocketEvent(t, recipient, "presence:init")
+	recipientSibling := dialTestWebSocket(t, server.URL, secondToken)
+	readWebSocketEvent(t, recipientSibling, "presence:init")
 
 	clientMessageID := "47cd9266-b43f-4a89-9338-4f9c197ff12a"
 	if err := origin.WriteJSON(map[string]any{
@@ -89,8 +91,10 @@ func TestWebSocketPersistsRoutesAndRevokesOnlyLogoutSession(t *testing.T) {
 	originEvent := readWebSocketEvent(t, origin, "chat:message")
 	siblingEvent := readWebSocketEvent(t, sibling, "chat:message")
 	recipientEvent := readWebSocketEvent(t, recipient, "chat:message")
+	recipientSiblingEvent := readWebSocketEvent(t, recipientSibling, "chat:message")
 	for name, event := range map[string]map[string]any{
 		"origin": originEvent, "sibling": siblingEvent, "recipient": recipientEvent,
+		"recipient sibling": recipientSiblingEvent,
 	} {
 		if event["client_message_id"] != clientMessageID {
 			t.Fatalf("%s client_message_id=%v", name, event["client_message_id"])
@@ -103,6 +107,16 @@ func TestWebSocketPersistsRoutesAndRevokesOnlyLogoutSession(t *testing.T) {
 		if !ok || sender["avatar_url"] != domain.NeutralAvatarPlaceholderURL {
 			t.Fatalf("%s websocket sender=%+v", name, sender)
 		}
+	}
+	unreadEvent := readWebSocketEvent(t, recipient, "chat:unread")
+	if unreadEvent["chat_unread_count"] != float64(1) || unreadEvent["unread_count"] != float64(1) ||
+		unreadEvent["revision"] != float64(1) {
+		t.Fatalf("recipient unread event=%+v", unreadEvent)
+	}
+	recipientSiblingUnread := readWebSocketEvent(t, recipientSibling, "chat:unread")
+	if recipientSiblingUnread["chat_unread_count"] != float64(1) ||
+		recipientSiblingUnread["revision"] != float64(1) {
+		t.Fatalf("recipient sibling unread event=%+v", recipientSiblingUnread)
 	}
 	originTarget := originEvent["message"].(map[string]any)["chat"].(map[string]any)["target_id"]
 	recipientTarget := recipientEvent["message"].(map[string]any)["chat"].(map[string]any)["target_id"]
@@ -146,6 +160,18 @@ func TestWebSocketPersistsRoutesAndRevokesOnlyLogoutSession(t *testing.T) {
 	}
 	if event := readWebSocketEvent(t, recipient, "chat:message"); event["client_message_id"] != secondClientMessageID {
 		t.Fatalf("recipient second message=%+v", event)
+	}
+	if event := readWebSocketEvent(t, recipientSibling, "chat:message"); event["client_message_id"] != secondClientMessageID {
+		t.Fatalf("recipient sibling second message=%+v", event)
+	}
+	unreadEvent = readWebSocketEvent(t, recipient, "chat:unread")
+	if unreadEvent["chat_unread_count"] != float64(2) || unreadEvent["revision"] != float64(2) {
+		t.Fatalf("recipient second unread event=%+v", unreadEvent)
+	}
+	recipientSiblingUnread = readWebSocketEvent(t, recipientSibling, "chat:unread")
+	if recipientSiblingUnread["chat_unread_count"] != float64(2) ||
+		recipientSiblingUnread["revision"] != float64(2) {
+		t.Fatalf("recipient sibling second unread event=%+v", recipientSiblingUnread)
 	}
 }
 

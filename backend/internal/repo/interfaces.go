@@ -73,6 +73,7 @@ type GroupRepo interface {
 	ListMemberships(ctx context.Context, groupID, viewerUserID int64, status domain.GroupMembershipStatus, cursor *domain.GroupMembershipCursor, limit int) ([]*domain.GroupMembership, error)
 	ListInvitationInbox(ctx context.Context, userID int64, cursor *domain.GroupInvitationCursor, limit int) ([]*domain.GroupInvitation, error)
 	ListActiveMemberIDs(ctx context.Context, groupID int64) ([]int64, error)
+	ListActiveMemberships(ctx context.Context, groupID int64) ([]*domain.GroupMembership, error)
 }
 
 type GroupEventRepo interface {
@@ -99,8 +100,24 @@ type NotificationRepo interface {
 }
 
 type ChatRepo interface {
+	EnsureUserState(ctx context.Context, userID int64) error
+	CurrentRevision(ctx context.Context, userID int64) (int64, error)
+	BumpRevision(ctx context.Context, userID int64) (int64, error)
+	TotalUnreadCount(ctx context.Context, userID int64) (int64, error)
 	GetDirectConversation(ctx context.Context, userLowID, userHighID int64) (*domain.DirectConversation, error)
 	EnsureDirectConversation(ctx context.Context, userLowID, userHighID int64, createdAt time.Time) (*domain.DirectConversation, error)
+	LatestDirectMessageID(ctx context.Context, conversationID int64) (*int64, error)
+	LatestGroupMessageID(ctx context.Context, groupID int64) (*int64, error)
+	GetDirectMessage(ctx context.Context, conversationID, messageID int64) (*domain.ChatMessage, error)
+	GetGroupMessage(ctx context.Context, groupID, messageID int64) (*domain.ChatMessage, error)
+	EnsureDirectReadState(ctx context.Context, userID, conversationID int64, markerID *int64, updatedAt time.Time) error
+	EnsureGroupReadState(ctx context.Context, membershipID int64, markerID *int64, updatedAt time.Time) error
+	IncrementDirectUnread(ctx context.Context, userID, conversationID int64, updatedAt time.Time) error
+	IncrementGroupUnread(ctx context.Context, membershipID int64, updatedAt time.Time) error
+	DirectUnreadState(ctx context.Context, userID, conversationID int64) (*domain.ChatUnreadState, error)
+	GroupUnreadState(ctx context.Context, userID, membershipID, groupID int64) (*domain.ChatUnreadState, error)
+	AdvanceDirectRead(ctx context.Context, userID, conversationID, messageID int64, updatedAt time.Time) (bool, error)
+	AdvanceGroupRead(ctx context.Context, membershipID, groupID, messageID int64, updatedAt time.Time) (bool, error)
 	CreateMessage(ctx context.Context, message *domain.ChatMessage) (int64, error)
 	GetMessageByClientID(ctx context.Context, senderUserID int64, clientMessageID string) (*domain.ChatMessage, error)
 	ListDirectMessages(ctx context.Context, viewerUserID, targetUserID int64, cursor *domain.ChatMessageCursor, limit int) ([]*domain.ChatMessage, error)

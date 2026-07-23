@@ -22,6 +22,80 @@ func NewChatRepo(db *sql.DB) *ChatRepo {
 	return &ChatRepo{db: db}
 }
 
+func (r *ChatRepo) EnsureUserState(ctx context.Context, userID int64) error {
+	if r == nil || r.db == nil || userID <= 0 {
+		return fmt.Errorf("invalid chat user state")
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO chat_user_states (user_id, revision)
+		VALUES (?, 0)
+		ON CONFLICT(user_id) DO NOTHING
+	`, userID)
+	return err
+}
+
+func (r *ChatRepo) CurrentRevision(ctx context.Context, userID int64) (int64, error) {
+	if r == nil || r.db == nil || userID <= 0 {
+		return 0, repo.ErrNotFound
+	}
+	var revision int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT revision
+		FROM chat_user_states
+		WHERE user_id = ?
+	`, userID).Scan(&revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, repo.ErrNotFound
+	}
+	return revision, err
+}
+
+func (r *ChatRepo) BumpRevision(ctx context.Context, userID int64) (int64, error) {
+	if r == nil || r.db == nil || userID <= 0 {
+		return 0, repo.ErrNotFound
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE chat_user_states
+		SET revision = revision + 1
+		WHERE user_id = ?
+	`, userID)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if affected != 1 {
+		return 0, repo.ErrNotFound
+	}
+	return r.CurrentRevision(ctx, userID)
+}
+
+func (r *ChatRepo) TotalUnreadCount(ctx context.Context, userID int64) (int64, error) {
+	if r == nil || r.db == nil || userID <= 0 {
+		return 0, repo.ErrNotFound
+	}
+	var count int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE((
+				SELECT SUM(state.unread_count)
+				FROM direct_chat_read_states state
+				WHERE state.user_id = ?
+			), 0)
+			+
+			COALESCE((
+				SELECT SUM(state.unread_count)
+				FROM group_chat_read_states state
+				JOIN group_memberships membership ON membership.id = state.membership_id
+				WHERE membership.user_id = ?
+					AND membership.status IN ('owner', 'member')
+			), 0)
+	`, userID, userID).Scan(&count)
+	return count, err
+}
+
 func (r *ChatRepo) GetDirectConversation(ctx context.Context, userLowID, userHighID int64) (*domain.DirectConversation, error) {
 	if r == nil || r.db == nil || userLowID <= 0 || userHighID <= userLowID {
 		return nil, repo.ErrNotFound
@@ -31,6 +105,307 @@ func (r *ChatRepo) GetDirectConversation(ctx context.Context, userLowID, userHig
 		FROM direct_conversations
 		WHERE user_low_id = ? AND user_high_id = ?
 	`, userLowID, userHighID))
+}
+
+func (r *ChatRepo) LatestDirectMessageID(ctx context.Context, conversationID int64) (*int64, error) {
+	return r.latestMessageID(ctx, "direct_conversation_id", conversationID)
+}
+
+func (r *ChatRepo) LatestGroupMessageID(ctx context.Context, groupID int64) (*int64, error) {
+	return r.latestMessageID(ctx, "group_id", groupID)
+}
+
+func (r *ChatRepo) latestMessageID(ctx context.Context, column string, targetID int64) (*int64, error) {
+	if r == nil || r.db == nil || targetID <= 0 || (column != "direct_conversation_id" && column != "group_id") {
+		return nil, repo.ErrNotFound
+	}
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id
+		FROM chat_messages
+		WHERE `+column+` = ?
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, targetID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
+func (r *ChatRepo) GetDirectMessage(ctx context.Context, conversationID, messageID int64) (*domain.ChatMessage, error) {
+	return r.getTargetMessage(ctx, "direct_conversation_id", conversationID, messageID, domain.ChatDirect)
+}
+
+func (r *ChatRepo) GetGroupMessage(ctx context.Context, groupID, messageID int64) (*domain.ChatMessage, error) {
+	return r.getTargetMessage(ctx, "group_id", groupID, messageID, domain.ChatGroup)
+}
+
+func (r *ChatRepo) getTargetMessage(
+	ctx context.Context,
+	column string,
+	targetID, messageID int64,
+	kind domain.ChatKind,
+) (*domain.ChatMessage, error) {
+	if r == nil || r.db == nil || targetID <= 0 || messageID <= 0 ||
+		(column != "direct_conversation_id" && column != "group_id") {
+		return nil, repo.ErrNotFound
+	}
+	var message domain.ChatMessage
+	var createdAt int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, sender_user_id, client_message_id, body, created_at
+		FROM chat_messages
+		WHERE id = ? AND `+column+` = ?
+	`, messageID, targetID).Scan(
+		&message.ID, &message.SenderUserID, &message.ClientMessageID, &message.Body, &createdAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, repo.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	message.CreatedAt = unixToTime(createdAt)
+	message.Chat = domain.ChatRef{Kind: kind, TargetID: targetID}
+	if kind == domain.ChatDirect {
+		message.DirectConversationID = &targetID
+	} else {
+		message.GroupID = &targetID
+	}
+	return &message, nil
+}
+
+func (r *ChatRepo) EnsureDirectReadState(
+	ctx context.Context,
+	userID, conversationID int64,
+	markerID *int64,
+	updatedAt time.Time,
+) error {
+	if r == nil || r.db == nil || userID <= 0 || conversationID <= 0 || updatedAt.IsZero() {
+		return fmt.Errorf("invalid direct chat read state")
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO direct_chat_read_states (
+			user_id, direct_conversation_id, last_read_message_id, unread_count, updated_at
+		) VALUES (?, ?, ?, 0, ?)
+		ON CONFLICT(user_id, direct_conversation_id) DO NOTHING
+	`, userID, conversationID, markerID, timeToUnix(updatedAt))
+	return err
+}
+
+func (r *ChatRepo) EnsureGroupReadState(
+	ctx context.Context,
+	membershipID int64,
+	markerID *int64,
+	updatedAt time.Time,
+) error {
+	if r == nil || r.db == nil || membershipID <= 0 || updatedAt.IsZero() {
+		return fmt.Errorf("invalid group chat read state")
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO group_chat_read_states (
+			membership_id, last_read_message_id, unread_count, updated_at
+		) VALUES (?, ?, 0, ?)
+		ON CONFLICT(membership_id) DO NOTHING
+	`, membershipID, markerID, timeToUnix(updatedAt))
+	return err
+}
+
+func (r *ChatRepo) IncrementDirectUnread(
+	ctx context.Context,
+	userID, conversationID int64,
+	updatedAt time.Time,
+) error {
+	return r.incrementUnread(ctx, `
+		UPDATE direct_chat_read_states
+		SET unread_count = unread_count + 1, updated_at = ?
+		WHERE user_id = ? AND direct_conversation_id = ?
+	`, timeToUnix(updatedAt), userID, conversationID)
+}
+
+func (r *ChatRepo) IncrementGroupUnread(ctx context.Context, membershipID int64, updatedAt time.Time) error {
+	return r.incrementUnread(ctx, `
+		UPDATE group_chat_read_states
+		SET unread_count = unread_count + 1, updated_at = ?
+		WHERE membership_id = ?
+	`, timeToUnix(updatedAt), membershipID)
+}
+
+func (r *ChatRepo) incrementUnread(ctx context.Context, query string, args ...any) error {
+	if r == nil || r.db == nil {
+		return repo.ErrNotFound
+	}
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return repo.ErrNotFound
+	}
+	return nil
+}
+
+func (r *ChatRepo) DirectUnreadState(
+	ctx context.Context,
+	userID, conversationID int64,
+) (*domain.ChatUnreadState, error) {
+	if r == nil || r.db == nil || userID <= 0 || conversationID <= 0 {
+		return nil, repo.ErrNotFound
+	}
+	var state domain.ChatUnreadState
+	var marker sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT
+			CASE WHEN conversation.user_low_id = ? THEN conversation.user_high_id ELSE conversation.user_low_id END,
+			state.unread_count,
+			user_state.revision,
+			state.last_read_message_id
+		FROM direct_chat_read_states state
+		JOIN direct_conversations conversation ON conversation.id = state.direct_conversation_id
+		JOIN chat_user_states user_state ON user_state.user_id = state.user_id
+		WHERE state.user_id = ? AND state.direct_conversation_id = ?
+	`, userID, userID, conversationID).Scan(
+		&state.Chat.TargetID, &state.ChatUnreadCount, &state.Revision, &marker,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, repo.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	state.Chat.Kind = domain.ChatDirect
+	if marker.Valid {
+		value := marker.Int64
+		state.ReadThroughMessageID = &value
+	}
+	state.UnreadCount, err = r.TotalUnreadCount(ctx, userID)
+	return &state, err
+}
+
+func (r *ChatRepo) GroupUnreadState(
+	ctx context.Context,
+	userID, membershipID, groupID int64,
+) (*domain.ChatUnreadState, error) {
+	if r == nil || r.db == nil || userID <= 0 || membershipID <= 0 || groupID <= 0 {
+		return nil, repo.ErrNotFound
+	}
+	state := &domain.ChatUnreadState{Chat: domain.ChatRef{Kind: domain.ChatGroup, TargetID: groupID}}
+	var marker sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT state.unread_count, user_state.revision, state.last_read_message_id
+		FROM group_chat_read_states state
+		JOIN group_memberships membership ON membership.id = state.membership_id
+		JOIN chat_user_states user_state ON user_state.user_id = membership.user_id
+		WHERE state.membership_id = ? AND membership.user_id = ? AND membership.group_id = ?
+			AND membership.status IN ('owner', 'member')
+	`, membershipID, userID, groupID).Scan(&state.ChatUnreadCount, &state.Revision, &marker)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, repo.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if marker.Valid {
+		value := marker.Int64
+		state.ReadThroughMessageID = &value
+	}
+	state.UnreadCount, err = r.TotalUnreadCount(ctx, userID)
+	return state, err
+}
+
+func (r *ChatRepo) AdvanceDirectRead(
+	ctx context.Context,
+	userID, conversationID, messageID int64,
+	updatedAt time.Time,
+) (bool, error) {
+	return r.advanceRead(ctx, `
+		UPDATE direct_chat_read_states
+		SET
+			last_read_message_id = ?,
+			unread_count = (
+				SELECT COUNT(*)
+				FROM chat_messages newer
+				JOIN chat_messages candidate ON candidate.id = ?
+				WHERE newer.direct_conversation_id = ?
+					AND newer.sender_user_id != ?
+					AND (
+						newer.created_at > candidate.created_at OR
+						(newer.created_at = candidate.created_at AND newer.id > candidate.id)
+					)
+			),
+			updated_at = ?
+		WHERE user_id = ? AND direct_conversation_id = ?
+			AND (
+				last_read_message_id IS NULL OR EXISTS (
+					SELECT 1
+					FROM chat_messages candidate
+					JOIN chat_messages current ON current.id = direct_chat_read_states.last_read_message_id
+					WHERE candidate.id = ?
+						AND (
+							candidate.created_at > current.created_at OR
+							(candidate.created_at = current.created_at AND candidate.id > current.id)
+						)
+				)
+			)
+	`, messageID, messageID, conversationID, userID, timeToUnix(updatedAt), userID, conversationID, messageID)
+}
+
+func (r *ChatRepo) AdvanceGroupRead(
+	ctx context.Context,
+	membershipID, groupID, messageID int64,
+	updatedAt time.Time,
+) (bool, error) {
+	return r.advanceRead(ctx, `
+		UPDATE group_chat_read_states
+		SET
+			last_read_message_id = ?,
+			unread_count = (
+				SELECT COUNT(*)
+				FROM chat_messages newer
+				JOIN chat_messages candidate ON candidate.id = ?
+				JOIN group_memberships membership ON membership.id = ?
+				WHERE newer.group_id = ?
+					AND newer.sender_user_id != membership.user_id
+					AND (
+						newer.created_at > candidate.created_at OR
+						(newer.created_at = candidate.created_at AND newer.id > candidate.id)
+					)
+			),
+			updated_at = ?
+		WHERE membership_id = ?
+			AND (
+				last_read_message_id IS NULL OR EXISTS (
+					SELECT 1
+					FROM chat_messages candidate
+					JOIN chat_messages current ON current.id = group_chat_read_states.last_read_message_id
+					WHERE candidate.id = ?
+						AND (
+							candidate.created_at > current.created_at OR
+							(candidate.created_at = current.created_at AND candidate.id > current.id)
+						)
+				)
+			)
+	`, messageID, messageID, membershipID, groupID, timeToUnix(updatedAt), membershipID, messageID)
+}
+
+func (r *ChatRepo) advanceRead(ctx context.Context, query string, args ...any) (bool, error) {
+	if r == nil || r.db == nil {
+		return false, repo.ErrNotFound
+	}
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
 }
 
 func (r *ChatRepo) EnsureDirectConversation(ctx context.Context, userLowID, userHighID int64, createdAt time.Time) (*domain.DirectConversation, error) {
@@ -260,8 +635,11 @@ func (r *ChatRepo) ListChats(ctx context.Context, viewerUserID int64, cursor *do
 				NULL AS group_id,
 				COALESCE(last_message.created_at, dc.created_at) AS activity_at,
 				last_message.id AS last_message_id,
-				NULL AS membership_status
+				NULL AS membership_status,
+				COALESCE(read_state.unread_count, 0) AS unread_count
 			FROM direct_conversations dc
+			LEFT JOIN direct_chat_read_states read_state
+				ON read_state.direct_conversation_id = dc.id AND read_state.user_id = ?
 			LEFT JOIN chat_messages last_message ON last_message.id = (
 				SELECT newest.id FROM chat_messages newest
 				WHERE newest.direct_conversation_id = dc.id
@@ -276,9 +654,11 @@ func (r *ChatRepo) ListChats(ctx context.Context, viewerUserID int64, cursor *do
 				g.id AS target_id, g.id AS group_id,
 				COALESCE(last_message.created_at, membership.updated_at) AS activity_at,
 				last_message.id AS last_message_id,
-				membership.status AS membership_status
+				membership.status AS membership_status,
+				COALESCE(read_state.unread_count, 0) AS unread_count
 			FROM group_memberships membership
 			JOIN groups g ON g.id = membership.group_id
+			LEFT JOIN group_chat_read_states read_state ON read_state.membership_id = membership.id
 			LEFT JOIN chat_messages last_message ON last_message.id = (
 				SELECT newest.id FROM chat_messages newest
 				WHERE newest.group_id = g.id
@@ -288,6 +668,7 @@ func (r *ChatRepo) ListChats(ctx context.Context, viewerUserID int64, cursor *do
 		)
 		SELECT
 			row.kind, row.kind_rank, row.entity_id, row.target_id, row.activity_at, row.membership_status,
+			row.unread_count,
 			peer.id, peer.first_name, peer.last_name, peer.nickname,
 			CASE
 				WHEN peer.avatar_media_id IS NULL THEN NULL
@@ -337,7 +718,7 @@ func (r *ChatRepo) ListChats(ctx context.Context, viewerUserID int64, cursor *do
 		WHERE 1 = 1
 	`
 	args := []any{
-		viewerUserID, viewerUserID, viewerUserID, viewerUserID,
+		viewerUserID, viewerUserID, viewerUserID, viewerUserID, viewerUserID,
 		viewerUserID, viewerUserID,
 		viewerUserID, viewerUserID,
 		viewerUserID, viewerUserID,
@@ -425,6 +806,7 @@ func scanChatSummary(row rowScanner) (*domain.ChatSummary, error) {
 	)
 	destinations := []any{
 		&kind, &kindRank, &summary.EntityID, &summary.TargetID, &activityAt, &membershipStatus,
+		&summary.UnreadCount,
 	}
 	destinations = append(destinations, peer.destinations()...)
 	destinations = append(destinations,
@@ -440,7 +822,7 @@ func scanChatSummary(row rowScanner) (*domain.ChatSummary, error) {
 		return nil, err
 	}
 	summary.Kind = domain.ChatKind(kind)
-	if !summary.Kind.Valid() || kindRank < 0 || kindRank > 1 || summary.EntityID <= 0 || summary.TargetID <= 0 {
+	if !summary.Kind.Valid() || kindRank < 0 || kindRank > 1 || summary.EntityID <= 0 || summary.TargetID <= 0 || summary.UnreadCount < 0 {
 		return nil, fmt.Errorf("invalid chat summary")
 	}
 	summary.ActivityAt = unixToTime(activityAt)

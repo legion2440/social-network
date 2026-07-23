@@ -45,7 +45,7 @@ func TestMigrationsRunAllTheWayDownAndBackUp(t *testing.T) {
 	if err := migrateDown(db); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
-	for _, table := range []string{"notification_user_states", "notifications", "group_event_responses", "group_events", "chat_messages", "direct_conversations", "group_memberships", "groups", "post_comments", "post_selected_users", "posts", "follows", "sessions", "media", "users"} {
+	for _, table := range []string{"group_chat_read_states", "direct_chat_read_states", "chat_user_states", "notification_user_states", "notifications", "group_event_responses", "group_events", "chat_messages", "direct_conversations", "group_memberships", "groups", "post_comments", "post_selected_users", "posts", "follows", "sessions", "media", "users"} {
 		if tableExists(t, db, table) {
 			t.Fatalf("table %s still exists after down migrations", table)
 		}
@@ -88,7 +88,7 @@ func TestOpenRejectsDisposableLegacyBootstrapDatabase(t *testing.T) {
 func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 
-	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "post_comments", "groups", "group_memberships", "group_events", "group_event_responses", "direct_conversations", "chat_messages", "notifications", "notification_user_states", "schema_migrations"} {
+	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "post_comments", "groups", "group_memberships", "group_events", "group_event_responses", "direct_conversations", "chat_messages", "notifications", "notification_user_states", "chat_user_states", "direct_chat_read_states", "group_chat_read_states", "schema_migrations"} {
 		if !tableExists(t, db, table) {
 			t.Fatalf("expected table %s", table)
 		}
@@ -485,6 +485,125 @@ func TestMigration13BackfillsNotificationStateAndPhysicalMembershipIDs(t *testin
 	nextID, _ := result.LastInsertId()
 	if nextID <= 100 {
 		t.Fatalf("membership AUTOINCREMENT reused a deleted lifecycle id: %d", nextID)
+	}
+}
+
+func TestMigration14BackfillsChatReadStatesAndConstraints(t *testing.T) {
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "migration-14.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("enable foreign keys: %v", err)
+	}
+	migrator, sourceDriver, err := newMigrator(db)
+	if err != nil {
+		t.Fatalf("new migrator: %v", err)
+	}
+	if err := migrator.Migrate(13); err != nil {
+		t.Fatalf("migrate to version 13: %v", err)
+	}
+	_ = sourceDriver.Close()
+
+	if _, err := db.Exec(`
+		INSERT INTO users (id, email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
+		VALUES
+			(1, 'chat-read-one@example.com', 'hash', 'One', 'User', '22-07-1992', 1, 1),
+			(2, 'chat-read-two@example.com', 'hash', 'Two', 'User', '22-07-1992', 1, 1),
+			(3, 'chat-read-three@example.com', 'hash', 'Three', 'User', '22-07-1992', 1, 1)
+	`); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO groups (id, owner_user_id, title, description, created_at)
+		VALUES (1, 1, 'Chat group', 'Description', 1)
+	`); err != nil {
+		t.Fatalf("seed group: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO group_memberships (id, group_id, user_id, status, created_at, updated_at)
+		VALUES
+			(10, 1, 1, 'owner', 1, 1),
+			(11, 1, 2, 'member', 1, 1),
+			(12, 1, 3, 'invited', 1, 1)
+	`); err != nil {
+		t.Fatalf("seed memberships: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO direct_conversations (id, user_low_id, user_high_id, created_at)
+		VALUES (20, 1, 2, 1)
+	`); err != nil {
+		t.Fatalf("seed direct conversation: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO chat_messages (
+			id, direct_conversation_id, group_id, sender_user_id, client_message_id, body, created_at
+		) VALUES
+			(30, 20, NULL, 1, 'direct-30', 'direct', 30),
+			(31, NULL, 1, 2, 'group-31', 'group', 31)
+	`); err != nil {
+		t.Fatalf("seed chat messages: %v", err)
+	}
+
+	migrator, sourceDriver, err = newMigrator(db)
+	if err != nil {
+		t.Fatalf("new version 14 migrator: %v", err)
+	}
+	if err := migrator.Migrate(14); err != nil {
+		t.Fatalf("migrate to version 14: %v", err)
+	}
+	_ = sourceDriver.Close()
+
+	var userStates, directStates, groupStates int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM chat_user_states WHERE revision = 0`).Scan(&userStates); err != nil || userStates != 3 {
+		t.Fatalf("chat user-state backfill: count=%d err=%v", userStates, err)
+	}
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM direct_chat_read_states
+		WHERE last_read_message_id = 30 AND unread_count = 0
+	`).Scan(&directStates); err != nil || directStates != 2 {
+		t.Fatalf("direct read-state backfill: count=%d err=%v", directStates, err)
+	}
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM group_chat_read_states
+		WHERE last_read_message_id = 31 AND unread_count = 0
+	`).Scan(&groupStates); err != nil || groupStates != 2 {
+		t.Fatalf("group read-state backfill: count=%d err=%v", groupStates, err)
+	}
+	var invitedStates int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM group_chat_read_states state
+		JOIN group_memberships membership ON membership.id = state.membership_id
+		WHERE membership.user_id = 3
+	`).Scan(&invitedStates); err != nil || invitedStates != 0 {
+		t.Fatalf("invited membership received read state: count=%d err=%v", invitedStates, err)
+	}
+	if _, err := db.Exec(`
+		UPDATE direct_chat_read_states SET unread_count = -1
+		WHERE user_id = 1 AND direct_conversation_id = 20
+	`); err == nil {
+		t.Fatal("expected direct unread_count check constraint")
+	}
+	for _, index := range []string{
+		"idx_direct_chat_read_states_conversation_user",
+		"idx_direct_chat_read_states_last_read",
+		"idx_group_chat_read_states_last_read",
+	} {
+		var count int
+		if err := db.QueryRow(`
+			SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?
+		`, index).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("index %s: count=%d err=%v", index, count, err)
+		}
+	}
+	if _, err := db.Exec(`DELETE FROM group_memberships WHERE id = 11`); err != nil {
+		t.Fatalf("delete membership: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM group_chat_read_states WHERE membership_id = 11`).Scan(&groupStates); err != nil || groupStates != 0 {
+		t.Fatalf("group read-state cascade: count=%d err=%v", groupStates, err)
 	}
 }
 

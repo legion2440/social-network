@@ -51,6 +51,7 @@ Current migrations:
 - `000011_add_group_posts`
 - `000012_create_group_events`
 - `000013_create_notifications`
+- `000014_create_chat_read_states`
 
 Migration `000011` rebuilds `posts` so personal and group publications share
 one table while keeping existing post IDs, selected audiences, comments,
@@ -383,10 +384,21 @@ to current owners and members; rejoining restores the complete history. Chat
 lists and histories use opaque cursors, default to 20 rows, and allow at most
 50.
 
+Chat unread state is persisted in SQLite. The chat list returns an
+`unread_count` for every listed chat plus the authoritative user-level
+`unread_count` and `revision`. Direct state belongs to the user/conversation
+pair and survives unfollow. Group state belongs to the physical membership
+lifecycle: leaving deletes it, while rejoining creates a fresh zero-unread
+state through the latest existing group message without hiding older history.
+`PUT /api/chats/direct/{userID}/read` and
+`PUT /api/groups/{id}/chat/read` accept strict JSON with one positive
+`through_message_id`. Markers advance by `(created_at, id)`; equal or older
+markers are idempotent and do not bump the revision.
+
 Live messages use the authenticated same-origin `GET /ws` WebSocket. Client
 events are `chat:send`, `typing:start`, `typing:heartbeat`, and `typing:stop`;
 server events are `presence:init`, `presence:update`, `presence:remove`,
-`typing:update`, `chat:message`, `chat:remove`, `chat:error`,
+`typing:update`, `chat:message`, `chat:unread`, `chat:remove`, `chat:error`,
 `notification:upsert`, and `notifications:read-all`. `chat:remove`
 immediately purges a group chat from every active tab when membership access is
 revoked. Frames are limited to 16 KiB and message text is trimmed and limited
@@ -406,6 +418,14 @@ message without rebroadcasting it; reusing the UUID for different content
 returns a conflict. The frontend keeps an optimistic bubble for 15 seconds and
 retries with the same UUID. HTTP history, reconnect responses, and WebSocket
 responses deduplicate by server/message IDs.
+
+For a newly persisted message, every eligible recipient socket receives
+`chat:message` followed by its personalized `chat:unread` state in the same
+Hub completion. A revoked sender session suppresses both events. The frontend
+marks a chat read only while Messages is the active screen, that conversation
+is active, its authoritative history is displayed, and the browser tab is
+visible. Bootstrap, reconnect, background preload, and older-history
+pagination never mark messages read.
 
 The Hub stores only `SHA-256(raw session token)` as its session identity. The
 raw token stays in the connection read loop and is checked against `sessions`
@@ -478,7 +498,9 @@ Implemented endpoints:
 - `PUT /api/notifications/{id}/action` (strict actionable source transition)
 - `GET /api/chats` (authenticated cursor-paginated chat list)
 - `GET /api/chats/direct/{userID}/messages` (authenticated direct history)
+- `PUT /api/chats/direct/{userID}/read` (strict persisted direct read marker)
 - `GET /api/groups/{id}/chat/messages` (authenticated owner/member history)
+- `PUT /api/groups/{id}/chat/read` (strict persisted group read marker)
 - `GET /static/avatars/{male,female,neutral}.svg`
 - `GET /` and frontend assets (local development and browser smoke only)
 
@@ -486,7 +508,8 @@ All other reserved API groups currently return JSON `501 Not Implemented`.
 
 The frontend feed, profiles, suggestions, follow controls, persisted notifications, follower
 lists, following lists, profile posts, post comments, direct chats, and group
-chats use backend IDs and live API state. Chat history paginates upward,
+chats use backend IDs and live API state. Chat unread badges and read markers
+are persisted and revision-gated. Chat history paginates upward,
 reconnect reloads list/current history, optimistic sends are retryable, and
 stale responses are generation-gated across logout and access changes.
 Group-dependent mock posts, comments, and right-rail events have been removed;

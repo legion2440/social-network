@@ -827,6 +827,7 @@
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;margin-top:2px">
                   <span style="font:500 12.5px 'Manrope',sans-serif;color:{{cv.previewColor}};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:{{cv.previewW}}">{{cv.preview}}</span>
+                  <sc-if value="{{cv.hasUnread}}" hint-placeholder-val="{{false}}"><span style="margin-left:auto;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--accent);color:#fff;display:grid;place-items:center;font:800 10px 'Manrope',sans-serif;flex:none">{{cv.unread}}</span></sc-if>
                 </div>
               </div>
             </div>

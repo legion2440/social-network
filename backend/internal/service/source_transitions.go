@@ -49,6 +49,18 @@ func updateGroupMembershipTx(
 	}
 	membership.Status = next
 	membership.UpdatedAt = now
+	if next == domain.GroupOwner || next == domain.GroupMember {
+		if err := repositories.Chats().EnsureUserState(ctx, membership.UserID); err != nil {
+			return err
+		}
+		markerID, err := repositories.Chats().LatestGroupMessageID(ctx, membership.GroupID)
+		if err != nil {
+			return err
+		}
+		if err := repositories.Chats().EnsureGroupReadState(ctx, membership.ID, markerID, now); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -57,11 +69,41 @@ func deleteGroupMembershipTx(
 	repositories repo.TransactionRepositories,
 	membership *domain.GroupMembership,
 	expected domain.GroupMembershipStatus,
-) error {
+) (*domain.ChatUnreadState, error) {
 	if membership == nil || membership.Status != expected {
-		return ErrConflict
+		return nil, ErrConflict
 	}
-	return mapGroupRepoError(repositories.Groups().DeleteMembershipByID(ctx, membership.ID, expected))
+	var prior *domain.ChatUnreadState
+	if expected == domain.GroupOwner || expected == domain.GroupMember {
+		var err error
+		prior, err = repositories.Chats().GroupUnreadState(
+			ctx, membership.UserID, membership.ID, membership.GroupID,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := mapGroupRepoError(
+		repositories.Groups().DeleteMembershipByID(ctx, membership.ID, expected),
+	); err != nil {
+		return nil, err
+	}
+	if prior == nil || prior.ChatUnreadCount == 0 {
+		return nil, nil
+	}
+	revision, err := repositories.Chats().BumpRevision(ctx, membership.UserID)
+	if err != nil {
+		return nil, err
+	}
+	total, err := repositories.Chats().TotalUnreadCount(ctx, membership.UserID)
+	if err != nil {
+		return nil, err
+	}
+	prior.ChatUnreadCount = 0
+	prior.UnreadCount = total
+	prior.Revision = revision
+	prior.ReadThroughMessageID = nil
+	return prior, nil
 }
 
 func relationshipTx(

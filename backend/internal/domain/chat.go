@@ -56,4 +56,18 @@ type ChatSummary struct {
 	Group       *Group
 	LastMessage *ChatMessage
 	ActivityAt  time.Time
+	UnreadCount int64
+}
+
+type ChatUnreadState struct {
+	Chat                 ChatRef
+	ChatUnreadCount      int64
+	UnreadCount          int64
+	Revision             int64
+	ReadThroughMessageID *int64
+}
+
+type ChatRecipient struct {
+	UserID       int64
+	MembershipID *int64
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"social-network/backend/internal/domain"
@@ -25,6 +26,72 @@ func chatGET(t *testing.T, env *testEnvironment, path, token string, want int) *
 		t.Fatalf("GET %s: status=%d body=%q want=%d", path, recorder.Code, recorder.Body.String(), want)
 	}
 	return recorder
+}
+
+func TestChatReadHTTPContractAndAuthoritativeResponse(t *testing.T) {
+	env := newTestEnvironment(t)
+	firstID, firstToken := env.createUserAndSession(t, "chat-read-http-first@example.com")
+	secondID, secondToken := env.createUserAndSession(t, "chat-read-http-second@example.com")
+	if _, err := sqlite.NewFollowRepo(env.db).Upsert(
+		context.Background(), firstID, secondID, domain.FollowAccepted, testNow,
+	); err != nil {
+		t.Fatalf("create accepted follow: %v", err)
+	}
+	chats := service.NewChatService(sqlite.NewTransactionManager(env.db), fixedClock{})
+	sent, err := chats.Send(context.Background(), firstID, firstToken, service.ChatSendInput{
+		ClientMessageID: "bc6f5eaa-a195-4b3c-bad4-c1e017e2c4cc",
+		Chat:            domain.ChatRef{Kind: domain.ChatDirect, TargetID: secondID},
+		Body:            "read through HTTP",
+	})
+	if err != nil {
+		t.Fatalf("send direct message: %v", err)
+	}
+	path := "/api/chats/direct/" + strconv.FormatInt(firstID, 10) + "/read"
+	body := `{"through_message_id":` + strconv.FormatInt(sent.Message.ID, 10) + `}`
+	request := authenticatedRequest(http.MethodPut, path, secondToken, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	env.handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("mark read: status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+	var response chatUnreadResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode mark read: %v", err)
+	}
+	if response.Chat.Kind != domain.ChatDirect || response.Chat.TargetID != firstID ||
+		response.ChatUnreadCount != 0 || response.UnreadCount != 0 || response.Revision != 2 ||
+		response.ReadThroughMessageID == nil || *response.ReadThroughMessageID != sent.Message.ID {
+		t.Fatalf("authoritative mark-read response=%+v", response)
+	}
+
+	for _, test := range []struct {
+		name        string
+		method      string
+		path        string
+		contentType string
+		body        string
+		want        int
+		allow       string
+	}{
+		{name: "content type", method: http.MethodPut, path: path, contentType: "text/plain", body: body, want: http.StatusUnsupportedMediaType},
+		{name: "duplicate field", method: http.MethodPut, path: path, contentType: "application/json", body: `{"through_message_id":1,"through_message_id":2}`, want: http.StatusBadRequest},
+		{name: "unknown field", method: http.MethodPut, path: path, contentType: "application/json", body: `{"through_message_id":1,"extra":true}`, want: http.StatusBadRequest},
+		{name: "foreign marker", method: http.MethodPut, path: "/api/chats/direct/" + strconv.FormatInt(firstID, 10) + "/read", contentType: "application/json", body: `{"through_message_id":999999}`, want: http.StatusNotFound},
+		{name: "method", method: http.MethodPost, path: path, contentType: "application/json", body: body, want: http.StatusMethodNotAllowed, allow: http.MethodPut},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := authenticatedRequest(test.method, test.path, secondToken, strings.NewReader(test.body))
+			if test.contentType != "" {
+				req.Header.Set("Content-Type", test.contentType)
+			}
+			rec := httptest.NewRecorder()
+			env.handler.ServeHTTP(rec, req)
+			if rec.Code != test.want || (test.allow != "" && rec.Header().Get("Allow") != test.allow) {
+				t.Fatalf("status=%d allow=%q body=%q", rec.Code, rec.Header().Get("Allow"), rec.Body.String())
+			}
+		})
+	}
 }
 
 func TestChatHTTPEdgeCasesAndAccessMatrix(t *testing.T) {

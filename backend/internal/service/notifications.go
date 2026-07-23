@@ -349,7 +349,7 @@ func (s *NotificationService) Action(
 				if err := updateGroupMembershipTx(ctx, repositories, membership, membership.Status, domain.GroupMember, now); err != nil {
 					return mapNotificationActionSourceError(err)
 				}
-			} else if err := deleteGroupMembershipTx(ctx, repositories, membership, membership.Status); err != nil {
+			} else if _, err := deleteGroupMembershipTx(ctx, repositories, membership, membership.Status); err != nil {
 				return mapNotificationActionSourceError(err)
 			}
 		default:

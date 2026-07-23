@@ -64,6 +64,7 @@ type Delivery struct {
 	Created                   bool
 	Chat                      domain.ChatRef
 	RecipientUserIDs          []int64
+	RecipientUserPayloads     map[int64][][]byte
 	AckPayload                []byte
 	SenderBroadcastPayload    []byte
 	RecipientBroadcastPayload []byte
@@ -627,40 +628,59 @@ func (h *Hub) routeDelivery(lease *operationLease, delivery *Delivery) {
 		return
 	}
 	if !delivery.Created {
+		if len(delivery.RecipientUserPayloads) != 0 {
+			h.logger.Printf("ws_delivery_invalid_recipient_payloads")
+			return
+		}
 		if origin != nil && len(delivery.AckPayload) > 0 && !h.enqueue(origin, delivery.AckPayload) {
 			h.deactivateClient(origin.id, deactivateSlow)
 		}
 		return
 	}
-	if origin != nil && len(delivery.AckPayload) > 0 && !h.enqueue(origin, delivery.AckPayload) {
-		h.deactivateClient(origin.id, deactivateSlow)
-	}
-	targets := make(map[string]*Client)
-	for id, client := range h.clientsByUser[lease.senderUserID] {
-		if id != lease.originClientID && h.clientCanReceive(client) {
-			targets[id] = client
-		}
-	}
 	recipients := make(map[int64]struct{}, len(delivery.RecipientUserIDs))
 	for _, userID := range delivery.RecipientUserIDs {
-		if userID > 0 && userID != lease.senderUserID && h.chatRecipientAllowed(userID, delivery.Chat) {
+		if userID > 0 && userID != lease.senderUserID {
 			recipients[userID] = struct{}{}
 		}
 	}
-	for userID := range recipients {
-		for id, client := range h.clientsByUser[userID] {
-			if h.clientCanReceive(client) {
-				targets[id] = client
+	for userID := range delivery.RecipientUserPayloads {
+		if userID == lease.senderUserID {
+			h.logger.Printf("ws_delivery_invalid_recipient_payloads")
+			return
+		}
+		if _, exists := recipients[userID]; !exists {
+			h.logger.Printf("ws_delivery_invalid_recipient_payloads")
+			return
+		}
+	}
+	if origin != nil && len(delivery.AckPayload) > 0 && !h.enqueue(origin, delivery.AckPayload) {
+		h.deactivateClient(origin.id, deactivateSlow)
+	}
+	for id, client := range h.clientsByUser[lease.senderUserID] {
+		if id != lease.originClientID && h.clientCanReceive(client) {
+			if len(delivery.SenderBroadcastPayload) > 0 && !h.enqueue(client, delivery.SenderBroadcastPayload) {
+				h.deactivateClient(id, deactivateSlow)
 			}
 		}
 	}
-	for id, client := range targets {
-		payload := delivery.RecipientBroadcastPayload
-		if client.userID == lease.senderUserID {
-			payload = delivery.SenderBroadcastPayload
+	for userID := range recipients {
+		if !h.chatRecipientAllowed(userID, delivery.Chat) {
+			continue
 		}
-		if len(payload) > 0 && !h.enqueue(client, payload) {
-			h.deactivateClient(id, deactivateSlow)
+		for id, client := range h.clientsByUser[userID] {
+			if h.clientCanReceive(client) {
+				if len(delivery.RecipientBroadcastPayload) > 0 &&
+					!h.enqueue(client, delivery.RecipientBroadcastPayload) {
+					h.deactivateClient(id, deactivateSlow)
+					continue
+				}
+				for _, payload := range delivery.RecipientUserPayloads[userID] {
+					if len(payload) > 0 && !h.enqueue(client, payload) {
+						h.deactivateClient(id, deactivateSlow)
+						break
+					}
+				}
+			}
 		}
 	}
 }

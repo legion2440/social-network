@@ -53,6 +53,7 @@ type GroupService struct {
 type GroupMutationResult struct {
 	Group               *domain.Group
 	NotificationEffects *NotificationEffects
+	ChatUnreadEffects   *ChatUnreadEffects
 }
 
 func NewGroupService(transactions repo.TransactionManager, appClock clock.Clock) *GroupService {
@@ -79,10 +80,17 @@ func (s *GroupService) Create(ctx context.Context, ownerUserID int64, titleValue
 		if err != nil {
 			return err
 		}
-		if _, err := repositories.Groups().CreateMembership(ctx, &domain.GroupMembership{
+		membershipID, err := repositories.Groups().CreateMembership(ctx, &domain.GroupMembership{
 			GroupID: group.ID, UserID: ownerUserID, Status: domain.GroupOwner, CreatedAt: now, UpdatedAt: now,
-		}); err != nil {
+		})
+		if err != nil {
 			return mapGroupRepoError(err)
+		}
+		if err := repositories.Chats().EnsureUserState(ctx, ownerUserID); err != nil {
+			return err
+		}
+		if err := repositories.Chats().EnsureGroupReadState(ctx, membershipID, nil, now); err != nil {
+			return err
 		}
 		group, err = repositories.Groups().Get(ctx, group.ID, ownerUserID)
 		return mapGroupRepoError(err)
@@ -223,7 +231,10 @@ func (s *GroupService) InviteWithEffects(ctx context.Context, actorUserID, group
 	if actorUserID == targetUserID {
 		return nil, ErrConflict
 	}
-	result := &GroupMutationResult{NotificationEffects: emptyNotificationEffects()}
+	result := &GroupMutationResult{
+		NotificationEffects: emptyNotificationEffects(),
+		ChatUnreadEffects:   emptyChatUnreadEffects(),
+	}
 	now := s.clock.Now()
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
 		builder := newNotificationEffectBuilder()
@@ -280,7 +291,10 @@ func (s *GroupService) createMembership(
 	if s == nil || s.transactions == nil || s.clock == nil || viewerUserID <= 0 || groupID <= 0 || targetUserID <= 0 {
 		return nil, ErrInvalidInput
 	}
-	result := &GroupMutationResult{NotificationEffects: emptyNotificationEffects()}
+	result := &GroupMutationResult{
+		NotificationEffects: emptyNotificationEffects(),
+		ChatUnreadEffects:   emptyChatUnreadEffects(),
+	}
 	now := s.clock.Now()
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
 		builder := newNotificationEffectBuilder()
@@ -382,7 +396,10 @@ func (s *GroupService) deleteMembership(
 	if s == nil || s.transactions == nil || s.clock == nil || viewerUserID <= 0 || groupID <= 0 || targetUserID <= 0 {
 		return nil, ErrInvalidInput
 	}
-	result := &GroupMutationResult{NotificationEffects: emptyNotificationEffects()}
+	result := &GroupMutationResult{
+		NotificationEffects: emptyNotificationEffects(),
+		ChatUnreadEffects:   emptyChatUnreadEffects(),
+	}
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
 		builder := newNotificationEffectBuilder()
 		var err error
@@ -417,8 +434,12 @@ func (s *GroupService) deleteMembership(
 				return err
 			}
 		}
-		if err := deleteGroupMembershipTx(ctx, repositories, membership, expected); err != nil {
+		chatState, err := deleteGroupMembershipTx(ctx, repositories, membership, expected)
+		if err != nil {
 			return err
+		}
+		if chatState != nil {
+			result.ChatUnreadEffects.StatesByUser[targetUserID] = chatState
 		}
 		if notification != nil {
 			if _, err := resolveNotificationTx(ctx, repositories, builder, notification, resolution, s.clock.Now().UTC()); err != nil {
@@ -471,7 +492,10 @@ func (s *GroupService) updateMembership(
 	if s == nil || s.transactions == nil || s.clock == nil || viewerUserID <= 0 || groupID <= 0 || targetUserID <= 0 {
 		return nil, ErrInvalidInput
 	}
-	result := &GroupMutationResult{NotificationEffects: emptyNotificationEffects()}
+	result := &GroupMutationResult{
+		NotificationEffects: emptyNotificationEffects(),
+		ChatUnreadEffects:   emptyChatUnreadEffects(),
+	}
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
 		builder := newNotificationEffectBuilder()
 		var err error

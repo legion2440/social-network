@@ -295,6 +295,7 @@ func (h *Handler) handleGroupMembership(w http.ResponseWriter, r *http.Request) 
 	}
 	h.changeRealtimeGroupAccess(groupID, current.ID, false)
 	h.publishNotificationEffects(result.NotificationEffects)
+	h.publishChatUnreadEffects(result.ChatUnreadEffects)
 	writeJSON(w, http.StatusOK, newGroupResponse(result.Group))
 }
 
@@ -381,7 +382,7 @@ func readStrictGroupJSONObject(w http.ResponseWriter, r *http.Request, allowed m
 		if err := decoder.Decode(&value); err != nil || value == nil {
 			return nil, service.ErrInvalidInput
 		}
-		if name != "user_id" {
+		if name != "user_id" && name != "through_message_id" {
 			if _, ok := value.(string); !ok {
 				return nil, service.ErrInvalidInput
 			}

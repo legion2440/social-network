@@ -97,6 +97,15 @@ type chatErrorEnvelope struct {
 	Message         string `json:"message"`
 }
 
+type chatUnreadEnvelope struct {
+	Type                 string         `json:"type"`
+	Chat                 domain.ChatRef `json:"chat"`
+	ChatUnreadCount      int64          `json:"chat_unread_count"`
+	UnreadCount          int64          `json:"unread_count"`
+	Revision             int64          `json:"revision"`
+	ReadThroughMessageID *int64         `json:"read_through_message_id"`
+}
+
 func IsSameOrigin(r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
@@ -338,12 +347,33 @@ func (runtime *connectionRuntime) handleChatSend(request chatSendRequest) {
 			delivery = &Delivery{AckPayload: mustMarshalChatError(request.ClientMessageID, "internal", "internal server error")}
 			return
 		}
+		recipientPayloads := make(map[int64][][]byte)
+		for userID, state := range result.UnreadEffects.StatesByUser {
+			payload, err := marshalChatUnread(state)
+			if err != nil {
+				delivery = &Delivery{AckPayload: mustMarshalChatError(request.ClientMessageID, "internal", "internal server error")}
+				return
+			}
+			recipientPayloads[userID] = [][]byte{payload}
+		}
 		delivery = &Delivery{
 			Created: result.Created, Chat: result.Message.Chat, RecipientUserIDs: result.RecipientUserIDs,
-			AckPayload: ackPayload, SenderBroadcastPayload: senderBroadcast, RecipientBroadcastPayload: recipientBroadcast,
+			RecipientUserPayloads: recipientPayloads,
+			AckPayload:            ackPayload, SenderBroadcastPayload: senderBroadcast, RecipientBroadcastPayload: recipientBroadcast,
 		}
 		_ = runtime.client.hub.QueueTyping(runtime.client.id, request.Chat, nil, TypingStop)
 	}()
+}
+
+func marshalChatUnread(state *domain.ChatUnreadState) ([]byte, error) {
+	if state == nil || !state.Chat.Kind.Valid() || state.Chat.TargetID <= 0 {
+		return nil, errors.New("chat unread state is missing")
+	}
+	return json.Marshal(chatUnreadEnvelope{
+		Type: "chat:unread", Chat: state.Chat,
+		ChatUnreadCount: state.ChatUnreadCount, UnreadCount: state.UnreadCount,
+		Revision: state.Revision, ReadThroughMessageID: state.ReadThroughMessageID,
+	})
 }
 
 func (runtime *connectionRuntime) handleTyping(request typingRequest) {
