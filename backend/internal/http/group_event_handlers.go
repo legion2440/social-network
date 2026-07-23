@@ -44,11 +44,12 @@ func (h *Handler) handleGroupEvents(w http.ResponseWriter, r *http.Request) {
 		if handleGroupJSONReadError(w, err) {
 			return
 		}
-		event, err := h.groupEvents.Create(r.Context(), current.ID, groupID, input)
+		result, err := h.groupEvents.CreateWithEffects(r.Context(), current.ID, groupID, input)
 		if h.handleGroupServiceError(w, err) {
 			return
 		}
-		writeJSON(w, http.StatusCreated, newGroupEventResponse(event))
+		h.publishNotificationEffects(result.NotificationEffects)
+		writeJSON(w, http.StatusCreated, newGroupEventResponse(result.Event))
 	default:
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")

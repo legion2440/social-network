@@ -33,15 +33,16 @@ func (m *TransactionManager) WithinTransaction(ctx context.Context, fn func(repo
 	}()
 
 	repositories := &transactionRepositories{
-		users:    &UserRepo{db: tx},
-		sessions: &SessionRepo{db: tx},
-		media:    &MediaRepo{db: tx},
-		follows:  &FollowRepo{db: tx},
-		posts:    &PostRepo{db: tx},
-		comments: &CommentRepo{db: tx},
-		groups:   &GroupRepo{db: tx},
-		events:   &GroupEventRepo{db: tx},
-		chats:    &ChatRepo{db: tx},
+		users:         &UserRepo{db: tx},
+		sessions:      &SessionRepo{db: tx},
+		media:         &MediaRepo{db: tx},
+		follows:       &FollowRepo{db: tx},
+		posts:         &PostRepo{db: tx},
+		comments:      &CommentRepo{db: tx},
+		groups:        &GroupRepo{db: tx},
+		events:        &GroupEventRepo{db: tx},
+		notifications: &NotificationRepo{db: tx},
+		chats:         &ChatRepo{db: tx},
 	}
 	if err := fn(repositories); err != nil {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
@@ -58,15 +59,16 @@ func (m *TransactionManager) WithinTransaction(ctx context.Context, fn func(repo
 }
 
 type transactionRepositories struct {
-	users    *UserRepo
-	sessions *SessionRepo
-	media    *MediaRepo
-	follows  *FollowRepo
-	posts    *PostRepo
-	comments *CommentRepo
-	groups   *GroupRepo
-	events   *GroupEventRepo
-	chats    *ChatRepo
+	users         *UserRepo
+	sessions      *SessionRepo
+	media         *MediaRepo
+	follows       *FollowRepo
+	posts         *PostRepo
+	comments      *CommentRepo
+	groups        *GroupRepo
+	events        *GroupEventRepo
+	notifications *NotificationRepo
+	chats         *ChatRepo
 }
 
 func (r *transactionRepositories) Users() repo.UserRepo {
@@ -99,6 +101,10 @@ func (r *transactionRepositories) Groups() repo.GroupRepo {
 
 func (r *transactionRepositories) GroupEvents() repo.GroupEventRepo {
 	return r.events
+}
+
+func (r *transactionRepositories) Notifications() repo.NotificationRepo {
+	return r.notifications
 }
 
 func (r *transactionRepositories) Chats() repo.ChatRepo {

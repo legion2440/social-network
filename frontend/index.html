@@ -911,9 +911,11 @@
     <div data-screen-label="Notifications" style="max-width:640px;margin:0 auto;animation:screenIn .3s ease both">
       <div style="display:flex;align-items:center;margin:6px 4px 16px">
         <h1 style="font:800 22px 'Manrope',sans-serif;margin:0">Notifications</h1>
-        <button onclick="{{markAllRead}}" style="margin-left:auto;padding:8px 16px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text2);font:700 12.5px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">Mark all as read</button>
+        <button onclick="{{markAllRead}}" disabled="{{markAllReadDisabled}}" style="margin-left:auto;padding:8px 16px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text2);font:700 12.5px 'Manrope',sans-serif;cursor:pointer" style-hover="background:var(--surface2)">Mark all as read</button>
       </div>
-      <sc-if value="{{followRequestsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="margin-bottom:12px;padding:11px 13px;border:1px solid color-mix(in oklab,var(--danger) 35%,var(--border));border-radius:12px;color:var(--danger);font:600 12.5px 'Manrope',sans-serif">{{followRequestsError}}</div></sc-if>
+      <sc-if value="{{notificationsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="margin-bottom:12px;padding:11px 13px;border:1px solid color-mix(in oklab,var(--danger) 35%,var(--border));border-radius:12px;color:var(--danger);font:600 12.5px 'Manrope',sans-serif">{{notificationsError}} <button onclick="{{retryNotifications}}" style="border:0;background:transparent;color:inherit;font-weight:800;cursor:pointer">Retry</button></div></sc-if>
+      <sc-if value="{{notificationsLoading}}" hint-placeholder-val="{{false}}"><div style="padding:24px;text-align:center;color:var(--text3);font:650 13px 'Manrope',sans-serif">Loading notifications…</div></sc-if>
+      <sc-if value="{{notificationsEmpty}}" hint-placeholder-val="{{false}}"><div style="padding:32px;text-align:center;border:1px dashed var(--border);border-radius:var(--r);color:var(--text3);font:650 13px 'Manrope',sans-serif">No notifications yet.</div></sc-if>
       <div style="display:flex;flex-direction:column;gap:10px">
         <sc-for list="{{notifItems}}" as="nt" hint-placeholder-count="4">
           <div style="display:flex;gap:13px;align-items:flex-start;border:1px solid var(--border);border-radius:var(--r);padding:15px 17px;background:{{nt.bg}};animation:fadeUp .4s ease both;animation-delay:{{nt.delay}};transition:background .3s">
@@ -927,7 +929,7 @@
               </span>
             </div>
             <div style="flex:1;min-width:0">
-              <p style="margin:0;font:500 14px/1.5 'Manrope',sans-serif"><b style="font-weight:800;cursor:pointer" onclick="{{nt.goProfile}}">{{nt.user.name}}</b> {{nt.text}}</p>
+              <p onclick="{{nt.open}}" style="margin:0;font:500 14px/1.5 'Manrope',sans-serif;cursor:pointer"><b style="font-weight:800" onclick="{{nt.goProfile}}">{{nt.user.name}}</b> {{nt.text}}</p>
               <div style="font:600 11.5px 'Manrope',sans-serif;color:var(--text3);margin-top:3px">{{nt.time}}</div>
               <sc-if value="{{nt.pending}}" hint-placeholder-val="{{false}}">
                 <div style="display:flex;gap:8px;margin-top:11px">
@@ -941,11 +943,13 @@
                   {{nt.doneLabel}}
                 </div>
               </sc-if>
+              <sc-if value="{{nt.hasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="margin-top:8px;color:var(--danger);font:650 11.5px/1.4 'Manrope',sans-serif">{{nt.error}}</div></sc-if>
             </div>
             <sc-if value="{{nt.unreadDot}}" hint-placeholder-val="{{false}}"><span style="width:9px;height:9px;border-radius:50%;background:var(--accent);flex:none;margin-top:6px"></span></sc-if>
           </div>
         </sc-for>
       </div>
+      <sc-if value="{{notificationsHasMore}}" hint-placeholder-val="{{false}}"><button onclick="{{loadMoreNotifications}}" disabled="{{notificationsLoadMoreDisabled}}" style="display:block;margin:16px auto 0;padding:9px 18px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--text2);font:750 12.5px 'Manrope',sans-serif;cursor:pointer">Load more</button></sc-if>
     </div>
     </sc-if>
 
@@ -1002,6 +1006,7 @@
 <script src="js/comment-model.js"></script>
 <script src="js/chat-model.js"></script>
 <script src="js/group-event-model.js"></script>
+<script src="js/notification-model.js"></script>
 <script src="js/post-model.js"></script>
 <script src="js/user-model.js"></script>
 <script type="text/x-dc" data-dc-script="" data-props="{&quot;accent&quot;: {&quot;editor&quot;: &quot;color&quot;, &quot;default&quot;: &quot;#5661d8&quot;, &quot;options&quot;: [&quot;#5661d8&quot;, &quot;#0e8577&quot;, &quot;#c14f70&quot;, &quot;#a06b23&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Theme&quot;}, &quot;radius&quot;: {&quot;editor&quot;: &quot;range&quot;, &quot;default&quot;: 18, &quot;min&quot;: 6, &quot;max&quot;: 26, &quot;step&quot;: 2, &quot;unit&quot;: &quot;px&quot;, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Theme&quot;}, &quot;defaultTheme&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;light&quot;, &quot;dark&quot;], &quot;default&quot;: &quot;light&quot;, &quot;tsType&quot;: &quot;'light' | 'dark'&quot;, &quot;section&quot;: &quot;Theme&quot;}}" data-src="js/app.js"></script>

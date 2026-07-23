@@ -135,6 +135,7 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 	comments := service.NewCommentService(transactions, fixedClock{})
 	groups := service.NewGroupService(transactions, fixedClock{})
 	groupEvents := service.NewGroupEventService(transactions, fixedClock{})
+	notifications := service.NewNotificationService(transactions, fixedClock{})
 	chats := service.NewChatService(transactions, fixedClock{})
 	hub := realtimews.NewHubWithNow(nil, fixedClock{}.Now)
 	go hub.Run()
@@ -147,7 +148,7 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 		case <-ctx.Done():
 		}
 	})
-	handler := NewHandler(db, sessions, media, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, groups, groupEvents, chats, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil)
+	handler := NewHandler(db, sessions, media, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, groups, groupEvents, notifications, chats, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil)
 	handler.SetRealtimeHub(hub)
 
 	return &testEnvironment{
@@ -338,6 +339,7 @@ func newSessionFailureHandlerWithFrontend(store *failingSessionRepo, frontendDir
 		nil,
 		nil,
 		nil,
+		nil,
 		NewCookieSessionTokenExtractor(config.SessionCookieName),
 		false,
 		frontendDir,
@@ -438,7 +440,7 @@ func TestHealthIsPublicAndChecksDatabase(t *testing.T) {
 
 func TestReservedAPIGroupsReturnJSONNotImplemented(t *testing.T) {
 	env := newTestEnvironment(t)
-	for _, path := range []string{"/api/auth", "/api/posts/42", "/api/notifications/"} {
+	for _, path := range []string{"/api/auth", "/api/posts/42"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		env.handler.ServeHTTP(rec, req)
@@ -484,6 +486,11 @@ func TestRegisterWithoutAvatarCreatesUserSessionAndNeutralPlaceholder(t *testing
 	assertDBRowCount(t, env.db, "users", 1)
 	assertDBRowCount(t, env.db, "media", 0)
 	assertDBRowCount(t, env.db, "sessions", 1)
+	assertDBRowCount(t, env.db, "notification_user_states", 1)
+	var notificationRevision int64
+	if err := env.db.QueryRow(`SELECT revision FROM notification_user_states WHERE user_id = ?`, response.ID).Scan(&notificationRevision); err != nil || notificationRevision != 0 {
+		t.Fatalf("registered notification state: revision=%d err=%v", notificationRevision, err)
+	}
 
 	stored, err := env.users.GetByEmail(context.Background(), "neutral@example.com")
 	if err != nil {

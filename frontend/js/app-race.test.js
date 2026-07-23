@@ -25,6 +25,7 @@ global.PostModel = require('./post-model.js');
 global.CommentModel = require('./comment-model.js');
 global.ChatModel = require('./chat-model.js');
 global.GroupEventModel = require('./group-event-model.js');
+global.NotificationModel = require('./notification-model.js');
 global.AuthAPI = {};
 
 const { Component } = require('./app.js');
@@ -118,6 +119,26 @@ function rawGroupEvent(id, groupID, creatorID, options) {
     going_count: options.goingCount || 0,
     not_going_count: options.notGoingCount || 0,
     viewer_response: options.viewerResponse || null
+  };
+}
+
+function rawNotification(id, type, options) {
+  options = options || {};
+  return {
+    id,
+    type,
+    actor: rawUser(options.actorID || 2),
+    follow_id: options.followID == null ? null : options.followID,
+    group: options.groupID ? { id: options.groupID, title: 'Group ' + options.groupID } : null,
+    event: options.eventID ? {
+      id: options.eventID,
+      title: 'Event ' + options.eventID,
+      starts_at: '2026-07-24T12:00:00Z'
+    } : null,
+    resolution: options.resolution || null,
+    resolved_at: options.resolution ? '2026-07-23T11:00:00Z' : null,
+    read_at: options.readAt || null,
+    created_at: options.createdAt || '2026-07-23T10:00:00Z'
   };
 }
 
@@ -1705,4 +1726,128 @@ test('typing state is keyed by chat and clears on stop', () => {
   assert.equal(component.state.typingByChatKey['group:7']['2'].name, 'User 2');
   component.handleTypingUpdate(Object.assign({}, event, { typing: false }));
   assert.equal(component.state.typingByChatKey['group:7'], undefined);
+});
+
+test('older action revision cannot block a still-current group source or revoked rejoin', async () => {
+  const component = createComponent();
+  const action = deferred();
+  const freshNotifications = deferred();
+  const invitation = NotificationModel.normalize(rawNotification(42, 'group_invitation', { groupID: 9 }));
+  component.state.notifications = [invitation];
+  component.state.notificationRevision = 9;
+  component.state.notificationUnreadCount = 1;
+  component.state.apiGroupsByID['9'] = component.mapAPIGroup(rawGroup(9, 'invited', 1));
+  component.revokedGroupAccessIDs.add('9');
+  global.AuthAPI.actOnNotification = () => action.promise;
+  global.AuthAPI.notifications = () => freshNotifications.promise;
+  global.AuthAPI.groups = async () => ({ groups: [], next_cursor: null });
+  global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null });
+
+  const pending = component.actOnNotification(42, 'accept');
+  component.handleRealtimeEvent(JSON.stringify({
+    type: 'notification:upsert',
+    revision: 11,
+    unread_count: 2,
+    notification: rawNotification(99, 'follow_started', { actorID: 3 })
+  }));
+  action.resolve({
+    notification: rawNotification(42, 'group_invitation', { groupID: 9, resolution: 'accepted', readAt: '2026-07-23T11:00:00Z' }),
+    unread_count: 1,
+    revision: 10,
+    source: { kind: 'group', group: rawGroup(9, 'member', 2) }
+  });
+  await pending;
+
+  assert.equal(component.state.notificationRevision, 11);
+  assert.equal(component.state.apiGroupsByID['9'].state, 'member');
+  assert.equal(component.groupAccessIsRevoked(9), false);
+  assert.equal(component.state.notifications.find(item => item.id === 42).resolution, null);
+});
+
+test('new actionable lifecycle invalidates source from an older pending action', async () => {
+  const component = createComponent();
+  const action = deferred();
+  const freshNotifications = deferred();
+  const invitation = NotificationModel.normalize(rawNotification(42, 'group_invitation', { groupID: 9 }));
+  component.state.notifications = [invitation];
+  component.state.apiGroupsByID['9'] = component.mapAPIGroup(rawGroup(9, 'invited', 1));
+  global.AuthAPI.actOnNotification = () => action.promise;
+  global.AuthAPI.notifications = () => freshNotifications.promise;
+  global.AuthAPI.groups = async () => ({ groups: [], next_cursor: null });
+  global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null });
+
+  const pending = component.actOnNotification(42, 'accept');
+  component.handleRealtimeEvent(JSON.stringify({
+    type: 'notification:upsert', revision: 2, unread_count: 1,
+    notification: rawNotification(43, 'group_invitation', { groupID: 9, createdAt: '2026-07-23T12:00:00Z' })
+  }));
+  action.resolve({
+    notification: rawNotification(42, 'group_invitation', { groupID: 9, resolution: 'accepted' }),
+    unread_count: 0, revision: 1,
+    source: { kind: 'group', group: rawGroup(9, 'member', 2) }
+  });
+  await pending;
+
+  assert.equal(component.state.apiGroupsByID['9'].state, 'invited');
+  assert.equal(component.state.notificationRevision, 2);
+  assert.equal(component.state.notifications.some(item => item.id === 43), true);
+});
+
+test('applied group source generation rejects an older pending group detail response', async () => {
+  const component = createComponent();
+  const oldDetail = deferred();
+  let detailCalls = 0;
+  component.state.groupId = 9;
+  component.state.apiGroupsByID['9'] = component.mapAPIGroup(rawGroup(9, 'invited', 1));
+  global.AuthAPI.group = () => (++detailCalls === 1 ? oldDetail.promise : Promise.resolve(rawGroup(9, 'member', 2)));
+  global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
+  global.AuthAPI.groupPosts = async () => ({ posts: [], next_cursor: null });
+  global.AuthAPI.groupEvents = async () => ({ events: [], next_cursor: null });
+  global.AuthAPI.groups = async () => ({ groups: [], next_cursor: null });
+  global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null });
+
+  const staleLoad = component.loadGroupDetail(9);
+  const gate = component.groupGeneration(9);
+  assert.equal(component.applyNotificationSource(
+    { kind: 'group', group: rawGroup(9, 'member', 2) },
+    { kind: 'group', groupID: 9, gate, generation: gate.current() }
+  ), true);
+  oldDetail.resolve(rawGroup(9, 'invited', 1));
+  await staleLoad;
+  await Promise.resolve();
+
+  assert.equal(component.state.apiGroupsByID['9'].state, 'member');
+});
+
+test('logout invalidates pending notification list and action responses', async () => {
+  const component = createComponent();
+  const list = deferred();
+  global.AuthAPI.notifications = () => list.promise;
+  global.AuthAPI.logout = async () => null;
+  const pendingList = component.loadNotifications(true);
+  await component.logout();
+  list.resolve({
+    notifications: [rawNotification(7, 'follow_started')],
+    next_cursor: null, unread_count: 1, revision: 1
+  });
+  await pendingList;
+  assert.deepEqual(component.state.notifications, []);
+
+  const nextComponent = createComponent();
+  const action = deferred();
+  nextComponent.state.notifications = [NotificationModel.normalize(rawNotification(8, 'group_invitation', { groupID: 9 }))];
+  nextComponent.state.apiGroupsByID['9'] = nextComponent.mapAPIGroup(rawGroup(9, 'invited', 1));
+  global.AuthAPI.actOnNotification = () => action.promise;
+  global.AuthAPI.logout = async () => null;
+  const pendingAction = nextComponent.actOnNotification(8, 'accept');
+  await nextComponent.logout();
+  action.resolve({
+    notification: rawNotification(8, 'group_invitation', { groupID: 9, resolution: 'accepted' }),
+    unread_count: 0, revision: 1,
+    source: { kind: 'group', group: rawGroup(9, 'member', 2) }
+  });
+  await pendingAction;
+  assert.deepEqual(nextComponent.state.notifications, []);
+  assert.equal(nextComponent.state.authStatus, 'anonymous');
+  assert.equal(nextComponent.state.apiGroupsByID['9'], undefined);
 });

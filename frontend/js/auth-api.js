@@ -253,6 +253,32 @@
           expectedStatus: 204
         });
       },
+      notifications: function (cursor, limit) {
+        return request(pagePath('/api/notifications', cursor, limit), {
+          method: 'GET',
+          expectedStatus: 200
+        });
+      },
+      markNotificationRead: function (notificationID) {
+        return request('/api/notifications/' + encodeURIComponent(String(notificationID)) + '/read', {
+          method: 'PUT',
+          expectedStatus: 200
+        });
+      },
+      markAllNotificationsRead: function () {
+        return request('/api/notifications/read-all', {
+          method: 'PUT',
+          expectedStatus: 200
+        });
+      },
+      actOnNotification: function (notificationID, action) {
+        return request('/api/notifications/' + encodeURIComponent(String(notificationID)) + '/action', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: action }),
+          expectedStatus: 200
+        });
+      },
       groups: function (cursor, limit) {
         return request(pagePath('/api/groups', cursor, limit), {
           method: 'GET', expectedStatus: 200

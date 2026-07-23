@@ -14,26 +14,27 @@ import (
 )
 
 type Handler struct {
-	db           *sql.DB
-	sessions     *service.SessionService
-	media        *service.MediaService
-	auth         *service.AuthService
-	profile      *service.ProfileService
-	follows      *service.FollowService
-	users        *service.UserService
-	avatars      *service.AvatarDeliveryService
-	posts        *service.PostService
-	postMedia    *service.PostMediaDeliveryService
-	comments     *service.CommentService
-	groups       *service.GroupService
-	groupEvents  *service.GroupEventService
-	chats        *service.ChatService
-	hub          *realtimews.Hub
-	admission    atomic.Bool
-	sessionToken SessionTokenExtractor
-	cookieSecure bool
-	frontend     http.Handler
-	logger       *log.Logger
+	db            *sql.DB
+	sessions      *service.SessionService
+	media         *service.MediaService
+	auth          *service.AuthService
+	profile       *service.ProfileService
+	follows       *service.FollowService
+	users         *service.UserService
+	avatars       *service.AvatarDeliveryService
+	posts         *service.PostService
+	postMedia     *service.PostMediaDeliveryService
+	comments      *service.CommentService
+	groups        *service.GroupService
+	groupEvents   *service.GroupEventService
+	notifications *service.NotificationService
+	chats         *service.ChatService
+	hub           *realtimews.Hub
+	admission     atomic.Bool
+	sessionToken  SessionTokenExtractor
+	cookieSecure  bool
+	frontend      http.Handler
+	logger        *log.Logger
 }
 
 func NewHandler(
@@ -50,6 +51,7 @@ func NewHandler(
 	comments *service.CommentService,
 	groups *service.GroupService,
 	groupEvents *service.GroupEventService,
+	notifications *service.NotificationService,
 	chats *service.ChatService,
 	sessionToken SessionTokenExtractor,
 	cookieSecure bool,
@@ -63,24 +65,25 @@ func NewHandler(
 		sessionToken = NewCookieSessionTokenExtractor(config.SessionCookieName)
 	}
 	handler := &Handler{
-		db:           db,
-		sessions:     sessions,
-		media:        media,
-		auth:         auth,
-		profile:      profile,
-		follows:      follows,
-		users:        users,
-		avatars:      avatars,
-		posts:        posts,
-		postMedia:    postMedia,
-		comments:     comments,
-		groups:       groups,
-		groupEvents:  groupEvents,
-		chats:        chats,
-		sessionToken: sessionToken,
-		cookieSecure: cookieSecure,
-		frontend:     newFrontendHandler(frontendDir),
-		logger:       logger,
+		db:            db,
+		sessions:      sessions,
+		media:         media,
+		auth:          auth,
+		profile:       profile,
+		follows:       follows,
+		users:         users,
+		avatars:       avatars,
+		posts:         posts,
+		postMedia:     postMedia,
+		comments:      comments,
+		groups:        groups,
+		groupEvents:   groupEvents,
+		notifications: notifications,
+		chats:         chats,
+		sessionToken:  sessionToken,
+		cookieSecure:  cookieSecure,
+		frontend:      newFrontendHandler(frontendDir),
+		logger:        logger,
 	}
 	handler.admission.Store(true)
 	return handler
@@ -153,6 +156,10 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/groups/{id}/invitation", protected(h.handleGroupInvitationDecline))
 	mux.Handle("/api/groups/{id}/membership", protected(h.handleGroupMembership))
 	mux.Handle("/api/group-invitations", protected(h.handleGroupInvitationInbox))
+	mux.Handle("/api/notifications", protected(h.handleNotifications))
+	mux.Handle("/api/notifications/read-all", protected(h.handleNotificationsReadAll))
+	mux.Handle("/api/notifications/{id}/read", protected(h.handleNotificationRead))
+	mux.Handle("/api/notifications/{id}/action", protected(h.handleNotificationAction))
 	mux.Handle("/api/chats", protected(h.handleChats))
 	mux.Handle("/api/chats/direct/{user_id}/messages", protected(h.handleDirectChatMessages))
 	mux.Handle("/api/groups/{id}/chat/messages", protected(h.handleGroupChatMessages))
@@ -164,7 +171,6 @@ func (h *Handler) Routes() http.Handler {
 		"/api/auth",
 		"/api/follow",
 		"/api/events",
-		"/api/notifications",
 	} {
 		mux.HandleFunc(group, h.handleNotImplemented)
 		mux.HandleFunc(group+"/", h.handleNotImplemented)

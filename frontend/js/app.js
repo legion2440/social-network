@@ -72,6 +72,17 @@ function emptyGroupEventState() {
   };
 }
 
+function emptyNotificationState() {
+  return {
+    notifications: [], notificationsNextCursor: null,
+    notificationsLoading: false, notificationsPending: false, notificationsError: '',
+    notificationUnreadCount: 0, notificationRevision: 0,
+    notificationReadPendingByID: {}, notificationReadErrorByID: {},
+    notificationActionPendingByID: {}, notificationActionErrorByID: {},
+    notificationReadAllPending: false
+  };
+}
+
 function emptyChatMessages() {
   return { messages: [], nextCursor: null, loading: false, pending: false, error: '', loaded: false };
 }
@@ -146,9 +157,9 @@ class Component extends DCLogic {
       inviteOpen: false, groupInviteUserID: '',
 	  ...emptyGroupPostState(),
 	  ...emptyGroupEventState(),
+      ...emptyNotificationState(),
       createOpen: false, ngName: '', ngDesc: '', groupCreatePending: false, groupCreateError: '',
       ...emptyChatState(),
-      notifs: [],
       authMode: 'login', authStatus: 'checking', authPending: false, logoutPending: false,
       authError: '', bootstrapError: '', appError: '',
       ...emptyRegistrationForm(),
@@ -173,6 +184,12 @@ class Component extends DCLogic {
     this.groupEventsGate = UserModel.createRequestGate();
     this.groupEventCreateGate = UserModel.createRequestGate();
     this.groupEventResponseGatesByID = {};
+    this.notificationsGate = UserModel.createRequestGate();
+    this.notificationReadAllGate = UserModel.createRequestGate();
+    this.notificationReadGatesByID = {};
+    this.notificationActionGatesByID = {};
+    this.relationshipGenerationsByID = {};
+    this.latestActionableNotificationIDBySourceKey = {};
     this.chatsGate = UserModel.createRequestGate();
     this.activeChatGate = UserModel.createRequestGate();
     this.chatHistoryGatesByKey = {};
@@ -543,6 +560,265 @@ class Component extends DCLogic {
     }
   };
 
+  notificationReadGate(notificationID) {
+    const key = String(Number(notificationID));
+    if (!this.notificationReadGatesByID[key]) this.notificationReadGatesByID[key] = UserModel.createRequestGate();
+    return this.notificationReadGatesByID[key];
+  }
+
+  notificationActionGate(notificationID) {
+    const key = String(Number(notificationID));
+    if (!this.notificationActionGatesByID[key]) this.notificationActionGatesByID[key] = UserModel.createRequestGate();
+    return this.notificationActionGatesByID[key];
+  }
+
+  relationshipGeneration(userID) {
+    const key = String(Number(userID));
+    if (!this.relationshipGenerationsByID[key]) this.relationshipGenerationsByID[key] = UserModel.createRequestGate();
+    return this.relationshipGenerationsByID[key];
+  }
+
+  advanceRelationshipLifecycle(userID) {
+    const key = String(Number(userID));
+    const generation = this.relationshipGeneration(userID).begin();
+    if (this.state.followPendingByID[key]) {
+      const pending = Object.assign({}, this.state.followPendingByID);
+      delete pending[key];
+      this.setState({ followPendingByID: pending });
+    }
+    return generation;
+  }
+
+  beginRelationshipGeneration(userID) {
+    const generation = this.advanceRelationshipLifecycle(userID);
+    this.directoryGate.begin();
+    this.postFollowersGate.begin();
+    if (Number(this.state.profileId) === Number(userID)) this.profileGate.begin();
+    return generation;
+  }
+
+  trackNotificationLifecycles(notifications) {
+    (notifications || []).forEach(notification => {
+      const sourceKey = NotificationModel.sourceKey(notification);
+      if (!sourceKey) return;
+      const previousID = this.latestActionableNotificationIDBySourceKey[sourceKey];
+      if (Number(previousID) === Number(notification.id)) return;
+      if (notification.type === 'follow_request') {
+        this.advanceRelationshipLifecycle(notification.actorID);
+      } else if (notification.group && notification.group.id) {
+        const groupID = Number(notification.group.id);
+        this.groupGeneration(groupID).begin();
+        if (Number(this.state.groupId) === groupID) {
+          this.loadGroupDetail(groupID);
+          this.loadGroupMembers(groupID, true);
+        }
+      }
+      this.latestActionableNotificationIDBySourceKey[sourceKey] = notification.id;
+    });
+  }
+
+  applyNotificationPayload(payload, trackLifecycle) {
+    const revision = Number(payload && payload.revision);
+    const unreadCount = Number(payload && payload.unread_count);
+    if (!Number.isInteger(revision) || revision < 0 || !Number.isInteger(unreadCount) || unreadCount < 0) return false;
+    if (revision < Number(this.state.notificationRevision || 0)) return false;
+    let notification;
+    try { notification = NotificationModel.normalize(payload.notification); } catch (ignore) { return false; }
+    if (trackLifecycle) this.trackNotificationLifecycles([notification]);
+    this.setState(current => {
+      if (revision < Number(current.notificationRevision || 0)) return {};
+      return {
+        apiUsersByID: this.mergeAPIUsers([notification.actor], current.apiUsersByID),
+        notifications: NotificationModel.merge(current.notifications, [notification]),
+        notificationUnreadCount: unreadCount,
+        notificationRevision: revision
+      };
+    });
+    return true;
+  }
+
+  loadNotifications = async (reset = true) => {
+    const authGeneration = this.authGate.current();
+    const generation = reset ? this.notificationsGate.begin() : this.notificationsGate.current();
+    if (!reset && this.state.notificationsPending) return;
+    const cursor = reset ? null : this.state.notificationsNextCursor;
+    if (!reset && !cursor) return;
+    this.setState({ notificationsPending: true, notificationsLoading: !!reset, notificationsError: '' });
+    try {
+      const page = await AuthAPI.notifications(cursor, 20);
+      if (!this.authGate.isCurrent(authGeneration) || !this.notificationsGate.isCurrent(generation)) return;
+      const revision = Number(page.revision);
+      const unreadCount = Number(page.unread_count);
+      if (!Number.isInteger(revision) || revision < 0 || !Number.isInteger(unreadCount) || unreadCount < 0) {
+        throw new TypeError('invalid notification page');
+      }
+      if (revision < Number(this.state.notificationRevision || 0)) {
+        this.setState({ notificationsPending: false, notificationsLoading: false });
+        return;
+      }
+      const incoming = (page.notifications || []).map(NotificationModel.normalize);
+      if (reset) this.trackNotificationLifecycles(incoming);
+      this.setState(current => {
+        if (revision < Number(current.notificationRevision || 0)) {
+          return { notificationsPending: false, notificationsLoading: false };
+        }
+        return {
+          apiUsersByID: this.mergeAPIUsers(incoming.map(notification => notification.actor), current.apiUsersByID),
+          notifications: reset ? incoming : NotificationModel.merge(current.notifications, incoming),
+          notificationsNextCursor: page.next_cursor || null,
+          notificationsPending: false, notificationsLoading: false, notificationsError: '',
+          notificationUnreadCount: unreadCount, notificationRevision: revision
+        };
+      });
+    } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration) || !this.notificationsGate.isCurrent(generation)) return;
+      this.setState({
+        notificationsPending: false, notificationsLoading: false,
+        notificationsError: requestErrorMessage(error, 'Could not load notifications.')
+      });
+    }
+  };
+
+  markNotificationRead = async notificationID => {
+    notificationID = Number(notificationID);
+    const key = String(notificationID);
+    const notification = this.state.notifications.find(item => item.id === notificationID);
+    if (!notification || notification.readAt || this.state.notificationReadPendingByID[key]) return;
+    const authGeneration = this.authGate.current();
+    const gate = this.notificationReadGate(notificationID);
+    const generation = gate.begin();
+    this.setState({
+      notificationReadPendingByID: Object.assign({}, this.state.notificationReadPendingByID, { [key]: true }),
+      notificationReadErrorByID: Object.assign({}, this.state.notificationReadErrorByID, { [key]: '' })
+    });
+    try {
+      const response = await AuthAPI.markNotificationRead(notificationID);
+      if (!this.authGate.isCurrent(authGeneration) || !gate.isCurrent(generation)) return;
+      this.applyNotificationPayload(response, false);
+      const pending = Object.assign({}, this.state.notificationReadPendingByID);
+      delete pending[key];
+      this.setState({ notificationReadPendingByID: pending });
+    } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration) || !gate.isCurrent(generation)) return;
+      const pending = Object.assign({}, this.state.notificationReadPendingByID);
+      delete pending[key];
+      this.setState({
+        notificationReadPendingByID: pending,
+        notificationReadErrorByID: Object.assign({}, this.state.notificationReadErrorByID, {
+          [key]: requestErrorMessage(error, 'Could not mark notification as read.')
+        })
+      });
+    }
+  };
+
+  markAllNotificationsRead = async () => {
+    if (this.state.notificationReadAllPending || this.state.notificationUnreadCount <= 0) return;
+    const authGeneration = this.authGate.current();
+    const generation = this.notificationReadAllGate.begin();
+    this.setState({ notificationReadAllPending: true, notificationsError: '' });
+    try {
+      const response = await AuthAPI.markAllNotificationsRead();
+      if (!this.authGate.isCurrent(authGeneration) || !this.notificationReadAllGate.isCurrent(generation)) return;
+      const revision = Number(response.revision);
+      if (Number.isInteger(revision) && revision >= Number(this.state.notificationRevision || 0)) {
+        this.setState(current => ({
+          notifications: NotificationModel.markAllRead(current.notifications, response.read_at),
+          notificationUnreadCount: Number(response.unread_count) || 0,
+          notificationRevision: revision,
+          notificationReadAllPending: false
+        }));
+      } else {
+        this.setState({ notificationReadAllPending: false });
+      }
+    } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration) || !this.notificationReadAllGate.isCurrent(generation)) return;
+      this.setState({
+        notificationReadAllPending: false,
+        notificationsError: requestErrorMessage(error, 'Could not mark notifications as read.')
+      });
+    }
+  };
+
+  applyNotificationSource(source, guard) {
+    if (!source || !guard || !guard.gate.isCurrent(guard.generation)) return false;
+    if (guard.kind === 'relationship' && source.kind === 'relationship' && Number(source.user_id) === guard.userID) {
+      this.beginRelationshipGeneration(guard.userID);
+      const apiUsersByID = this.mergeAPIUsers([{ id: guard.userID, relationship: source.relationship || {} }]);
+      this.setState({ apiUsersByID });
+      this.loadDirectory(true);
+      this.loadPostFollowers();
+      this.loadFeed(true);
+      if (Number(this.state.profileId) === guard.userID) this.openProfile(guard.userID);
+      return true;
+    }
+    if (guard.kind === 'group' && source.kind === 'group' && source.group && Number(source.group.id) === guard.groupID) {
+      const group = this.applyAuthoritativeGroup(source.group, true);
+      if (group.state === 'owner' || group.state === 'member') this.restoreGroupAccess(group);
+      this.loadGroups(true);
+      this.loadChats(true);
+      if (Number(this.state.groupId) === guard.groupID) {
+        this.loadGroupDetail(guard.groupID);
+        this.loadGroupMembers(guard.groupID, true);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  actOnNotification = async (notificationID, action) => {
+    notificationID = Number(notificationID);
+    const key = String(notificationID);
+    const notification = this.state.notifications.find(item => item.id === notificationID);
+    if (!notification || !NotificationModel.isActionable(notification) || this.state.notificationActionPendingByID[key]) return;
+    const authGeneration = this.authGate.current();
+    const actionGate = this.notificationActionGate(notificationID);
+    const actionGeneration = actionGate.begin();
+    let sourceGuard = null;
+    if (notification.type === 'follow_request') {
+      const gate = this.relationshipGeneration(notification.actorID);
+      sourceGuard = { kind: 'relationship', userID: notification.actorID, gate, generation: gate.current() };
+    } else if (notification.group && notification.group.id) {
+      const groupID = Number(notification.group.id);
+      const gate = this.groupGeneration(groupID);
+      sourceGuard = { kind: 'group', groupID, gate, generation: gate.current() };
+    }
+    this.setState({
+      notificationActionPendingByID: Object.assign({}, this.state.notificationActionPendingByID, { [key]: true }),
+      notificationActionErrorByID: Object.assign({}, this.state.notificationActionErrorByID, { [key]: '' })
+    });
+    try {
+      const response = await AuthAPI.actOnNotification(notificationID, action);
+      if (!this.authGate.isCurrent(authGeneration) || !actionGate.isCurrent(actionGeneration)) return;
+      this.applyNotificationPayload(response, false);
+      this.applyNotificationSource(response.source, sourceGuard);
+      const pending = Object.assign({}, this.state.notificationActionPendingByID);
+      delete pending[key];
+      this.setState({ notificationActionPendingByID: pending });
+      this.loadNotifications(true);
+    } catch (error) {
+      if (!this.authGate.isCurrent(authGeneration) || !actionGate.isCurrent(actionGeneration)) return;
+      const pending = Object.assign({}, this.state.notificationActionPendingByID);
+      delete pending[key];
+      this.setState({
+        notificationActionPendingByID: pending,
+        notificationActionErrorByID: Object.assign({}, this.state.notificationActionErrorByID, {
+          [key]: requestErrorMessage(error, 'Could not update notification.')
+        })
+      });
+    }
+  };
+
+  openNotification = notification => {
+    if (!notification) return;
+    this.markNotificationRead(notification.id);
+    if (notification.group && notification.group.id) {
+      this.openGroup(notification.group.id);
+      if (notification.type === 'group_event') this.setState({ groupTab: 'events' });
+      return;
+    }
+    this.openProfile(notification.actorID);
+  };
+
   loadProfileConnections = async (targetUserID, generation) => {
     targetUserID = Number(targetUserID);
     const authGeneration = this.authGate.current();
@@ -651,7 +927,7 @@ class Component extends DCLogic {
       this.loadFeed(true);
       this.loadPostFollowers();
       this.loadDirectory();
-      this.loadFollowRequests();
+      this.loadNotifications(true);
     } catch (error) {
       if (!this.authGate.isCurrent(authGeneration)) return;
       if (error && error.status === 401) {
@@ -711,13 +987,14 @@ class Component extends DCLogic {
         myPrivacy: user.is_private === true ? 'private' : 'public',
         profilePrivacyPending: false, profilePrivacyError: ''
       };
+      Object.assign(authenticatedState, emptyNotificationState());
       if (s.authMode === 'register') Object.assign(authenticatedState, emptyRegistrationForm());
       Object.assign(authenticatedState, emptyProfileEditor());
       this.setState(authenticatedState, () => this.startAuthenticatedRealtime(authGeneration));
       this.loadFeed(true);
       this.loadPostFollowers();
       this.loadDirectory();
-      this.loadFollowRequests();
+      this.loadNotifications(true);
     } catch (error) {
       if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
@@ -750,6 +1027,15 @@ class Component extends DCLogic {
       this.groupEventCreateGate.begin();
       Object.keys(this.groupEventResponseGatesByID).forEach(key => this.groupEventResponseGatesByID[key].begin());
       this.groupEventResponseGatesByID = {};
+      this.notificationsGate.begin();
+      this.notificationReadAllGate.begin();
+      Object.keys(this.notificationReadGatesByID).forEach(key => this.notificationReadGatesByID[key].begin());
+      Object.keys(this.notificationActionGatesByID).forEach(key => this.notificationActionGatesByID[key].begin());
+      this.notificationReadGatesByID = {};
+      this.notificationActionGatesByID = {};
+      Object.keys(this.relationshipGenerationsByID).forEach(key => this.relationshipGenerationsByID[key].begin());
+      this.relationshipGenerationsByID = {};
+      this.latestActionableNotificationIDBySourceKey = {};
       this.chatsGate.begin();
       this.activeChatGate.begin();
       Object.keys(this.chatHistoryGatesByKey).forEach(key => this.chatHistoryGatesByKey[key].begin());
@@ -790,7 +1076,7 @@ class Component extends DCLogic {
         createOpen: false, ngName: '', ngDesc: '', groupCreatePending: false, groupCreateError: '',
         composerText: '', composerFile: null, composerFileName: '', composerError: '', composerPending: false,
 		privacy: 'public', privacyOpen: false
-	  }, emptyGroupPostState(), emptyGroupEventState(), emptyChatState(), emptyRegistrationForm(), emptyProfileEditor()));
+	  }, emptyGroupPostState(), emptyGroupEventState(), emptyNotificationState(), emptyChatState(), emptyRegistrationForm(), emptyProfileEditor()));
     } catch (error) {
       if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
@@ -804,7 +1090,7 @@ class Component extends DCLogic {
     if (screen !== 'chat') this.stopTyping();
     this.setState({ screen, privacyOpen: false, emojiOpen: false });
     if (screen === 'chat') this.loadChats(true);
-    if (screen === 'notifications') this.loadFollowRequests();
+    if (screen === 'notifications') this.loadNotifications(true);
     if (screen === 'groups') {
       this.loadGroups(true);
       this.loadGroupInvitationInbox(true);
@@ -1010,6 +1296,8 @@ class Component extends DCLogic {
     const key = String(targetUserID);
     if (this.state.followPendingByID[key]) return;
     const authGeneration = this.authGate.current();
+    const relationshipGate = this.relationshipGeneration(targetUserID);
+    const relationshipGeneration = relationshipGate.current();
     const user = this.apiUser(targetUserID);
     const status = UserModel.normalizeStatus(user.relationship && user.relationship.status);
     this.setState({
@@ -1021,7 +1309,8 @@ class Component extends DCLogic {
       const response = status === 'none'
         ? await AuthAPI.follow(targetUserID)
         : (await AuthAPI.unfollow(targetUserID), { status: 'none' });
-      if (!this.authGate.isCurrent(authGeneration)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !relationshipGate.isCurrent(relationshipGeneration)) return;
+      this.beginRelationshipGeneration(targetUserID);
       const apiUsersByID = this.mergeAPIUsers([{
         id: targetUserID,
         relationship: {
@@ -1044,7 +1333,7 @@ class Component extends DCLogic {
       this.loadFeed(true);
       if (this.state.screen === 'profile' && Number(this.state.profileId) === targetUserID) this.openProfile(targetUserID);
     } catch (error) {
-      if (!this.authGate.isCurrent(authGeneration)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !relationshipGate.isCurrent(relationshipGeneration)) return;
       const pending = Object.assign({}, this.state.followPendingByID);
       delete pending[key];
       const message = requestErrorMessage(error, 'Could not update follow status.');
@@ -1915,6 +2204,7 @@ class Component extends DCLogic {
       this.setState({ wsStatus: 'connected', wsReconnectAttempt: 0, chatError: '' }, () => {
         if (!reconnect) return;
         this.loadChats(true);
+        this.loadNotifications(true);
         if (this.state.activeChatKey) this.loadChatHistory(this.state.activeChatKey, true);
       });
     };
@@ -2164,6 +2454,25 @@ class Component extends DCLogic {
     let event;
     try { event = JSON.parse(String(raw || '')); } catch (ignore) { return; }
     if (!event || typeof event.type !== 'string') return;
+    if (event.type === 'notification:upsert') {
+      this.applyNotificationPayload(event, true);
+      return;
+    }
+    if (event.type === 'notifications:read-all') {
+      const revision = Number(event.revision);
+      const unreadCount = Number(event.unread_count);
+      if (!Number.isInteger(revision) || revision < Number(this.state.notificationRevision || 0) ||
+          !Number.isInteger(unreadCount) || unreadCount < 0) return;
+      this.setState(current => {
+        if (revision < Number(current.notificationRevision || 0)) return {};
+        return {
+          notifications: NotificationModel.markAllRead(current.notifications, event.read_at),
+          notificationUnreadCount: unreadCount,
+          notificationRevision: revision
+        };
+      });
+      return;
+    }
     if (event.type === 'presence:init') {
       const onlineUserIDs = {};
       (event.online_user_ids || []).forEach(id => {
@@ -2476,13 +2785,16 @@ class Component extends DCLogic {
     const request = this.state.followRequests.find(item => String(item.id) === key);
     if (!request) return;
     const authGeneration = this.authGate.current();
+    const relationshipGate = this.relationshipGeneration(request.user.id);
+    const relationshipGeneration = relationshipGate.current();
     this.setState({
       followRequestPendingByID: Object.assign({}, this.state.followRequestPendingByID, { [key]: true }),
       followRequestsError: ''
     });
     try {
       await AuthAPI.acceptFollowRequest(requestID);
-      if (!this.authGate.isCurrent(authGeneration)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !relationshipGate.isCurrent(relationshipGeneration)) return;
+      this.beginRelationshipGeneration(request.user.id);
       const user = this.apiUser(request.user.id);
       const apiUsersByID = this.mergeAPIUsers([{
         id: request.user.id,
@@ -2507,7 +2819,7 @@ class Component extends DCLogic {
         this.profileGate.begin();
       }
     } catch (error) {
-      if (!this.authGate.isCurrent(authGeneration)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !relationshipGate.isCurrent(relationshipGeneration)) return;
       const pending = Object.assign({}, this.state.followRequestPendingByID);
       delete pending[key];
       this.setState({
@@ -2520,15 +2832,19 @@ class Component extends DCLogic {
   rejectFollowRequest = async (requestID) => {
     const key = String(requestID);
     if (this.state.followRequestPendingByID[key]) return;
-    if (!this.state.followRequests.some(item => String(item.id) === key)) return;
+    const request = this.state.followRequests.find(item => String(item.id) === key);
+    if (!request) return;
     const authGeneration = this.authGate.current();
+    const relationshipGate = this.relationshipGeneration(request.user.id);
+    const relationshipGeneration = relationshipGate.current();
     this.setState({
       followRequestPendingByID: Object.assign({}, this.state.followRequestPendingByID, { [key]: true }),
       followRequestsError: ''
     });
     try {
       await AuthAPI.rejectFollowRequest(requestID);
-      if (!this.authGate.isCurrent(authGeneration)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !relationshipGate.isCurrent(relationshipGeneration)) return;
+      this.beginRelationshipGeneration(request.user.id);
       const pending = Object.assign({}, this.state.followRequestPendingByID);
       delete pending[key];
       this.setState({
@@ -2537,7 +2853,7 @@ class Component extends DCLogic {
       });
       this.loadDirectory();
     } catch (error) {
-      if (!this.authGate.isCurrent(authGeneration)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !relationshipGate.isCurrent(relationshipGeneration)) return;
       const pending = Object.assign({}, this.state.followRequestPendingByID);
       delete pending[key];
       this.setState({
@@ -2613,7 +2929,7 @@ class Component extends DCLogic {
   renderVals() {
     const s = this.state;
     const me = USERS.me;
-    const notifUnread = s.notifs.filter(n => !n.read).length + s.followRequests.length;
+    const notifUnread = s.notificationUnreadCount;
     const chatUnread = 0;
 
     const navDefs = [
@@ -2908,19 +3224,41 @@ class Component extends DCLogic {
     }));
 
     // notifications
-    const followRequestItems = s.followRequests.map((request, i) => {
-      const pending = !!s.followRequestPendingByID[String(request.id)];
+    const notifItems = s.notifications.map((notification, i) => {
+      const key = String(notification.id);
+      const actionPending = !!s.notificationActionPendingByID[key];
+      const groupTitle = notification.group && notification.group.title ? notification.group.title : 'a group';
+      const eventTitle = notification.event && notification.event.title ? notification.event.title : 'an event';
+      const textByType = {
+        follow_started: 'started following you',
+        follow_request: 'requested to follow you',
+        group_invitation: 'invited you to ' + groupTitle,
+        group_join_request: 'requested to join ' + groupTitle,
+        group_event: 'created ' + eventTitle + ' in ' + groupTitle
+      };
       return {
-        user: this.apiUser(request.user.id), icon: IC.user, text: 'requested to follow you',
-        time: this.formatPostTime(request.created_at), delay: (i * 0.06).toFixed(2) + 's',
-        bg: 'color-mix(in oklab, var(--accent) 5%, var(--surface))', unreadDot: true,
-        pending: true, done: false, doneLabel: '', disabled: pending,
-        accept: () => this.acceptFollowRequest(request.id),
-        decline: () => this.rejectFollowRequest(request.id),
-        goProfile: () => this.openProfile(request.user.id)
+        user: this.apiUser(notification.actorID), icon: notification.group ? IC.users : IC.user,
+        text: textByType[notification.type] || 'updated something',
+        time: this.formatPostTime(notification.createdAt), delay: (i * 0.04).toFixed(2) + 's',
+        bg: notification.readAt ? 'var(--surface)' : 'color-mix(in oklab, var(--accent) 5%, var(--surface))',
+        unreadDot: !notification.readAt,
+        pending: NotificationModel.isActionable(notification),
+        done: notification.resolution != null,
+        doneLabel: notification.resolution === 'accepted' ? 'Accepted' :
+          (notification.resolution === 'declined' ? 'Declined' : 'Cancelled'),
+        disabled: actionPending,
+        accept: () => this.actOnNotification(notification.id, 'accept'),
+        decline: () => this.actOnNotification(notification.id, 'decline'),
+        open: () => this.openNotification(notification),
+        goProfile: event => {
+          if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+          this.markNotificationRead(notification.id);
+          this.openProfile(notification.actorID);
+        },
+        hasError: !!s.notificationActionErrorByID[key] || !!s.notificationReadErrorByID[key],
+        error: s.notificationActionErrorByID[key] || s.notificationReadErrorByID[key] || ''
       };
     });
-    const notifItems = followRequestItems;
 
     // right rail
     const suggestions = s.directoryUserIDs.map(userID => this.apiUser(userID))
@@ -3224,9 +3562,16 @@ class Component extends DCLogic {
       msgRef: (el) => { this.msgEl = el; },
       // notifications
       notifItems,
-      followRequestsHasError: !!s.followRequestsError,
-      followRequestsError: s.followRequestsError,
-      markAllRead: () => this.setState({ notifs: s.notifs.map(n => Object.assign({}, n, { read: true })) }),
+      notificationsLoading: s.notificationsLoading,
+      notificationsEmpty: !s.notificationsLoading && !s.notificationsError && s.notifications.length === 0,
+      notificationsHasError: !!s.notificationsError,
+      notificationsError: s.notificationsError,
+      retryNotifications: () => this.loadNotifications(true),
+      notificationsHasMore: !!s.notificationsNextCursor,
+      loadMoreNotifications: () => this.loadNotifications(false),
+      notificationsLoadMoreDisabled: s.notificationsPending,
+      markAllRead: this.markAllNotificationsRead,
+      markAllReadDisabled: s.notificationReadAllPending || s.notificationUnreadCount <= 0,
       // rail
       suggestions, railEvents,
       suggestionsHasError: !!s.directoryError,

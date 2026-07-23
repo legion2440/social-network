@@ -322,6 +322,29 @@ test('follow mutations preserve exact backend errors', async () => {
   });
 });
 
+test('notification clients use persisted list, read and action contracts', async () => {
+  const calls = [];
+  const api = createAuthAPI(async (path, options) => {
+    calls.push({ path, options });
+    return jsonResponse(200, {});
+  });
+
+  await api.notifications('notification cursor', 20);
+  await api.markNotificationRead(42);
+  await api.markAllNotificationsRead();
+  await api.actOnNotification(42, 'accept');
+
+  assert.deepEqual(calls.map(call => [call.path, call.options.method]), [
+    ['/api/notifications?cursor=notification%20cursor&limit=20', 'GET'],
+    ['/api/notifications/42/read', 'PUT'],
+    ['/api/notifications/read-all', 'PUT'],
+    ['/api/notifications/42/action', 'PUT']
+  ]);
+  assert.deepEqual(JSON.parse(calls[3].options.body), { action: 'accept' });
+  assert.equal(calls[3].options.headers['Content-Type'], 'application/json');
+  assert.ok(calls.every(call => call.options.credentials === 'same-origin'));
+});
+
 test('chat history and list clients use cursor endpoints over same-origin HTTP', async () => {
   const calls = [];
   const api = createAuthAPI(async (path, options) => {

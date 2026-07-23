@@ -78,21 +78,49 @@ func (r *GroupRepo) List(ctx context.Context, viewerUserID int64, cursor *domain
 	return groups, nil
 }
 
-func (r *GroupRepo) CreateMembership(ctx context.Context, membership *domain.GroupMembership) error {
+func (r *GroupRepo) CreateMembership(ctx context.Context, membership *domain.GroupMembership) (int64, error) {
 	if membership == nil || membership.GroupID <= 0 || membership.UserID <= 0 || !membership.Status.Valid() || membership.CreatedAt.IsZero() || membership.UpdatedAt.IsZero() {
-		return fmt.Errorf("invalid group membership")
+		return 0, fmt.Errorf("invalid group membership")
 	}
-	_, err := r.db.ExecContext(ctx, `
+	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO group_memberships (group_id, user_id, status, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?)
 	`, membership.GroupID, membership.UserID, membership.Status, timeToUnix(membership.CreatedAt), timeToUnix(membership.UpdatedAt))
 	if err != nil {
 		var sqliteErr githubsqlite.Error
 		if errors.As(err, &sqliteErr) && (sqliteErr.ExtendedCode == githubsqlite.ErrConstraintPrimaryKey || sqliteErr.ExtendedCode == githubsqlite.ErrConstraintUnique) {
-			return repo.ErrConflict
+			return 0, repo.ErrConflict
 		}
+		return 0, err
 	}
-	return err
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	membership.ID = id
+	return id, nil
+}
+
+func (r *GroupRepo) GetMembership(ctx context.Context, groupID, userID int64) (*domain.GroupMembership, error) {
+	if groupID <= 0 || userID <= 0 {
+		return nil, repo.ErrNotFound
+	}
+	return scanBareGroupMembership(r.db.QueryRowContext(ctx, `
+		SELECT id, group_id, user_id, status, created_at, updated_at
+		FROM group_memberships
+		WHERE group_id = ? AND user_id = ?
+	`, groupID, userID))
+}
+
+func (r *GroupRepo) GetMembershipByID(ctx context.Context, membershipID int64) (*domain.GroupMembership, error) {
+	if membershipID <= 0 {
+		return nil, repo.ErrNotFound
+	}
+	return scanBareGroupMembership(r.db.QueryRowContext(ctx, `
+		SELECT id, group_id, user_id, status, created_at, updated_at
+		FROM group_memberships
+		WHERE id = ?
+	`, membershipID))
 }
 
 func (r *GroupRepo) GetMembershipStatus(ctx context.Context, groupID, userID int64) (*domain.GroupMembershipStatus, error) {
@@ -140,20 +168,20 @@ func (r *GroupRepo) ListActiveMemberIDs(ctx context.Context, groupID int64) ([]i
 	return ids, rows.Err()
 }
 
-func (r *GroupRepo) UpdateMembershipStatus(
+func (r *GroupRepo) UpdateMembershipStatusByID(
 	ctx context.Context,
-	groupID, userID int64,
+	membershipID int64,
 	expected, next domain.GroupMembershipStatus,
 	now time.Time,
 ) error {
-	if groupID <= 0 || userID <= 0 || !expected.Valid() || !next.Valid() || now.IsZero() {
+	if membershipID <= 0 || !expected.Valid() || !next.Valid() || now.IsZero() {
 		return fmt.Errorf("invalid group membership transition")
 	}
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE group_memberships
 		SET status = ?, updated_at = ?
-		WHERE group_id = ? AND user_id = ? AND status = ?
-	`, next, timeToUnix(now), groupID, userID, expected)
+		WHERE id = ? AND status = ?
+	`, next, timeToUnix(now), membershipID, expected)
 	if err != nil {
 		return err
 	}
@@ -167,14 +195,14 @@ func (r *GroupRepo) UpdateMembershipStatus(
 	return nil
 }
 
-func (r *GroupRepo) DeleteMembership(ctx context.Context, groupID, userID int64, expected domain.GroupMembershipStatus) error {
-	if groupID <= 0 || userID <= 0 || !expected.Valid() {
+func (r *GroupRepo) DeleteMembershipByID(ctx context.Context, membershipID int64, expected domain.GroupMembershipStatus) error {
+	if membershipID <= 0 || !expected.Valid() {
 		return fmt.Errorf("invalid group membership deletion")
 	}
 	result, err := r.db.ExecContext(ctx, `
 		DELETE FROM group_memberships
-		WHERE group_id = ? AND user_id = ? AND status = ?
-	`, groupID, userID, expected)
+		WHERE id = ? AND status = ?
+	`, membershipID, expected)
 	if err != nil {
 		return err
 	}
@@ -325,7 +353,7 @@ const groupSelect = `
 
 const membershipSelect = `
 	SELECT
-		gm.group_id, gm.user_id, gm.status, gm.created_at, gm.updated_at,
+		gm.id, gm.group_id, gm.user_id, gm.status, gm.created_at, gm.updated_at,
 		u.id, u.email, u.password_hash, u.first_name, u.last_name,
 		u.date_of_birth, u.gender, u.nickname, u.about_me,
 		CASE
@@ -450,7 +478,7 @@ func scanGroupMembership(row rowScanner) (*domain.GroupMembership, error) {
 		updatedAt  int64
 		user       scannedGroupUser
 	)
-	destinations := []any{&membership.GroupID, &membership.UserID, &status, &createdAt, &updatedAt}
+	destinations := []any{&membership.ID, &membership.GroupID, &membership.UserID, &status, &createdAt, &updatedAt}
 	destinations = append(destinations, user.destinations()...)
 	if err := row.Scan(destinations...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -467,4 +495,26 @@ func scanGroupMembership(row rowScanner) (*domain.GroupMembership, error) {
 	var err error
 	membership.User, err = user.value()
 	return &membership, err
+}
+
+func scanBareGroupMembership(row rowScanner) (*domain.GroupMembership, error) {
+	var (
+		membership domain.GroupMembership
+		status     string
+		createdAt  int64
+		updatedAt  int64
+	)
+	if err := row.Scan(&membership.ID, &membership.GroupID, &membership.UserID, &status, &createdAt, &updatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, repo.ErrNotFound
+		}
+		return nil, err
+	}
+	membership.Status = domain.GroupMembershipStatus(status)
+	if !membership.Status.Valid() {
+		return nil, fmt.Errorf("invalid group membership status: %q", status)
+	}
+	membership.CreatedAt = unixToTime(createdAt)
+	membership.UpdatedAt = unixToTime(updatedAt)
+	return &membership, nil
 }

@@ -50,6 +50,7 @@ Current migrations:
 - `000010_create_chats`
 - `000011_add_group_posts`
 - `000012_create_group_events`
+- `000013_create_notifications`
 
 Migration `000011` rebuilds `posts` so personal and group publications share
 one table while keeping existing post IDs, selected audiences, comments,
@@ -325,10 +326,45 @@ purges posts/comments/events/drafts, and makes pending detail/member/content res
 stale. It also invalidates pending chat-list requests, filters revoked group
 chats from later list responses, and blocks opening a stale group-chat card.
 Only an authoritative owner/member response from rejoin can clear that revoke
-state and trigger a fresh content load. Event creation and RSVP do not create
-notifications or realtime events yet; persisted notifications remain a
-separate step.
+state and trigger a fresh content load. Event creation now persists one
+notification for every current owner/member except the creator; RSVP itself
+does not create a notification.
 Group chat uses the realtime implementation described below.
+
+## Notifications
+
+Notifications are persisted in SQLite for follow starts and requests, group
+invitations and join requests, and group events. Each user has a monotonic
+notification revision and an unread count derived from persisted `read_at`
+values. `GET /api/notifications` orders rows by `(created_at DESC, id DESC)`,
+uses an opaque cursor, defaults to 20 rows, and allows at most 50. Mark-one and
+mark-all operations are idempotent and increase the revision only when stored
+state actually changes.
+
+`PUT /api/notifications/{id}/action` accepts strict JSON containing one
+`action`, either `accept` or `decline`, for follow requests, group invitations,
+and group join requests. Source transition, lifecycle validation,
+notification resolution/read state, one revision increment, authoritative
+source read, and unread count are committed in one transaction. The endpoint
+uses the physical follow or membership lifecycle ID, so an old notification
+cannot act on a newly created request. Repeating the same resolved action is a
+`200` no-op; the opposite action, a stale lifecycle, or a non-actionable type
+returns `409`.
+
+Notification actions and the original follow/group endpoints share the same
+transaction-bound transition helpers. Pending follow requests promoted after
+a profile becomes public resolve the original request without creating a
+second follow-started notification. Removing a follow clears the public
+`follow_id`; that externally visible historical update increments the
+recipient revision once. Membership lifecycle IDs remain backend-only.
+
+After commit, `notification:upsert` and `notifications:read-all` are published
+best-effort to every active socket of the recipient. SQLite remains the source
+of truth and the frontend refreshes the first notification page after actions
+and reconnects. Notification revision and authoritative relationship/group
+source are race-gated independently, so an unrelated newer notification does
+not suppress a valid source transition and a stale action cannot restore
+access after leave, revoke, or a newer lifecycle.
 
 ## Chats and realtime
 
@@ -350,7 +386,8 @@ lists and histories use opaque cursors, default to 20 rows, and allow at most
 Live messages use the authenticated same-origin `GET /ws` WebSocket. Client
 events are `chat:send`, `typing:start`, `typing:heartbeat`, and `typing:stop`;
 server events are `presence:init`, `presence:update`, `presence:remove`,
-`typing:update`, `chat:message`, `chat:remove`, and `chat:error`. `chat:remove`
+`typing:update`, `chat:message`, `chat:remove`, `chat:error`,
+`notification:upsert`, and `notifications:read-all`. `chat:remove`
 immediately purges a group chat from every active tab when membership access is
 revoked. Frames are limited to 16 KiB and message text is trimmed and limited
 to 1–2000 Unicode code points. A user
@@ -435,6 +472,10 @@ Implemented endpoints:
 - `GET|POST /api/groups/{id}/events` (owner/member event list and creation)
 - `PUT /api/groups/{id}/events/{eventID}/response` (owner/member RSVP UPSERT)
 - `GET /api/group-invitations`
+- `GET /api/notifications` (authenticated cursor pagination, unread count and revision)
+- `PUT /api/notifications/{id}/read`
+- `PUT /api/notifications/read-all`
+- `PUT /api/notifications/{id}/action` (strict actionable source transition)
 - `GET /api/chats` (authenticated cursor-paginated chat list)
 - `GET /api/chats/direct/{userID}/messages` (authenticated direct history)
 - `GET /api/groups/{id}/chat/messages` (authenticated owner/member history)
@@ -443,13 +484,15 @@ Implemented endpoints:
 
 All other reserved API groups currently return JSON `501 Not Implemented`.
 
-The frontend feed, profiles, suggestions, follow controls, requests, follower
+The frontend feed, profiles, suggestions, follow controls, persisted notifications, follower
 lists, following lists, profile posts, post comments, direct chats, and group
 chats use backend IDs and live API state. Chat history paginates upward,
 reconnect reloads list/current history, optimistic sends are retryable, and
 stale responses are generation-gated across logout and access changes.
-Group-dependent mock posts, comments, notifications, and right-rail events
-have been removed; the Group Events tab uses persisted backend events and RSVP.
+Group-dependent mock posts, comments, and right-rail events have been removed;
+the Group Events tab uses persisted backend events and RSVP, and the
+Notifications screen uses persisted history, unread state, actions, pagination,
+and realtime refresh hints.
 
 The local frontend file server does not replace the planned Docker topology.
 The final setup keeps the backend private and serves the frontend through a

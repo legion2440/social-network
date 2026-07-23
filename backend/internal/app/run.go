@@ -135,6 +135,7 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 	comments := service.NewCommentService(transactions, appClock)
 	groups := service.NewGroupService(transactions, appClock)
 	groupEvents := service.NewGroupEventService(transactions, appClock)
+	notifications := service.NewNotificationService(transactions, appClock)
 	chats := service.NewChatService(transactions, appClock)
 	hub := realtimews.NewHub(log.Default())
 	go hub.Run()
@@ -152,6 +153,7 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		comments,
 		groups,
 		groupEvents,
+		notifications,
 		chats,
 		httpserver.NewCookieSessionTokenExtractor(config.SessionCookieName),
 		cfg.CookieSecure,

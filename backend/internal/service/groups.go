@@ -50,6 +50,11 @@ type GroupService struct {
 	clock        clock.Clock
 }
 
+type GroupMutationResult struct {
+	Group               *domain.Group
+	NotificationEffects *NotificationEffects
+}
+
 func NewGroupService(transactions repo.TransactionManager, appClock clock.Clock) *GroupService {
 	return &GroupService{transactions: transactions, clock: appClock}
 }
@@ -74,7 +79,7 @@ func (s *GroupService) Create(ctx context.Context, ownerUserID int64, titleValue
 		if err != nil {
 			return err
 		}
-		if err := repositories.Groups().CreateMembership(ctx, &domain.GroupMembership{
+		if _, err := repositories.Groups().CreateMembership(ctx, &domain.GroupMembership{
 			GroupID: group.ID, UserID: ownerUserID, Status: domain.GroupOwner, CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			return mapGroupRepoError(err)
@@ -192,21 +197,38 @@ func (s *GroupService) InvitationInbox(ctx context.Context, userID int64, cursor
 }
 
 func (s *GroupService) RequestJoin(ctx context.Context, userID, groupID int64) (*domain.Group, error) {
+	result, err := s.RequestJoinWithEffects(ctx, userID, groupID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Group, nil
+}
+
+func (s *GroupService) RequestJoinWithEffects(ctx context.Context, userID, groupID int64) (*GroupMutationResult, error) {
 	return s.createMembership(ctx, userID, groupID, userID, domain.GroupRequested, false)
 }
 
 func (s *GroupService) Invite(ctx context.Context, actorUserID, groupID, targetUserID int64) (*domain.Group, error) {
+	result, err := s.InviteWithEffects(ctx, actorUserID, groupID, targetUserID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Group, nil
+}
+
+func (s *GroupService) InviteWithEffects(ctx context.Context, actorUserID, groupID, targetUserID int64) (*GroupMutationResult, error) {
 	if s == nil || s.transactions == nil || s.clock == nil || actorUserID <= 0 || groupID <= 0 || targetUserID <= 0 {
 		return nil, ErrInvalidInput
 	}
 	if actorUserID == targetUserID {
 		return nil, ErrConflict
 	}
-	var group *domain.Group
+	result := &GroupMutationResult{NotificationEffects: emptyNotificationEffects()}
 	now := s.clock.Now()
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+		builder := newNotificationEffectBuilder()
 		var err error
-		group, err = repositories.Groups().Get(ctx, groupID, actorUserID)
+		result.Group, err = repositories.Groups().Get(ctx, groupID, actorUserID)
 		if err != nil {
 			return mapGroupRepoError(err)
 		}
@@ -223,18 +245,30 @@ func (s *GroupService) Invite(ctx context.Context, actorUserID, groupID, targetU
 		if _, err := repositories.Users().GetByID(ctx, targetUserID); err != nil {
 			return mapGroupRepoError(err)
 		}
-		if err := repositories.Groups().CreateMembership(ctx, &domain.GroupMembership{
+		membership := &domain.GroupMembership{
 			GroupID: groupID, UserID: targetUserID, Status: domain.GroupInvited, CreatedAt: now, UpdatedAt: now,
-		}); err != nil {
+		}
+		membershipID, err := repositories.Groups().CreateMembership(ctx, membership)
+		if err != nil {
 			return mapGroupRepoError(err)
 		}
-		group, err = repositories.Groups().Get(ctx, groupID, actorUserID)
-		return mapGroupRepoError(err)
+		if err := createNotificationTx(ctx, repositories, builder, &domain.Notification{
+			RecipientUserID: targetUserID, ActorUserID: actorUserID, Type: domain.NotificationGroupInvitation,
+			GroupID: &groupID, MembershipID: &membershipID, CreatedAt: now,
+		}); err != nil {
+			return err
+		}
+		result.Group, err = repositories.Groups().Get(ctx, groupID, actorUserID)
+		if err != nil {
+			return mapGroupRepoError(err)
+		}
+		result.NotificationEffects, err = builder.finish(ctx, repositories)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return group, nil
+	return result, nil
 }
 
 func (s *GroupService) createMembership(
@@ -242,52 +276,100 @@ func (s *GroupService) createMembership(
 	viewerUserID, groupID, targetUserID int64,
 	status domain.GroupMembershipStatus,
 	requireOwner bool,
-) (*domain.Group, error) {
+) (*GroupMutationResult, error) {
 	if s == nil || s.transactions == nil || s.clock == nil || viewerUserID <= 0 || groupID <= 0 || targetUserID <= 0 {
 		return nil, ErrInvalidInput
 	}
-	var group *domain.Group
+	result := &GroupMutationResult{NotificationEffects: emptyNotificationEffects()}
 	now := s.clock.Now()
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+		builder := newNotificationEffectBuilder()
 		var err error
-		group, err = repositories.Groups().Get(ctx, groupID, viewerUserID)
+		result.Group, err = repositories.Groups().Get(ctx, groupID, viewerUserID)
 		if err != nil {
 			return mapGroupRepoError(err)
 		}
-		if requireOwner && group.OwnerUserID != viewerUserID {
+		if requireOwner && result.Group.OwnerUserID != viewerUserID {
 			return ErrForbidden
 		}
 		if _, err := repositories.Users().GetByID(ctx, targetUserID); err != nil {
 			return mapGroupRepoError(err)
 		}
-		if err := repositories.Groups().CreateMembership(ctx, &domain.GroupMembership{
+		membership := &domain.GroupMembership{
 			GroupID: groupID, UserID: targetUserID, Status: status, CreatedAt: now, UpdatedAt: now,
-		}); err != nil {
+		}
+		membershipID, err := repositories.Groups().CreateMembership(ctx, membership)
+		if err != nil {
 			return mapGroupRepoError(err)
 		}
-		group, err = repositories.Groups().Get(ctx, groupID, viewerUserID)
-		return mapGroupRepoError(err)
+		if status == domain.GroupRequested {
+			ownerUserID := result.Group.OwnerUserID
+			if err := createNotificationTx(ctx, repositories, builder, &domain.Notification{
+				RecipientUserID: ownerUserID, ActorUserID: targetUserID, Type: domain.NotificationGroupJoinRequest,
+				GroupID: &groupID, MembershipID: &membershipID, CreatedAt: now,
+			}); err != nil {
+				return err
+			}
+		}
+		result.Group, err = repositories.Groups().Get(ctx, groupID, viewerUserID)
+		if err != nil {
+			return mapGroupRepoError(err)
+		}
+		result.NotificationEffects, err = builder.finish(ctx, repositories)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return group, nil
+	return result, nil
 }
 
 func (s *GroupService) CancelJoinRequest(ctx context.Context, userID, groupID int64) (*domain.Group, error) {
-	return s.deleteMembership(ctx, userID, groupID, userID, domain.GroupRequested, false)
+	result, err := s.CancelJoinRequestWithEffects(ctx, userID, groupID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Group, nil
+}
+
+func (s *GroupService) CancelJoinRequestWithEffects(ctx context.Context, userID, groupID int64) (*GroupMutationResult, error) {
+	return s.deleteMembership(ctx, userID, groupID, userID, domain.GroupRequested, false, domain.NotificationCancelled)
 }
 
 func (s *GroupService) RejectJoinRequest(ctx context.Context, ownerUserID, groupID, targetUserID int64) (*domain.Group, error) {
-	return s.deleteMembership(ctx, ownerUserID, groupID, targetUserID, domain.GroupRequested, true)
+	result, err := s.RejectJoinRequestWithEffects(ctx, ownerUserID, groupID, targetUserID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Group, nil
+}
+
+func (s *GroupService) RejectJoinRequestWithEffects(ctx context.Context, ownerUserID, groupID, targetUserID int64) (*GroupMutationResult, error) {
+	return s.deleteMembership(ctx, ownerUserID, groupID, targetUserID, domain.GroupRequested, true, domain.NotificationDeclined)
 }
 
 func (s *GroupService) DeclineInvitation(ctx context.Context, userID, groupID int64) (*domain.Group, error) {
-	return s.deleteMembership(ctx, userID, groupID, userID, domain.GroupInvited, false)
+	result, err := s.DeclineInvitationWithEffects(ctx, userID, groupID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Group, nil
+}
+
+func (s *GroupService) DeclineInvitationWithEffects(ctx context.Context, userID, groupID int64) (*GroupMutationResult, error) {
+	return s.deleteMembership(ctx, userID, groupID, userID, domain.GroupInvited, false, domain.NotificationDeclined)
 }
 
 func (s *GroupService) Leave(ctx context.Context, userID, groupID int64) (*domain.Group, error) {
-	return s.deleteMembership(ctx, userID, groupID, userID, domain.GroupMember, false)
+	result, err := s.LeaveWithEffects(ctx, userID, groupID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Group, nil
+}
+
+func (s *GroupService) LeaveWithEffects(ctx context.Context, userID, groupID int64) (*GroupMutationResult, error) {
+	return s.deleteMembership(ctx, userID, groupID, userID, domain.GroupMember, false, "")
 }
 
 func (s *GroupService) deleteMembership(
@@ -295,43 +377,88 @@ func (s *GroupService) deleteMembership(
 	viewerUserID, groupID, targetUserID int64,
 	expected domain.GroupMembershipStatus,
 	requireOwner bool,
-) (*domain.Group, error) {
-	if s == nil || s.transactions == nil || viewerUserID <= 0 || groupID <= 0 || targetUserID <= 0 {
+	resolution domain.NotificationResolution,
+) (*GroupMutationResult, error) {
+	if s == nil || s.transactions == nil || s.clock == nil || viewerUserID <= 0 || groupID <= 0 || targetUserID <= 0 {
 		return nil, ErrInvalidInput
 	}
-	var group *domain.Group
+	result := &GroupMutationResult{NotificationEffects: emptyNotificationEffects()}
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+		builder := newNotificationEffectBuilder()
 		var err error
-		group, err = repositories.Groups().Get(ctx, groupID, viewerUserID)
+		result.Group, err = repositories.Groups().Get(ctx, groupID, viewerUserID)
 		if err != nil {
 			return mapGroupRepoError(err)
 		}
-		if requireOwner && group.OwnerUserID != viewerUserID {
+		if requireOwner && result.Group.OwnerUserID != viewerUserID {
 			return ErrForbidden
 		}
 		if _, err := repositories.Users().GetByID(ctx, targetUserID); err != nil {
 			return mapGroupRepoError(err)
 		}
-		if !requireOwner && expected == domain.GroupMember && group.OwnerUserID == viewerUserID {
+		if !requireOwner && expected == domain.GroupMember && result.Group.OwnerUserID == viewerUserID {
 			return ErrConflict
 		}
-		if err := repositories.Groups().DeleteMembership(ctx, groupID, targetUserID, expected); err != nil {
+		membership, err := repositories.Groups().GetMembership(ctx, groupID, targetUserID)
+		if err != nil {
+			if errors.Is(err, repo.ErrNotFound) {
+				return ErrConflict
+			}
 			return mapGroupRepoError(err)
 		}
-		group, err = repositories.Groups().Get(ctx, groupID, viewerUserID)
-		return mapGroupRepoError(err)
+		var notification *domain.Notification
+		if resolution.Valid() {
+			typeValue := domain.NotificationGroupInvitation
+			if expected == domain.GroupRequested {
+				typeValue = domain.NotificationGroupJoinRequest
+			}
+			notification, err = repositories.Notifications().FindPendingByMembershipID(ctx, typeValue, membership.ID)
+			if err != nil && !errors.Is(err, repo.ErrNotFound) {
+				return err
+			}
+		}
+		if err := deleteGroupMembershipTx(ctx, repositories, membership, expected); err != nil {
+			return err
+		}
+		if notification != nil {
+			if _, err := resolveNotificationTx(ctx, repositories, builder, notification, resolution, s.clock.Now().UTC()); err != nil {
+				return err
+			}
+		}
+		result.Group, err = repositories.Groups().Get(ctx, groupID, viewerUserID)
+		if err != nil {
+			return mapGroupRepoError(err)
+		}
+		result.NotificationEffects, err = builder.finish(ctx, repositories)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return group, nil
+	return result, nil
 }
 
 func (s *GroupService) AcceptJoinRequest(ctx context.Context, ownerUserID, groupID, targetUserID int64) (*domain.Group, error) {
+	result, err := s.AcceptJoinRequestWithEffects(ctx, ownerUserID, groupID, targetUserID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Group, nil
+}
+
+func (s *GroupService) AcceptJoinRequestWithEffects(ctx context.Context, ownerUserID, groupID, targetUserID int64) (*GroupMutationResult, error) {
 	return s.updateMembership(ctx, ownerUserID, groupID, targetUserID, domain.GroupRequested, domain.GroupMember, true)
 }
 
 func (s *GroupService) AcceptInvitation(ctx context.Context, userID, groupID int64) (*domain.Group, error) {
+	result, err := s.AcceptInvitationWithEffects(ctx, userID, groupID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Group, nil
+}
+
+func (s *GroupService) AcceptInvitationWithEffects(ctx context.Context, userID, groupID int64) (*GroupMutationResult, error) {
 	return s.updateMembership(ctx, userID, groupID, userID, domain.GroupInvited, domain.GroupMember, false)
 }
 
@@ -340,33 +467,56 @@ func (s *GroupService) updateMembership(
 	viewerUserID, groupID, targetUserID int64,
 	expected, next domain.GroupMembershipStatus,
 	requireOwner bool,
-) (*domain.Group, error) {
+) (*GroupMutationResult, error) {
 	if s == nil || s.transactions == nil || s.clock == nil || viewerUserID <= 0 || groupID <= 0 || targetUserID <= 0 {
 		return nil, ErrInvalidInput
 	}
-	var group *domain.Group
+	result := &GroupMutationResult{NotificationEffects: emptyNotificationEffects()}
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+		builder := newNotificationEffectBuilder()
 		var err error
-		group, err = repositories.Groups().Get(ctx, groupID, viewerUserID)
+		result.Group, err = repositories.Groups().Get(ctx, groupID, viewerUserID)
 		if err != nil {
 			return mapGroupRepoError(err)
 		}
-		if requireOwner && group.OwnerUserID != viewerUserID {
+		if requireOwner && result.Group.OwnerUserID != viewerUserID {
 			return ErrForbidden
 		}
 		if _, err := repositories.Users().GetByID(ctx, targetUserID); err != nil {
 			return mapGroupRepoError(err)
 		}
-		if err := repositories.Groups().UpdateMembershipStatus(ctx, groupID, targetUserID, expected, next, s.clock.Now()); err != nil {
+		membership, err := repositories.Groups().GetMembership(ctx, groupID, targetUserID)
+		if err != nil {
 			return mapGroupRepoError(err)
 		}
-		group, err = repositories.Groups().Get(ctx, groupID, viewerUserID)
-		return mapGroupRepoError(err)
+		typeValue := domain.NotificationGroupInvitation
+		if expected == domain.GroupRequested {
+			typeValue = domain.NotificationGroupJoinRequest
+		}
+		notification, notificationErr := repositories.Notifications().FindPendingByMembershipID(ctx, typeValue, membership.ID)
+		if notificationErr != nil && !errors.Is(notificationErr, repo.ErrNotFound) {
+			return notificationErr
+		}
+		now := s.clock.Now().UTC()
+		if err := updateGroupMembershipTx(ctx, repositories, membership, expected, next, now); err != nil {
+			return err
+		}
+		if notification != nil {
+			if _, err := resolveNotificationTx(ctx, repositories, builder, notification, domain.NotificationAccepted, now); err != nil {
+				return err
+			}
+		}
+		result.Group, err = repositories.Groups().Get(ctx, groupID, viewerUserID)
+		if err != nil {
+			return mapGroupRepoError(err)
+		}
+		result.NotificationEffects, err = builder.finish(ctx, repositories)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return group, nil
+	return result, nil
 }
 
 func validRuneLength(value string, min, max int) bool {

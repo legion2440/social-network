@@ -63,10 +63,12 @@ type GroupRepo interface {
 	Create(ctx context.Context, group *domain.Group) (int64, error)
 	Get(ctx context.Context, groupID, viewerUserID int64) (*domain.Group, error)
 	List(ctx context.Context, viewerUserID int64, cursor *domain.GroupCursor, limit int) ([]*domain.Group, error)
-	CreateMembership(ctx context.Context, membership *domain.GroupMembership) error
+	CreateMembership(ctx context.Context, membership *domain.GroupMembership) (int64, error)
+	GetMembership(ctx context.Context, groupID, userID int64) (*domain.GroupMembership, error)
+	GetMembershipByID(ctx context.Context, membershipID int64) (*domain.GroupMembership, error)
 	GetMembershipStatus(ctx context.Context, groupID, userID int64) (*domain.GroupMembershipStatus, error)
-	UpdateMembershipStatus(ctx context.Context, groupID, userID int64, expected, next domain.GroupMembershipStatus, now time.Time) error
-	DeleteMembership(ctx context.Context, groupID, userID int64, expected domain.GroupMembershipStatus) error
+	UpdateMembershipStatusByID(ctx context.Context, membershipID int64, expected, next domain.GroupMembershipStatus, now time.Time) error
+	DeleteMembershipByID(ctx context.Context, membershipID int64, expected domain.GroupMembershipStatus) error
 	ListMembers(ctx context.Context, groupID, viewerUserID int64, cursor *domain.GroupMemberCursor, limit int) ([]*domain.GroupMembership, error)
 	ListMemberships(ctx context.Context, groupID, viewerUserID int64, status domain.GroupMembershipStatus, cursor *domain.GroupMembershipCursor, limit int) ([]*domain.GroupMembership, error)
 	ListInvitationInbox(ctx context.Context, userID int64, cursor *domain.GroupInvitationCursor, limit int) ([]*domain.GroupInvitation, error)
@@ -78,6 +80,22 @@ type GroupEventRepo interface {
 	Get(ctx context.Context, viewerUserID, eventID int64) (*domain.GroupEvent, error)
 	List(ctx context.Context, viewerUserID, groupID int64, cursor *domain.GroupEventCursor, limit int) ([]*domain.GroupEvent, error)
 	UpsertResponse(ctx context.Context, eventID, userID int64, response domain.GroupEventResponse, now time.Time) error
+}
+
+type NotificationRepo interface {
+	EnsureUserState(ctx context.Context, userID int64) error
+	Create(ctx context.Context, notification *domain.Notification) (int64, error)
+	GetForRecipient(ctx context.Context, recipientUserID, notificationID int64) (*domain.Notification, error)
+	ListForRecipient(ctx context.Context, recipientUserID int64, cursor *domain.NotificationCursor, limit int) ([]*domain.Notification, error)
+	FindPendingByFollowID(ctx context.Context, notificationType domain.NotificationType, followID int64) (*domain.Notification, error)
+	FindPendingByMembershipID(ctx context.Context, notificationType domain.NotificationType, membershipID int64) (*domain.Notification, error)
+	ReferencesByFollowID(ctx context.Context, followID int64) ([]domain.NotificationReference, error)
+	Resolve(ctx context.Context, notificationID int64, resolution domain.NotificationResolution, now time.Time) (bool, error)
+	MarkRead(ctx context.Context, notificationID, recipientUserID int64, now time.Time) (bool, error)
+	MarkAllRead(ctx context.Context, recipientUserID int64, now time.Time) (int64, error)
+	UnreadCount(ctx context.Context, recipientUserID int64) (int64, error)
+	CurrentRevision(ctx context.Context, userID int64) (int64, error)
+	BumpRevision(ctx context.Context, userID int64) (int64, error)
 }
 
 type ChatRepo interface {
@@ -100,6 +118,7 @@ type TransactionRepositories interface {
 	Comments() CommentRepo
 	Groups() GroupRepo
 	GroupEvents() GroupEventRepo
+	Notifications() NotificationRepo
 	Chats() ChatRepo
 }
 

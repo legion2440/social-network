@@ -131,6 +131,11 @@ type clientPayloadCommand struct {
 	result   chan error
 }
 
+type publishUsersCommand struct {
+	payloads map[int64][]byte
+	result   chan error
+}
+
 type beginDrainCommand struct {
 	deadline <-chan time.Time
 	result   chan error
@@ -393,6 +398,35 @@ func (h *Hub) SendClient(clientID string, payload []byte) error {
 	}
 }
 
+func (h *Hub) PublishUsers(payloads map[int64][]byte) error {
+	if h == nil || len(payloads) == 0 {
+		return nil
+	}
+	if h.currentState() == hubStopped {
+		return ErrHubStopped
+	}
+	copied := make(map[int64][]byte, len(payloads))
+	for userID, payload := range payloads {
+		if userID <= 0 || len(payload) == 0 {
+			continue
+		}
+		copied[userID] = append([]byte(nil), payload...)
+	}
+	if len(copied) == 0 {
+		return nil
+	}
+	result := make(chan error, 1)
+	if err := h.submit(publishUsersCommand{payloads: copied, result: result}); err != nil {
+		return err
+	}
+	select {
+	case err := <-result:
+		return err
+	case <-h.done:
+		return ErrHubStopped
+	}
+}
+
 func (h *Hub) BeginDrain(ctx context.Context) error {
 	if h == nil {
 		return ErrHubStopped
@@ -459,6 +493,15 @@ func (h *Hub) handleCommand(command any) {
 		} else {
 			value.result <- nil
 		}
+	case publishUsersCommand:
+		for userID, payload := range value.payloads {
+			for clientID, client := range h.clientsByUser[userID] {
+				if h.clientCanReceive(client) && !h.enqueue(client, payload) {
+					h.deactivateClient(clientID, deactivateSlow)
+				}
+			}
+		}
+		value.result <- nil
 	case typingCommand:
 		h.handleTyping(value, h.now())
 	case beginDrainCommand:

@@ -37,6 +37,11 @@ type GroupEventService struct {
 	clock        clock.Clock
 }
 
+type GroupEventMutationResult struct {
+	Event               *domain.GroupEvent
+	NotificationEffects *NotificationEffects
+}
+
 func NewGroupEventService(transactions repo.TransactionManager, appClock clock.Clock) *GroupEventService {
 	return &GroupEventService{transactions: transactions, clock: appClock}
 }
@@ -46,6 +51,18 @@ func (s *GroupEventService) Create(
 	creatorUserID, groupID int64,
 	input CreateGroupEventInput,
 ) (*domain.GroupEvent, error) {
+	result, err := s.CreateWithEffects(ctx, creatorUserID, groupID, input)
+	if err != nil {
+		return nil, err
+	}
+	return result.Event, nil
+}
+
+func (s *GroupEventService) CreateWithEffects(
+	ctx context.Context,
+	creatorUserID, groupID int64,
+	input CreateGroupEventInput,
+) (*GroupEventMutationResult, error) {
 	if s == nil || s.transactions == nil || s.clock == nil || creatorUserID <= 0 || groupID <= 0 {
 		return nil, ErrInvalidInput
 	}
@@ -57,8 +74,9 @@ func (s *GroupEventService) Create(
 		return nil, ErrInvalidInput
 	}
 
-	var event *domain.GroupEvent
+	result := &GroupEventMutationResult{NotificationEffects: emptyNotificationEffects()}
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+		builder := newNotificationEffectBuilder()
 		if err := requireActiveGroupMember(ctx, repositories, creatorUserID, groupID); err != nil {
 			return err
 		}
@@ -66,21 +84,41 @@ func (s *GroupEventService) Create(
 		if !startsAt.After(now) {
 			return ErrInvalidInput
 		}
-		event = &domain.GroupEvent{
+		result.Event = &domain.GroupEvent{
 			GroupID: groupID, CreatorUserID: creatorUserID, Title: title,
 			Description: description, StartsAt: startsAt, CreatedAt: now,
 		}
-		id, err := repositories.GroupEvents().Create(ctx, event)
+		id, err := repositories.GroupEvents().Create(ctx, result.Event)
 		if err != nil {
 			return err
 		}
-		event, err = repositories.GroupEvents().Get(ctx, creatorUserID, id)
-		return mapGroupEventRepoError(err)
+		memberIDs, err := repositories.Groups().ListActiveMemberIDs(ctx, groupID)
+		if err != nil {
+			return err
+		}
+		for _, recipientUserID := range memberIDs {
+			if recipientUserID == creatorUserID {
+				continue
+			}
+			groupIDValue, eventIDValue := groupID, id
+			if err := createNotificationTx(ctx, repositories, builder, &domain.Notification{
+				RecipientUserID: recipientUserID, ActorUserID: creatorUserID, Type: domain.NotificationGroupEvent,
+				GroupID: &groupIDValue, EventID: &eventIDValue, CreatedAt: now,
+			}); err != nil {
+				return err
+			}
+		}
+		result.Event, err = repositories.GroupEvents().Get(ctx, creatorUserID, id)
+		if err != nil {
+			return mapGroupEventRepoError(err)
+		}
+		result.NotificationEffects, err = builder.finish(ctx, repositories)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return event, nil
+	return result, nil
 }
 
 func (s *GroupEventService) List(

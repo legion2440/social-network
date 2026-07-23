@@ -25,12 +25,13 @@ func (h *Handler) handleFollow(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodPut:
-		follow, err := h.follows.Follow(r.Context(), current.ID, targetUserID)
+		result, err := h.follows.FollowWithEffects(r.Context(), current.ID, targetUserID)
 		if h.handleFollowServiceError(w, err) {
 			return
 		}
+		h.publishNotificationEffects(result.NotificationEffects)
 		h.refreshRealtimeRelationship(current.ID, targetUserID)
-		writeJSON(w, http.StatusOK, followStatusResponse{Status: relationshipStatusResponse(follow.Status)})
+		writeJSON(w, http.StatusOK, followStatusResponse{Status: relationshipStatusResponse(result.Follow.Status)})
 	case http.MethodGet:
 		relationship, err := h.follows.Relationship(r.Context(), current.ID, targetUserID)
 		if h.handleFollowServiceError(w, err) {
@@ -41,9 +42,11 @@ func (h *Handler) handleFollow(w http.ResponseWriter, r *http.Request) {
 			FollowsMe: relationship.FollowsMe,
 		})
 	case http.MethodDelete:
-		if h.handleFollowServiceError(w, h.follows.Unfollow(r.Context(), current.ID, targetUserID)) {
+		effects, err := h.follows.UnfollowWithEffects(r.Context(), current.ID, targetUserID)
+		if h.handleFollowServiceError(w, err) {
 			return
 		}
+		h.publishNotificationEffects(effects)
 		h.refreshRealtimeRelationship(current.ID, targetUserID)
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -138,14 +141,15 @@ func (h *Handler) handleFollowRequestAccept(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	current, _ := CurrentUserFromContext(r.Context())
-	follow, err := h.follows.AcceptRequest(r.Context(), current.ID, requestID)
+	result, err := h.follows.AcceptRequestWithEffects(r.Context(), current.ID, requestID)
 	if h.handleFollowServiceError(w, err) {
 		return
 	}
+	h.publishNotificationEffects(result.NotificationEffects)
 	if h.hub != nil {
-		h.hub.RelationshipChanged(current.ID, follow.FollowerUserID, true)
+		h.hub.RelationshipChanged(current.ID, result.Follow.FollowerUserID, true)
 	}
-	writeJSON(w, http.StatusOK, followStatusResponse{Status: relationshipStatusResponse(follow.Status)})
+	writeJSON(w, http.StatusOK, followStatusResponse{Status: relationshipStatusResponse(result.Follow.Status)})
 }
 
 func (h *Handler) refreshRealtimeRelationship(firstUserID, secondUserID int64) {
@@ -179,9 +183,12 @@ func (h *Handler) handleFollowRequestReject(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	current, _ := CurrentUserFromContext(r.Context())
-	if h.handleFollowServiceError(w, h.follows.RejectRequest(r.Context(), current.ID, requestID)) {
+	result, err := h.follows.RejectRequestWithEffects(r.Context(), current.ID, requestID)
+	if h.handleFollowServiceError(w, err) {
 		return
 	}
+	h.publishNotificationEffects(result.NotificationEffects)
+	h.refreshRealtimeRelationship(current.ID, result.Follow.FollowerUserID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

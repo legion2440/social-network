@@ -29,17 +29,31 @@ type FollowService struct {
 	clock        clock.Clock
 }
 
+type FollowMutationResult struct {
+	Follow              *domain.Follow
+	NotificationEffects *NotificationEffects
+}
+
 func NewFollowService(users repo.UserRepo, follows repo.FollowRepo, transactions repo.TransactionManager, appClock clock.Clock) *FollowService {
 	return &FollowService{users: users, follows: follows, transactions: transactions, clock: appClock}
 }
 
 func (s *FollowService) Follow(ctx context.Context, followerUserID, followedUserID int64) (*domain.Follow, error) {
+	result, err := s.FollowWithEffects(ctx, followerUserID, followedUserID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Follow, nil
+}
+
+func (s *FollowService) FollowWithEffects(ctx context.Context, followerUserID, followedUserID int64) (*FollowMutationResult, error) {
 	if s == nil || s.transactions == nil || s.clock == nil || followerUserID <= 0 || followedUserID <= 0 || followerUserID == followedUserID {
 		return nil, ErrInvalidInput
 	}
 
-	var follow *domain.Follow
+	result := &FollowMutationResult{NotificationEffects: emptyNotificationEffects()}
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+		builder := newNotificationEffectBuilder()
 		target, err := repositories.Users().GetByID(ctx, followedUserID)
 		if errors.Is(err, repo.ErrNotFound) {
 			return ErrNotFound
@@ -52,27 +66,97 @@ func (s *FollowService) Follow(ctx context.Context, followerUserID, followedUser
 		if target.IsPrivate {
 			desiredStatus = domain.FollowPending
 		}
-		follow, err = repositories.Follows().Upsert(ctx, followerUserID, followedUserID, desiredStatus, s.clock.Now())
+		existing, existingErr := repositories.Follows().Get(ctx, followerUserID, followedUserID)
+		if existingErr != nil && !errors.Is(existingErr, repo.ErrNotFound) {
+			return existingErr
+		}
+		now := s.clock.Now().UTC()
+		result.Follow, err = repositories.Follows().Upsert(ctx, followerUserID, followedUserID, desiredStatus, now)
+		if err != nil {
+			return err
+		}
+		if errors.Is(existingErr, repo.ErrNotFound) {
+			typeValue := domain.NotificationFollowStarted
+			if result.Follow.Status == domain.FollowPending {
+				typeValue = domain.NotificationFollowRequest
+			}
+			followID := result.Follow.ID
+			if err := createNotificationTx(ctx, repositories, builder, &domain.Notification{
+				RecipientUserID: followedUserID, ActorUserID: followerUserID, Type: typeValue,
+				FollowID: &followID, CreatedAt: now,
+			}); err != nil {
+				return err
+			}
+		} else if existing.Status == domain.FollowPending && result.Follow.Status == domain.FollowAccepted {
+			notification, findErr := repositories.Notifications().FindPendingByFollowID(ctx, domain.NotificationFollowRequest, result.Follow.ID)
+			if findErr != nil && !errors.Is(findErr, repo.ErrNotFound) {
+				return findErr
+			}
+			if findErr == nil {
+				if _, err := resolveNotificationTx(ctx, repositories, builder, notification, domain.NotificationAccepted, now); err != nil {
+					return err
+				}
+			}
+		}
+		result.NotificationEffects, err = builder.finish(ctx, repositories)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return follow, nil
+	return result, nil
 }
 
 func (s *FollowService) Unfollow(ctx context.Context, followerUserID, followedUserID int64) error {
-	if s == nil || s.transactions == nil || followerUserID <= 0 || followedUserID <= 0 || followerUserID == followedUserID {
-		return ErrInvalidInput
+	_, err := s.UnfollowWithEffects(ctx, followerUserID, followedUserID)
+	return err
+}
+
+func (s *FollowService) UnfollowWithEffects(ctx context.Context, followerUserID, followedUserID int64) (*NotificationEffects, error) {
+	if s == nil || s.transactions == nil || s.clock == nil || followerUserID <= 0 || followedUserID <= 0 || followerUserID == followedUserID {
+		return nil, ErrInvalidInput
 	}
-	return s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+	effects := emptyNotificationEffects()
+	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
 		if _, err := repositories.Users().GetByID(ctx, followedUserID); errors.Is(err, repo.ErrNotFound) {
 			return ErrNotFound
 		} else if err != nil {
 			return err
 		}
-		return repositories.Follows().Delete(ctx, followerUserID, followedUserID)
+		follow, err := repositories.Follows().Get(ctx, followerUserID, followedUserID)
+		if errors.Is(err, repo.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		builder := newNotificationEffectBuilder()
+		references, err := repositories.Notifications().ReferencesByFollowID(ctx, follow.ID)
+		if err != nil {
+			return err
+		}
+		var pending *domain.Notification
+		if follow.Status == domain.FollowPending {
+			pending, err = repositories.Notifications().FindPendingByFollowID(ctx, domain.NotificationFollowRequest, follow.ID)
+			if err != nil && !errors.Is(err, repo.ErrNotFound) {
+				return err
+			}
+		}
+		if err := repositories.Follows().Delete(ctx, followerUserID, followedUserID); err != nil {
+			return err
+		}
+		if pending != nil {
+			if _, err := resolveNotificationTx(ctx, repositories, builder, pending, domain.NotificationCancelled, s.clock.Now().UTC()); err != nil {
+				return err
+			}
+		}
+		for _, reference := range references {
+			builder.changed(reference.RecipientUserID, reference.ID)
+		}
+		effects, err = builder.finish(ctx, repositories)
+		return err
 	})
+	return effects, err
 }
 
 func (s *FollowService) Relationship(ctx context.Context, currentUserID, targetUserID int64) (*Relationship, error) {
@@ -98,35 +182,80 @@ func (s *FollowService) Relationship(ctx context.Context, currentUserID, targetU
 }
 
 func (s *FollowService) AcceptRequest(ctx context.Context, currentUserID, requestID int64) (*domain.Follow, error) {
+	result, err := s.AcceptRequestWithEffects(ctx, currentUserID, requestID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Follow, nil
+}
+
+func (s *FollowService) AcceptRequestWithEffects(ctx context.Context, currentUserID, requestID int64) (*FollowMutationResult, error) {
 	if s == nil || s.transactions == nil || s.clock == nil || currentUserID <= 0 || requestID <= 0 {
 		return nil, ErrInvalidInput
 	}
-	var follow *domain.Follow
+	result := &FollowMutationResult{NotificationEffects: emptyNotificationEffects()}
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
-		var err error
-		follow, err = repositories.Follows().Accept(ctx, requestID, currentUserID, s.clock.Now())
-		if errors.Is(err, repo.ErrNotFound) {
-			return ErrNotFound
+		builder := newNotificationEffectBuilder()
+		notification, notificationErr := repositories.Notifications().FindPendingByFollowID(ctx, domain.NotificationFollowRequest, requestID)
+		if notificationErr != nil && !errors.Is(notificationErr, repo.ErrNotFound) {
+			return notificationErr
 		}
+		var err error
+		result.Follow, err = acceptFollowRequestTx(ctx, repositories, requestID, currentUserID, s.clock.Now().UTC())
+		if err != nil {
+			return err
+		}
+		if notification != nil {
+			if _, err := resolveNotificationTx(ctx, repositories, builder, notification, domain.NotificationAccepted, s.clock.Now().UTC()); err != nil {
+				return err
+			}
+		}
+		result.NotificationEffects, err = builder.finish(ctx, repositories)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return follow, nil
+	return result, nil
 }
 
 func (s *FollowService) RejectRequest(ctx context.Context, currentUserID, requestID int64) error {
-	if s == nil || s.transactions == nil || currentUserID <= 0 || requestID <= 0 {
-		return ErrInvalidInput
+	_, err := s.RejectRequestWithEffects(ctx, currentUserID, requestID)
+	return err
+}
+
+func (s *FollowService) RejectRequestWithEffects(ctx context.Context, currentUserID, requestID int64) (*FollowMutationResult, error) {
+	if s == nil || s.transactions == nil || s.clock == nil || currentUserID <= 0 || requestID <= 0 {
+		return nil, ErrInvalidInput
 	}
-	return s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
-		err := repositories.Follows().Reject(ctx, requestID, currentUserID)
-		if errors.Is(err, repo.ErrNotFound) {
+	result := &FollowMutationResult{NotificationEffects: emptyNotificationEffects()}
+	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+		builder := newNotificationEffectBuilder()
+		var err error
+		result.Follow, err = repositories.Follows().GetByID(ctx, requestID)
+		if errors.Is(err, repo.ErrNotFound) || err == nil && result.Follow.FollowedUserID != currentUserID {
 			return ErrNotFound
 		}
+		if err != nil {
+			return err
+		}
+		notification, notificationErr := repositories.Notifications().FindPendingByFollowID(ctx, domain.NotificationFollowRequest, requestID)
+		if notificationErr != nil && !errors.Is(notificationErr, repo.ErrNotFound) {
+			return notificationErr
+		}
+		if err := declineFollowRequestTx(ctx, repositories, requestID, currentUserID); err != nil {
+			return err
+		}
+		if notification != nil {
+			if _, err := resolveNotificationTx(ctx, repositories, builder, notification, domain.NotificationDeclined, s.clock.Now().UTC()); err != nil {
+				return err
+			}
+			builder.changed(notification.RecipientUserID, notification.ID)
+		}
+		result.NotificationEffects, err = builder.finish(ctx, repositories)
 		return err
 	})
+	return result, err
 }
 
 func (s *FollowService) ListFollowers(ctx context.Context, currentUserID, targetUserID int64) ([]*domain.RelatedUser, error) {

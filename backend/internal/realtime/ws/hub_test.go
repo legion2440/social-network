@@ -162,6 +162,30 @@ func TestHubRoutesCreatedAndIdempotentDeliveriesWithoutDuplicates(t *testing.T) 
 	assertNoPayload(t, recipient)
 }
 
+func TestHubPublishesNotificationPayloadToEveryActiveSocketOfRecipients(t *testing.T) {
+	hub := startTestHub(t)
+	firstTab := testClient("first-tab", 1, "first-session", 0)
+	secondTab := testClient("second-tab", 1, "second-session", 0)
+	otherUser := testClient("other-user", 2, "other-session", 0)
+	registerTestClient(t, hub, firstTab)
+	registerTestClient(t, hub, secondTab)
+	registerTestClient(t, hub, otherUser)
+	drainClient(firstTab)
+	drainClient(secondTab)
+	drainClient(otherUser)
+
+	if err := hub.PublishUsers(map[int64][]byte{1: []byte(`{"type":"notification:upsert"}`)}); err != nil {
+		t.Fatalf("publish users: %v", err)
+	}
+	if got := string(readPayload(t, firstTab)); got != `{"type":"notification:upsert"}` {
+		t.Fatalf("first tab payload=%q", got)
+	}
+	if got := string(readPayload(t, secondTab)); got != `{"type":"notification:upsert"}` {
+		t.Fatalf("second tab payload=%q", got)
+	}
+	assertNoPayload(t, otherUser)
+}
+
 func TestHubRevocationSuppressesInFlightCompletionAndOnlyTargetsOneSession(t *testing.T) {
 	hub := startTestHub(t)
 	revoked := testClient("revoked", 1, "first-session", 0)

@@ -105,14 +105,14 @@ func (h *Handler) handleGroupJoinRequest(w http.ResponseWriter, r *http.Request)
 	}
 	current, _ := CurrentUserFromContext(r.Context())
 	var (
-		group *domain.Group
-		err   error
+		result *service.GroupMutationResult
+		err    error
 	)
 	switch r.Method {
 	case http.MethodPost:
-		group, err = h.groups.RequestJoin(r.Context(), current.ID, groupID)
+		result, err = h.groups.RequestJoinWithEffects(r.Context(), current.ID, groupID)
 	case http.MethodDelete:
-		group, err = h.groups.CancelJoinRequest(r.Context(), current.ID, groupID)
+		result, err = h.groups.CancelJoinRequestWithEffects(r.Context(), current.ID, groupID)
 	default:
 		w.Header().Set("Allow", http.MethodPost+", "+http.MethodDelete)
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -121,7 +121,8 @@ func (h *Handler) handleGroupJoinRequest(w http.ResponseWriter, r *http.Request)
 	if h.handleGroupServiceError(w, err) {
 		return
 	}
-	writeJSON(w, http.StatusOK, newGroupResponse(group))
+	h.publishNotificationEffects(result.NotificationEffects)
+	writeJSON(w, http.StatusOK, newGroupResponse(result.Group))
 }
 
 func (h *Handler) handleGroupJoinRequests(w http.ResponseWriter, r *http.Request) {
@@ -175,13 +176,13 @@ func (h *Handler) handleOwnerGroupTransition(w http.ResponseWriter, r *http.Requ
 	}
 	current, _ := CurrentUserFromContext(r.Context())
 	var (
-		group *domain.Group
-		err   error
+		result *service.GroupMutationResult
+		err    error
 	)
 	if accept {
-		group, err = h.groups.AcceptJoinRequest(r.Context(), current.ID, groupID, userID)
+		result, err = h.groups.AcceptJoinRequestWithEffects(r.Context(), current.ID, groupID, userID)
 	} else {
-		group, err = h.groups.RejectJoinRequest(r.Context(), current.ID, groupID, userID)
+		result, err = h.groups.RejectJoinRequestWithEffects(r.Context(), current.ID, groupID, userID)
 	}
 	if h.handleGroupServiceError(w, err) {
 		return
@@ -189,7 +190,8 @@ func (h *Handler) handleOwnerGroupTransition(w http.ResponseWriter, r *http.Requ
 	if accept && h.hub != nil {
 		h.hub.GroupAccessChanged(groupID, userID, true)
 	}
-	writeJSON(w, http.StatusOK, newGroupResponse(group))
+	h.publishNotificationEffects(result.NotificationEffects)
+	writeJSON(w, http.StatusOK, newGroupResponse(result.Group))
 }
 
 func (h *Handler) handleGroupInvitations(w http.ResponseWriter, r *http.Request) {
@@ -219,11 +221,12 @@ func (h *Handler) handleGroupInvitations(w http.ResponseWriter, r *http.Request)
 		if handleGroupJSONReadError(w, err) {
 			return
 		}
-		group, err := h.groups.Invite(r.Context(), current.ID, groupID, userID)
+		result, err := h.groups.InviteWithEffects(r.Context(), current.ID, groupID, userID)
 		if h.handleGroupServiceError(w, err) {
 			return
 		}
-		writeJSON(w, http.StatusOK, newGroupResponse(group))
+		h.publishNotificationEffects(result.NotificationEffects)
+		writeJSON(w, http.StatusOK, newGroupResponse(result.Group))
 	default:
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -256,13 +259,13 @@ func (h *Handler) handleOwnInvitationTransition(w http.ResponseWriter, r *http.R
 	}
 	current, _ := CurrentUserFromContext(r.Context())
 	var (
-		group *domain.Group
-		err   error
+		result *service.GroupMutationResult
+		err    error
 	)
 	if accept {
-		group, err = h.groups.AcceptInvitation(r.Context(), current.ID, groupID)
+		result, err = h.groups.AcceptInvitationWithEffects(r.Context(), current.ID, groupID)
 	} else {
-		group, err = h.groups.DeclineInvitation(r.Context(), current.ID, groupID)
+		result, err = h.groups.DeclineInvitationWithEffects(r.Context(), current.ID, groupID)
 	}
 	if h.handleGroupServiceError(w, err) {
 		return
@@ -270,7 +273,8 @@ func (h *Handler) handleOwnInvitationTransition(w http.ResponseWriter, r *http.R
 	if accept && h.hub != nil {
 		h.hub.GroupAccessChanged(groupID, current.ID, true)
 	}
-	writeJSON(w, http.StatusOK, newGroupResponse(group))
+	h.publishNotificationEffects(result.NotificationEffects)
+	writeJSON(w, http.StatusOK, newGroupResponse(result.Group))
 }
 
 func (h *Handler) handleGroupMembership(w http.ResponseWriter, r *http.Request) {
@@ -285,14 +289,15 @@ func (h *Handler) handleGroupMembership(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	current, _ := CurrentUserFromContext(r.Context())
-	group, err := h.groups.Leave(r.Context(), current.ID, groupID)
+	result, err := h.groups.LeaveWithEffects(r.Context(), current.ID, groupID)
 	if h.handleGroupServiceError(w, err) {
 		return
 	}
 	if h.hub != nil {
 		h.hub.GroupAccessChanged(groupID, current.ID, false)
 	}
-	writeJSON(w, http.StatusOK, newGroupResponse(group))
+	h.publishNotificationEffects(result.NotificationEffects)
+	writeJSON(w, http.StatusOK, newGroupResponse(result.Group))
 }
 
 func (h *Handler) handleGroupInvitationInbox(w http.ResponseWriter, r *http.Request) {

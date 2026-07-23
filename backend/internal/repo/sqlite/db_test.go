@@ -45,7 +45,7 @@ func TestMigrationsRunAllTheWayDownAndBackUp(t *testing.T) {
 	if err := migrateDown(db); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
-	for _, table := range []string{"group_event_responses", "group_events", "chat_messages", "direct_conversations", "group_memberships", "groups", "post_comments", "post_selected_users", "posts", "follows", "sessions", "media", "users"} {
+	for _, table := range []string{"notification_user_states", "notifications", "group_event_responses", "group_events", "chat_messages", "direct_conversations", "group_memberships", "groups", "post_comments", "post_selected_users", "posts", "follows", "sessions", "media", "users"} {
 		if tableExists(t, db, table) {
 			t.Fatalf("table %s still exists after down migrations", table)
 		}
@@ -88,7 +88,7 @@ func TestOpenRejectsDisposableLegacyBootstrapDatabase(t *testing.T) {
 func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 
-	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "post_comments", "groups", "group_memberships", "group_events", "group_event_responses", "direct_conversations", "chat_messages", "schema_migrations"} {
+	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "post_comments", "groups", "group_memberships", "group_events", "group_event_responses", "direct_conversations", "chat_messages", "notifications", "notification_user_states", "schema_migrations"} {
 		if !tableExists(t, db, table) {
 			t.Fatalf("expected table %s", table)
 		}
@@ -152,6 +152,9 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 		{table: "group_event_responses", column: "updated_at"},
 		{table: "direct_conversations", column: "created_at"},
 		{table: "chat_messages", column: "created_at"},
+		{table: "notifications", column: "resolved_at"},
+		{table: "notifications", column: "read_at"},
+		{table: "notifications", column: "created_at"},
 	} {
 		definition := tableColumns(t, db, tableAndColumn.table)[tableAndColumn.column]
 		if definition.columnType != "INTEGER" {
@@ -200,6 +203,13 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "groups", "owner_user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "group_memberships", "group_id", "groups", "id", "CASCADE")
 	assertForeignKey(t, db, "group_memberships", "user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "notifications", "recipient_user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "notifications", "actor_user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "notifications", "follow_id", "follows", "id", "SET NULL")
+	assertForeignKey(t, db, "notifications", "group_id", "groups", "id", "SET NULL")
+	assertForeignKey(t, db, "notifications", "event_id", "group_events", "id", "SET NULL")
+	assertForeignKey(t, db, "notifications", "membership_id", "group_memberships", "id", "SET NULL")
+	assertForeignKey(t, db, "notification_user_states", "user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "group_events", "group_id", "groups", "id", "CASCADE")
 	assertForeignKey(t, db, "group_events", "creator_user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "group_event_responses", "event_id", "group_events", "id", "CASCADE")
@@ -377,6 +387,104 @@ func TestMigration11PreservesPersonalPostGraphAndAutoincrement(t *testing.T) {
 	nextCommentID, _ := commentResult.LastInsertId()
 	if nextCommentID <= 170 {
 		t.Fatalf("comment AUTOINCREMENT did not preserve deleted high ID: %d", nextCommentID)
+	}
+}
+
+func TestMigration13BackfillsNotificationStateAndPhysicalMembershipIDs(t *testing.T) {
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "migration-13.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("enable foreign keys: %v", err)
+	}
+	migrator, sourceDriver, err := newMigrator(db)
+	if err != nil {
+		t.Fatalf("new migrator: %v", err)
+	}
+	if err := migrator.Migrate(12); err != nil {
+		t.Fatalf("migrate to version 12: %v", err)
+	}
+	_ = sourceDriver.Close()
+
+	if _, err := db.Exec(`
+		INSERT INTO users (id, email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
+		VALUES
+			(1, 'notification-owner@example.com', 'hash', 'Owner', 'User', '22-07-1992', 1, 1),
+			(2, 'notification-member@example.com', 'hash', 'Member', 'User', '22-07-1992', 1, 1)
+	`); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO groups (id, owner_user_id, title, description, created_at) VALUES (1, 1, 'Group', 'Description', 1)`); err != nil {
+		t.Fatalf("seed group: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO group_memberships (group_id, user_id, status, created_at, updated_at)
+		VALUES (1, 1, 'owner', 1, 1), (1, 2, 'member', 2, 2)
+	`); err != nil {
+		t.Fatalf("seed memberships: %v", err)
+	}
+
+	migrator, sourceDriver, err = newMigrator(db)
+	if err != nil {
+		t.Fatalf("new version 13 migrator: %v", err)
+	}
+	if err := migrator.Migrate(13); err != nil {
+		t.Fatalf("migrate to version 13: %v", err)
+	}
+	_ = sourceDriver.Close()
+
+	rows, err := db.Query(`SELECT id, user_id, status FROM group_memberships ORDER BY user_id`)
+	if err != nil {
+		t.Fatalf("read memberships: %v", err)
+	}
+	defer rows.Close()
+	seenIDs := map[int64]bool{}
+	seenStatuses := map[int64]string{}
+	for rows.Next() {
+		var id, userID int64
+		var status string
+		if err := rows.Scan(&id, &userID, &status); err != nil {
+			t.Fatalf("scan membership: %v", err)
+		}
+		if id <= 0 || seenIDs[id] {
+			t.Fatalf("invalid physical membership id %d", id)
+		}
+		seenIDs[id] = true
+		seenStatuses[userID] = status
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("membership rows: %v", err)
+	}
+	if seenStatuses[1] != "owner" || seenStatuses[2] != "member" {
+		t.Fatalf("membership states not preserved: %+v", seenStatuses)
+	}
+	var stateRows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM notification_user_states WHERE revision = 0`).Scan(&stateRows); err != nil || stateRows != 2 {
+		t.Fatalf("notification state backfill: rows=%d err=%v", stateRows, err)
+	}
+
+	if _, err := db.Exec(`INSERT INTO group_memberships (id, group_id, user_id, status, created_at, updated_at) VALUES (100, 1, 2, 'member', 2, 2)`); err == nil {
+		t.Fatal("expected unique group/user membership constraint")
+	}
+	if _, err := db.Exec(`DELETE FROM group_memberships WHERE user_id = 2`); err != nil {
+		t.Fatalf("delete member: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO group_memberships (id, group_id, user_id, status, created_at, updated_at) VALUES (100, 1, 2, 'member', 3, 3)`); err != nil {
+		t.Fatalf("insert high membership id: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM group_memberships WHERE id = 100`); err != nil {
+		t.Fatalf("delete high membership id: %v", err)
+	}
+	result, err := db.Exec(`INSERT INTO group_memberships (group_id, user_id, status, created_at, updated_at) VALUES (1, 2, 'member', 4, 4)`)
+	if err != nil {
+		t.Fatalf("insert membership after deleted high id: %v", err)
+	}
+	nextID, _ := result.LastInsertId()
+	if nextID <= 100 {
+		t.Fatalf("membership AUTOINCREMENT reused a deleted lifecycle id: %d", nextID)
 	}
 }
 
@@ -565,6 +673,106 @@ func TestGroupSchemaConstraintsIndexesAndCascades(t *testing.T) {
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM group_memberships WHERE group_id = ?`, groupID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("group delete did not cascade memberships: count=%d err=%v", count, err)
+	}
+}
+
+func TestNotificationSchemaConstraintsIndexesAndCascades(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "notifications.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+	insertUser := func(email string) int64 {
+		result, err := db.Exec(`
+			INSERT INTO users (email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
+			VALUES (?, 'hash', 'Notification', 'User', '22-07-1992', 1, 1)
+		`, email)
+		if err != nil {
+			t.Fatalf("insert user: %v", err)
+		}
+		id, _ := result.LastInsertId()
+		if _, err := db.Exec(`INSERT INTO notification_user_states (user_id, revision) VALUES (?, 0)`, id); err != nil {
+			t.Fatalf("insert notification state: %v", err)
+		}
+		return id
+	}
+	actorID := insertUser("notification-actor@example.com")
+	recipientID := insertUser("notification-recipient@example.com")
+	followResult, err := db.Exec(`
+		INSERT INTO follows (follower_user_id, followed_user_id, status, created_at, updated_at)
+		VALUES (?, ?, 'pending', 1, 1)
+	`, actorID, recipientID)
+	if err != nil {
+		t.Fatalf("insert follow: %v", err)
+	}
+	followID, _ := followResult.LastInsertId()
+	groupResult, err := db.Exec(`INSERT INTO groups (owner_user_id, title, description, created_at) VALUES (?, 'Notifications', 'Description', 1)`, actorID)
+	if err != nil {
+		t.Fatalf("insert group: %v", err)
+	}
+	groupID, _ := groupResult.LastInsertId()
+	if _, err := db.Exec(`
+		INSERT INTO notifications (recipient_user_id, actor_user_id, type, follow_id, created_at)
+		VALUES (?, ?, 'follow_request', ?, 2)
+	`, recipientID, actorID, followID); err != nil {
+		t.Fatalf("insert notification: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (recipient_user_id, actor_user_id, type, follow_id, created_at)
+		VALUES (?, ?, 'follow_request', ?, 3)
+	`, recipientID, actorID, followID); err == nil {
+		t.Fatal("expected one notification per follow lifecycle")
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (recipient_user_id, actor_user_id, type, follow_id, created_at)
+		VALUES (?, ?, 'follow_started', ?, 3)
+	`, recipientID, actorID, followID); err == nil {
+		t.Fatal("expected follow request and follow-started to share one lifecycle slot")
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (recipient_user_id, actor_user_id, type, follow_id, resolution, resolved_at, created_at)
+		VALUES (?, ?, 'follow_started', ?, 'accepted', 3, 3)
+	`, recipientID, actorID, followID); err == nil {
+		t.Fatal("expected non-actionable resolution constraint")
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (recipient_user_id, actor_user_id, type, follow_id, group_id, created_at)
+		VALUES (?, ?, 'group_event', ?, ?, 3)
+	`, recipientID, actorID, followID, groupID); err == nil {
+		t.Fatal("expected source union constraint")
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (recipient_user_id, actor_user_id, type, created_at)
+		VALUES (?, ?, 'follow_started', 3)
+	`, recipientID, recipientID); err == nil {
+		t.Fatal("expected actor and recipient to differ")
+	}
+	for _, index := range []string{
+		"idx_notifications_recipient_created",
+		"idx_notifications_recipient_unread",
+		"idx_notifications_unique_follow_lifecycle",
+		"idx_notifications_unique_event_recipient",
+		"idx_notifications_unique_membership_lifecycle",
+	} {
+		if !schemaObjectExists(t, db, "index", index) {
+			t.Fatalf("missing notification index %s", index)
+		}
+	}
+	if _, err := db.Exec(`DELETE FROM follows WHERE id = ?`, followID); err != nil {
+		t.Fatalf("delete follow: %v", err)
+	}
+	var nullableFollowID sql.NullInt64
+	if err := db.QueryRow(`SELECT follow_id FROM notifications WHERE recipient_user_id = ?`, recipientID).Scan(&nullableFollowID); err != nil || nullableFollowID.Valid {
+		t.Fatalf("follow lifecycle FK was not cleared: value=%+v err=%v", nullableFollowID, err)
+	}
+	if _, err := db.Exec(`DELETE FROM users WHERE id = ?`, recipientID); err != nil {
+		t.Fatalf("delete recipient: %v", err)
+	}
+	var notificationRows, stateRows int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM notifications WHERE recipient_user_id = ?`, recipientID).Scan(&notificationRows)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM notification_user_states WHERE user_id = ?`, recipientID).Scan(&stateRows)
+	if notificationRows != 0 || stateRows != 0 {
+		t.Fatalf("recipient cascade failed: notifications=%d state=%d", notificationRows, stateRows)
 	}
 }
 
