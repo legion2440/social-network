@@ -282,6 +282,17 @@ test('date of birth inputs format digit-only values as DD-MM-YYYY', () => {
   assert.equal(component.state.editDateOfBirth, '31-12-1999');
 });
 
+test('home right rail uses the aligned top offset without moving other screens', () => {
+  const component = createComponent();
+  component.state.screen = 'feed';
+  assert.equal(component.renderVals().rightRailPaddingTop, '30px');
+
+  for (const screen of ['profile', 'groups', 'notifications']) {
+    component.state.screen = screen;
+    assert.equal(component.renderVals().rightRailPaddingTop, '24px');
+  }
+});
+
 test('directory ignores an older relationship response', async () => {
   const component = createComponent();
   const oldRequest = deferred();
