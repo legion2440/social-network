@@ -16,6 +16,11 @@ Only the frontend port is published. Caddy keeps HTTP, the session cookie, and
 WebSocket traffic same-origin. The backend image contains neither the frontend
 nor Go source code.
 
+The proxy sends exact and nested `/api`, `/ws`, and `/static/avatars` paths to
+the backend. Removed `/uploads` paths return `404` at Caddy and never reach the
+backend or the SPA fallback. Every other path is served from `/srv`, with
+`index.html` as the client-side routing fallback.
+
 ## Prerequisites
 
 - Docker Engine with the Compose plugin
@@ -182,3 +187,15 @@ go vet ./...
 cd ../frontend
 npm test
 ```
+
+## Frontend implementation
+
+The browser application uses the custom declarative `dc-runtime` framework in
+`frontend/js/runtime.js` and the `<x-dc>` template in `frontend/index.html`.
+The bundled React and ReactDOM libraries are the rendering layer used by that
+runtime; the application is not structured as a conventional React component
+tree. Users, posts, comments, groups, events, notifications, chats, and unread
+state come from the backend API rather than production fixtures.
+
+The complete API and persistence contracts are documented in
+[`backend/README.md`](backend/README.md).

@@ -1,6 +1,6 @@
 # Social Network Backend
 
-Minimal Go backend foundation adapted from the tested `forum` project.
+Go and SQLite backend for the social-network application.
 
 ## Run
 
@@ -124,12 +124,12 @@ on gender. Every full or summary user response exposes the computed
 version and changes on replacement. Placeholder URLs remain under
 `/static/avatars/`.
 
-Login accepts JSON with `email` and `password`. Authentication currently uses
-an HttpOnly, SameSite=Lax session cookie. Request token extraction is separate
-from cookie transport so a Bearer source can be added later. Multiple sessions
-per user are allowed, and logout removes only the current session. Missing
-tokens and already-absent sessions are successful no-ops; session storage
-failures return `500`.
+Login accepts JSON with `email` and `password`. Authentication uses an
+HttpOnly, SameSite=Lax session cookie. Request token extraction is separate
+from its transport, while the configured HTTP transport remains cookie-only.
+Multiple sessions per user are allowed, and logout removes only the current
+session. Missing tokens and already-absent sessions are successful no-ops;
+session storage failures return `500`.
 
 ## Own profile
 
@@ -171,10 +171,9 @@ users, media rows, foreign-owned media, and missing physical files also return
 `404`. Successful image responses include the stored MIME, actual file length,
 `X-Content-Type-Options: nosniff`, and `Cache-Control: private, no-store`.
 
-The removed `/uploads/{mediaID}` fallback is not part of the API. The frontend
-recognizes only the controlled user-avatar URL as custom, so replace keeps the
-Remove action and delete switches it off when the response returns a
-placeholder.
+The frontend recognizes only the controlled user-avatar URL as custom, so
+replace keeps the Remove action and delete switches it off when the response
+returns a placeholder.
 
 ## Followers
 
@@ -200,18 +199,21 @@ to their target through `GET /api/follow-requests`; the owner accepts one with
 ## User profiles and directory
 
 `GET /api/users/{id}` returns an authenticated user's safe profile card and
-never exposes email. Public profiles, owners, and accepted followers receive
-`can_view_profile: true`, the full profile fields, accepted follower/following
-counts, and a post count filtered through the same current post access policy
-used by profile posts. Pending followers and outsiders still receive the basic
-card for a private profile, but `can_view_profile` is false and sensitive
-fields and counts are omitted. Unknown users return `404`.
+never exposes a password hash. Public profiles, owners, and accepted followers
+receive `can_view_profile: true`, email, date of birth, optional gender/about
+fields, accepted follower/following counts, and a post count filtered through
+the same current post access policy used by profile posts. Pending followers
+and outsiders still receive the basic card for a private profile, but
+`can_view_profile` is false and email, date of birth, gender, about text, and
+counts are omitted. Directory rows and user summaries used by posts, comments,
+notifications, groups, and chats never contain email. The frontend displays
+email only for a viewable profile and gender only when it is present. Unknown
+users return `404`.
 
 `GET /api/users` is the authenticated discovery directory. It excludes the
 current user, orders by `(created_at DESC, id DESC)`, and returns viewer-aware
 user summaries plus an opaque `next_cursor`. The default limit is 20 and the
-maximum is 50. This endpoint is a directory for the current frontend step; it
-does not implement text search.
+maximum is 50. The directory does not implement text search.
 
 ## Posts
 
@@ -282,8 +284,8 @@ attachments, broken media rows, ownership mismatches, and missing files return
 `404`. Successful responses use the stored MIME, actual file length,
 `X-Content-Type-Options: nosniff`, and `Cache-Control: private, no-store`.
 Comment author summaries are viewer-aware, so group membership never exposes
-an inaccessible private custom avatar. Editing, deletion, replies, likes, and
-realtime delivery are outside this step.
+an inaccessible private custom avatar. The API does not expose comment
+editing, deletion, replies, likes, or realtime comment delivery.
 
 ## Groups
 
@@ -298,7 +300,7 @@ and the creator's `owner` membership are committed in one SQLite transaction.
 `none`. Membership changes use conditional updates or deletes against the
 expected current state. A repeated or stale transition returns `409`; owner-only
 management attempted by another user returns `403`. Owners cannot leave because
-group deletion and ownership transfer are outside this step.
+group deletion and ownership transfer are not supported.
 
 The group catalog is ordered by `(created_at DESC, id DESC)`. Members are
 ordered by `(owner_rank ASC, updated_at ASC, user_id ASC)`, with the owner first.
@@ -507,11 +509,13 @@ Implemented endpoints:
 - `GET|POST /api/groups` (authenticated cursor catalog and strict JSON creation)
 - `GET /api/groups/{id}`
 - `GET /api/groups/{id}/members`
+- `GET|POST /api/groups/{id}/posts` (owner/member list and multipart creation)
 - `POST|DELETE /api/groups/{id}/join-request`
 - `GET /api/groups/{id}/join-requests` (owner-only)
 - `POST /api/groups/{id}/join-requests/{userID}/accept` (owner-only)
 - `DELETE /api/groups/{id}/join-requests/{userID}` (owner-only)
-- `GET|POST /api/groups/{id}/invitations` (owner-only)
+- `GET /api/groups/{id}/invitations` (owner-only sent list)
+- `POST /api/groups/{id}/invitations` (owner/member invitation)
 - `POST /api/groups/{id}/invitation/accept`
 - `DELETE /api/groups/{id}/invitation`
 - `DELETE /api/groups/{id}/membership`
@@ -530,20 +534,24 @@ Implemented endpoints:
 - `GET /static/avatars/{male,female,neutral}.svg`
 - `GET /` and frontend assets (local development and browser smoke only)
 
-All other reserved API groups currently return JSON `501 Not Implemented`.
+Unknown `/api/*` paths return JSON `404 Not Found`. Avatar, post, and comment
+media are available only through their controlled routes, which enforce the
+current access policy on every read.
 
-The frontend feed, profiles, suggestions, follow controls, persisted notifications, follower
-lists, following lists, profile posts, post comments, direct chats, and group
-chats use backend IDs and live API state. Chat unread badges and read markers
-are persisted and revision-gated. Chat history paginates upward,
+The frontend uses the custom declarative `dc-runtime` application framework;
+React and ReactDOM provide its rendering layer. Feed, profiles, suggestions,
+follow controls, persisted notifications, follower lists, following lists,
+profile posts, post comments, direct chats, and group chats use backend IDs and
+live API state. Chat unread badges and read markers are persisted and
+revision-gated. Chat history paginates upward,
 reconnect reloads list/current history, optimistic sends are retryable, and
 stale responses are generation-gated across logout and access changes.
-Group-dependent mock posts, comments, and right-rail events have been removed;
-the Group Events tab uses persisted backend events and RSVP, and the
+Production prototype identities and mock post/comment mutation paths have been
+removed. The Group Events tab uses persisted backend events and RSVP, and the
 Notifications screen uses persisted history, unread state, actions, pagination,
 and realtime refresh hints.
 
-The local frontend file server does not replace the planned Docker topology.
-The final setup keeps the backend private and serves the frontend through a
-separate frontend/reverse-proxy container; the backend static handler is only a
-development convenience and does not need to be used there.
+The production Docker topology keeps the backend private and serves the
+frontend through a separate Caddy frontend/reverse-proxy container. The
+backend static handler is a local-development and browser-smoke convenience
+and is disabled in the backend container.
