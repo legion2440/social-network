@@ -3661,6 +3661,7 @@ class Component extends DCLogic {
       isGroups: s.screen === 'groups',
       isGroup: s.screen === 'group', isChat: s.screen === 'chat', isNotifs: s.screen === 'notifications',
       rightRail: ['feed', 'profile', 'groups', 'notifications'].indexOf(s.screen) >= 0,
+      railHeaderSpacer: ['feed', 'groups', 'notifications'].indexOf(s.screen) >= 0,
       navItems, me,
       themeIcon: s.theme === 'light' ? IC.moon : IC.sun,
       themeLabel: s.theme === 'light' ? 'Dark mode' : 'Light mode',
