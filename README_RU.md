@@ -4,7 +4,9 @@
 
 Приложение поддерживает публичные и приватные профили, подписки, посты с контролем аудитории, медиа-вложения, группы, события, сохраняемые уведомления, личные и групповые чаты, а также счётчики непрочитанного.
 
-[English version](README.md) · [Контракты backend](backend/README.md)
+· [English version](README.md) 
+· [Документация backend](backend/README_RU.md) 
+· [Документация frontend](frontend/README_RU.md)
 
 ## 📋 Оглавление
 
@@ -372,19 +374,19 @@ sqlite3 var/social-network.db \
 
 Backend environment variables:
 
-| Переменная | Значение по умолчанию | Назначение |
-|---|---|---|
-| `SOCIAL_NETWORK_HTTP_ADDR` | `127.0.0.1:8080` | адрес backend |
-| `SOCIAL_NETWORK_DB_PATH` | `var/social-network.db` | путь к SQLite |
-| `SOCIAL_NETWORK_UPLOAD_DIR` | `var/uploads` | каталог uploaded files |
-| `SOCIAL_NETWORK_FRONTEND_DIR` | `../frontend` | локальный static frontend |
-| `SOCIAL_NETWORK_COOKIE_SECURE` | `false` | Secure-атрибут session cookie |
+| Переменная                     | Значение по умолчанию   | Назначение                    |
+|--------------------------------|-------------------------|-------------------------------|
+| `SOCIAL_NETWORK_HTTP_ADDR`     | `127.0.0.1:8080`        | адрес backend                 |
+| `SOCIAL_NETWORK_DB_PATH`       | `var/social-network.db` | путь к SQLite                 |
+| `SOCIAL_NETWORK_UPLOAD_DIR`    | `var/uploads`           | каталог uploaded files        |
+| `SOCIAL_NETWORK_FRONTEND_DIR`  | `../frontend`           | локальный static frontend     |
+| `SOCIAL_NETWORK_COOKIE_SECURE` | `false`                 | Secure-атрибут session cookie |
 
 Настройка host-порта Compose:
 
-| Переменная | Значение по умолчанию | Назначение |
-|---|---|---|
-| `SOCIAL_NETWORK_PORT` | `8080` | опубликованный frontend port |
+| Переменная            | Значение по умолчанию | Назначение                   |
+|-----------------------|-----------------------|------------------------------|
+| `SOCIAL_NETWORK_PORT` | `8080`                | опубликованный frontend port |
 
 Docker заменяет backend paths на постоянные `/data` mounts и отключает выдачу frontend через Go server.
 

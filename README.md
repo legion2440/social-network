@@ -4,7 +4,9 @@ A full-stack Facebook-like social network built with Go, SQLite, WebSocket, a cu
 
 The application supports public and private profiles, followers, audience-controlled posts, media attachments, groups, events, persisted notifications, direct and group chats, and unread state.
 
-[Русская версия](README_RU.md) · [Backend contracts](backend/README.md)
+· [Русская версия](README_RU.md) 
+· [Backend documentation](backend/README.md) 
+· [Frontend documentation](frontend/README.md)
 
 ## 📋 TOC
 
@@ -370,19 +372,19 @@ Expected current version:
 
 Backend environment variables:
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `SOCIAL_NETWORK_HTTP_ADDR` | `127.0.0.1:8080` | backend listen address |
-| `SOCIAL_NETWORK_DB_PATH` | `var/social-network.db` | SQLite database path |
-| `SOCIAL_NETWORK_UPLOAD_DIR` | `var/uploads` | uploaded file directory |
-| `SOCIAL_NETWORK_FRONTEND_DIR` | `../frontend` | local static frontend directory |
-| `SOCIAL_NETWORK_COOKIE_SECURE` | `false` | Secure attribute for the session cookie |
+| Variable                       | Default                 | Purpose                                 |
+|--------------------------------|-------------------------|-----------------------------------------|
+| `SOCIAL_NETWORK_HTTP_ADDR`     | `127.0.0.1:8080`        | backend listen address                  |
+| `SOCIAL_NETWORK_DB_PATH`       | `var/social-network.db` | SQLite database path                    |
+| `SOCIAL_NETWORK_UPLOAD_DIR`    | `var/uploads`           | uploaded file directory                 |
+| `SOCIAL_NETWORK_FRONTEND_DIR`  | `../frontend`           | local static frontend directory         |
+| `SOCIAL_NETWORK_COOKIE_SECURE` | `false`                 | Secure attribute for the session cookie |
 
 Compose-specific host setting:
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `SOCIAL_NETWORK_PORT` | `8080` | published frontend host port |
+| Variable              | Default | Purpose                      |
+|-----------------------|---------|------------------------------|
+| `SOCIAL_NETWORK_PORT` | `8080`  | published frontend host port |
 
 Docker overrides backend paths to persistent `/data` mounts and disables backend static frontend serving.
 
