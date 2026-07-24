@@ -201,6 +201,39 @@ test('feed reset starts a new generation while the previous request is pending',
   assert.equal(component.state.feedPending, false);
 });
 
+test('full profile exposes email and optional gender while locked profile hides both', () => {
+  const component = createComponent();
+  component.state.screen = 'profile';
+  component.state.profileId = 2;
+  component.state.profileReady = true;
+  component.state.apiUsersByID = component.mergeAPIUsers([Object.assign(rawUser(2), {
+    email: 'visible@example.com',
+    date_of_birth: '24-07-1992',
+    gender: 'female',
+    about_me: 'Visible profile',
+    can_view_profile: true
+  })]);
+
+  let view = component.renderVals();
+  assert.equal(view.pCanView, true);
+  assert.equal(view.pShowEmail, true);
+  assert.equal(view.pShowGender, true);
+  assert.equal(view.pGenderLabel, 'Female');
+
+  component.state.apiUsersByID = component.mergeAPIUsers([Object.assign(rawUser(2, 'none', {
+    isPrivate: true,
+    canView: false
+  }), {
+    can_view_profile: false
+  })]);
+  view = component.renderVals();
+  assert.equal(view.pCanView, false);
+  assert.equal(view.pShowEmail, false);
+  assert.equal(view.pShowGender, false);
+  assert.equal(component.apiUser(2).email, '');
+  assert.equal(component.apiUser(2).gender, '');
+});
+
 test('directory ignores an older relationship response', async () => {
   const component = createComponent();
   const oldRequest = deferred();

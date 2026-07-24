@@ -1693,8 +1693,8 @@ func TestUserProfileReadUsesCurrentPrivacyAndAccessiblePostCounts(t *testing.T) 
 		if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
 			t.Fatalf("%s: decode profile fields: %v", label, err)
 		}
-		if _, leaked := fields["email"]; leaked {
-			t.Fatalf("%s: profile leaked email: %s", label, rec.Body.Bytes())
+		if _, leaked := fields["password_hash"]; leaked {
+			t.Fatalf("%s: profile leaked password hash: %s", label, rec.Body.Bytes())
 		}
 		return &response, fields
 	}
@@ -1707,10 +1707,11 @@ func TestUserProfileReadUsesCurrentPrivacyAndAccessiblePostCounts(t *testing.T) 
 		{label: "accepted", token: acceptedToken},
 	} {
 		response, fields := readProfile(viewer.label, viewer.token, http.StatusOK)
-		if !response.CanViewProfile || response.DateOfBirth == nil || response.PostsCount == nil || *response.PostsCount != 3 {
+		if !response.CanViewProfile || response.Email == nil || *response.Email != "profile-read-owner@example.com" ||
+			response.DateOfBirth == nil || response.PostsCount == nil || *response.PostsCount != 3 {
 			t.Fatalf("%s: unexpected full profile: %+v", viewer.label, response)
 		}
-		for _, field := range []string{"gender", "about_me", "followers_count", "following_count"} {
+		for _, field := range []string{"email", "gender", "about_me", "followers_count", "following_count"} {
 			if _, exists := fields[field]; !exists {
 				t.Fatalf("%s: visible profile omitted %q: %s", viewer.label, field, fields)
 			}
@@ -1728,7 +1729,7 @@ func TestUserProfileReadUsesCurrentPrivacyAndAccessiblePostCounts(t *testing.T) 
 		if response.CanViewProfile {
 			t.Fatalf("%s unexpectedly received full private profile", viewer.label)
 		}
-		for _, field := range []string{"date_of_birth", "gender", "about_me", "posts_count", "followers_count", "following_count"} {
+		for _, field := range []string{"email", "date_of_birth", "gender", "about_me", "posts_count", "followers_count", "following_count"} {
 			if _, exists := fields[field]; exists {
 				t.Fatalf("%s: locked profile leaked %q: %s", viewer.label, field, fields)
 			}
@@ -1737,7 +1738,9 @@ func TestUserProfileReadUsesCurrentPrivacyAndAccessiblePostCounts(t *testing.T) 
 
 	setProfilePrivacy(t, env, ownerToken, false)
 	publicOutsider, _ := readProfile("public outsider", outsiderToken, http.StatusOK)
-	if !publicOutsider.CanViewProfile || publicOutsider.PostsCount == nil || *publicOutsider.PostsCount != 1 {
+	if !publicOutsider.CanViewProfile || publicOutsider.Email == nil ||
+		*publicOutsider.Email != "profile-read-owner@example.com" ||
+		publicOutsider.PostsCount == nil || *publicOutsider.PostsCount != 1 {
 		t.Fatalf("public outsider count must use post access policy: %+v", publicOutsider)
 	}
 	publicAccepted, _ := readProfile("public accepted", acceptedToken, http.StatusOK)
@@ -1780,6 +1783,10 @@ func TestUserDirectoryPaginatesAndReturnsViewerRelationships(t *testing.T) {
 		}
 		var response userDirectoryResponse
 		if wantCode == http.StatusOK {
+			if bytes.Contains(rec.Body.Bytes(), []byte(`"email"`)) ||
+				bytes.Contains(rec.Body.Bytes(), []byte(`"password_hash"`)) {
+				t.Fatalf("directory leaked private credentials: %s", rec.Body.Bytes())
+			}
 			if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 				t.Fatalf("decode directory page: %v", err)
 			}

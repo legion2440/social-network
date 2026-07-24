@@ -111,6 +111,7 @@ type userProfileResponse struct {
 	AvatarURL      string          `json:"avatar_url"`
 	IsPrivate      bool            `json:"is_private"`
 	CanViewProfile bool            `json:"can_view_profile"`
+	Email          *string         `json:"email,omitempty"`
 	DateOfBirth    *string         `json:"date_of_birth,omitempty"`
 	Gender         **domain.Gender `json:"gender,omitempty"`
 	AboutMe        **string        `json:"about_me,omitempty"`
@@ -136,6 +137,7 @@ func newUserProfileResponse(profile *service.UserProfile) *userProfileResponse {
 	if !profile.CanView {
 		return response
 	}
+	response.Email = &user.Email
 	response.DateOfBirth = &user.DateOfBirth
 	response.Gender = &user.Gender
 	response.AboutMe = &user.AboutMe

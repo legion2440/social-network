@@ -356,6 +356,7 @@
             <div style="display:flex;gap:18px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font:600 12.5px 'Manrope',sans-serif;color:var(--text3);flex-wrap:wrap">
               <sc-if value="{{pShowEmail}}" hint-placeholder-val="{{false}}"><span style="display:flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6.5h17v12h-17zM3.5 7l8.5 6 8.5-6"></path></svg>{{pUser.email}}</span></sc-if>
               <span style="display:flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v3m8-3v3M3.5 9h17m-15-3.5h13a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z"></path></svg>Born {{pUser.dob}}</span>
+              <sc-if value="{{pShowGender}}" hint-placeholder-val="{{false}}"><span style="display:flex;align-items:center;gap:6px">Gender: {{pGenderLabel}}</span></sc-if>
             </div>
           </sc-if>
         </div>

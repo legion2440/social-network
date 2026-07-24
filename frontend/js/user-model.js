@@ -86,6 +86,7 @@
     var isCurrent = Number(currentUserID) === id;
     var canViewPrivate = isCurrent || !user.private || relationship.status === 'accepted';
     if (user.canViewProfile === false || !canViewPrivate) {
+      user.email = '';
       user.dob = '';
       user.gender = '';
       user.aboutMe = '';
