@@ -36,6 +36,58 @@ function formatDateOfBirthInput(value) {
   return digits.slice(0, 2) + '-' + digits.slice(2, 4) + '-' + digits.slice(4);
 }
 
+function formatDateTimeInput(value) {
+  let digits = String(value || '').replace(/\D/g, '').slice(0, 12);
+  if (digits.length >= 2) {
+    const day = Number(digits.slice(0, 2));
+    if (day < 1 || day > 31) digits = digits.slice(0, 1);
+  }
+  if (digits.length >= 4) {
+    const month = Number(digits.slice(2, 4));
+    if (month < 1 || month > 12) digits = digits.slice(0, 3);
+  }
+  if (digits.length >= 10) {
+    const hour = Number(digits.slice(8, 10));
+    if (hour > 23) digits = digits.slice(0, 9);
+  }
+  if (digits.length >= 12) {
+    const minute = Number(digits.slice(10, 12));
+    if (minute > 59) digits = digits.slice(0, 11);
+  }
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return digits.slice(0, 2) + '-' + digits.slice(2);
+  if (digits.length <= 8) {
+    return digits.slice(0, 2) + '-' + digits.slice(2, 4) + '-' + digits.slice(4);
+  }
+  if (digits.length <= 10) {
+    return digits.slice(0, 2) + '-' + digits.slice(2, 4) + '-' + digits.slice(4, 8) +
+      ' ' + digits.slice(8);
+  }
+  return digits.slice(0, 2) + '-' + digits.slice(2, 4) + '-' + digits.slice(4, 8) +
+    ' ' + digits.slice(8, 10) + ':' + digits.slice(10);
+}
+
+function parseLocalDateTime(value) {
+  const match = /^(\d{2})-(\d{2})-(\d{4}) (\d{2}):(\d{2})$/.exec(String(value || ''));
+  if (!match) return null;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) {
+    return null;
+  }
+  const result = new Date(0);
+  result.setFullYear(year, month - 1, day);
+  result.setHours(hour, minute, 0, 0);
+  if (
+    result.getFullYear() !== year || result.getMonth() !== month - 1 || result.getDate() !== day ||
+    result.getHours() !== hour || result.getMinutes() !== minute
+  ) return null;
+  return result;
+}
+
 function emptyRegistrationForm() {
   return {
     authEmail: '', authPassword: '',
@@ -1676,12 +1728,12 @@ class Component extends DCLogic {
   createGroupEvent = async () => {
     const groupID = Number(this.state.groupId);
     const group = this.state.apiGroupsByID[String(groupID)];
-    const startsAt = new Date(this.state.groupEventStartsAt);
+    const startsAt = parseLocalDateTime(this.state.groupEventStartsAt);
     if (
       !Number.isInteger(groupID) || groupID <= 0 || this.groupAccessIsRevoked(groupID) ||
       !group || (group.state !== 'owner' && group.state !== 'member') ||
       this.state.groupEventCreatePending || !this.state.groupEventTitle.trim() ||
-      !this.state.groupEventDescription.trim() || Number.isNaN(startsAt.getTime())
+      !this.state.groupEventDescription.trim() || !startsAt
     ) return;
     const authGeneration = this.authGate.current();
     const accessGate = this.groupGeneration(groupID);
@@ -3489,9 +3541,9 @@ class Component extends DCLogic {
         notGoing: () => this.respondToGroupEvent(event.id, 'not_going')
       };
     });
-    const groupEventStartsAtDate = new Date(s.groupEventStartsAt);
+    const groupEventStartsAtDate = parseLocalDateTime(s.groupEventStartsAt);
     const groupEventCreateDisabled = s.groupEventCreatePending || !s.groupEventTitle.trim() ||
-      !s.groupEventDescription.trim() || Number.isNaN(groupEventStartsAtDate.getTime());
+      !s.groupEventDescription.trim() || !groupEventStartsAtDate;
 
     // chat
     const chatMeta = chat => {
@@ -3862,7 +3914,10 @@ class Component extends DCLogic {
       groupEventDescription: s.groupEventDescription,
       onGroupEventDescription: (event) => this.setState({ groupEventDescription: event.target.value, groupEventCreateError: '' }),
       groupEventStartsAt: s.groupEventStartsAt,
-      onGroupEventStartsAt: (event) => this.setState({ groupEventStartsAt: event.target.value, groupEventCreateError: '' }),
+      onGroupEventStartsAt: (event) => this.setState({
+        groupEventStartsAt: formatDateTimeInput(event.target.value),
+        groupEventCreateError: ''
+      }),
       groupEventCreatePending: s.groupEventCreatePending,
       groupEventCreateHasError: !!s.groupEventCreateError,
       groupEventCreateError: s.groupEventCreateError,

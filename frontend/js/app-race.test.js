@@ -282,6 +282,53 @@ test('date of birth inputs format digit-only values as DD-MM-YYYY', () => {
   assert.equal(component.state.editDateOfBirth, '31-12-1999');
 });
 
+test('group event datetime input is masked and rejects impossible local dates', () => {
+  const component = createComponent();
+  component.state.groupEventTitle = 'Event';
+  component.state.groupEventDescription = 'Description';
+  let view = component.renderVals();
+
+  view.onGroupEventStartsAt({ target: { value: '020220301530' } });
+  assert.equal(component.state.groupEventStartsAt, '02-02-2030 15:30');
+  assert.equal(component.renderVals().groupEventCreateDisabled, false);
+
+  view = component.renderVals();
+  view.onGroupEventStartsAt({ target: { value: '32' } });
+  assert.equal(component.state.groupEventStartsAt, '3');
+
+  view = component.renderVals();
+  view.onGroupEventStartsAt({ target: { value: '00' } });
+  assert.equal(component.state.groupEventStartsAt, '0');
+
+  view = component.renderVals();
+  view.onGroupEventStartsAt({ target: { value: '0213' } });
+  assert.equal(component.state.groupEventStartsAt, '02-1');
+
+  view = component.renderVals();
+  view.onGroupEventStartsAt({ target: { value: '0212' } });
+  assert.equal(component.state.groupEventStartsAt, '02-12');
+
+  view = component.renderVals();
+  view.onGroupEventStartsAt({ target: { value: '31/02/2030 15:30' } });
+  assert.equal(component.state.groupEventStartsAt, '31-02-2030 15:30');
+  assert.equal(component.renderVals().groupEventCreateDisabled, true);
+
+  view = component.renderVals();
+  view.onGroupEventStartsAt({ target: { value: '29-02-2032 24:00' } });
+  assert.equal(component.state.groupEventStartsAt, '29-02-2032 2');
+  assert.equal(component.renderVals().groupEventCreateDisabled, true);
+
+  view = component.renderVals();
+  view.onGroupEventStartsAt({ target: { value: '29-02-2032 23:60' } });
+  assert.equal(component.state.groupEventStartsAt, '29-02-2032 23:6');
+  assert.equal(component.renderVals().groupEventCreateDisabled, true);
+
+  view = component.renderVals();
+  view.onGroupEventStartsAt({ target: { value: '29-02-2032 23:59' } });
+  assert.equal(component.state.groupEventStartsAt, '29-02-2032 23:59');
+  assert.equal(component.renderVals().groupEventCreateDisabled, false);
+});
+
 test('directory ignores an older relationship response', async () => {
   const component = createComponent();
   const oldRequest = deferred();
@@ -1520,7 +1567,7 @@ test('authoritative created event survives an older list and is sorted by start 
   }))];
   component.state.groupEventTitle = 'New event';
   component.state.groupEventDescription = 'New description';
-  component.state.groupEventStartsAt = '2026-07-25T12:00';
+  component.state.groupEventStartsAt = '25-07-2026 12:00';
   global.AuthAPI.groupEvents = () => staleList.promise;
   global.AuthAPI.createGroupEvent = async () => rawGroupEvent(72, 7, 1, {
     startsAt: '2026-07-25T12:00:00Z'
@@ -1643,7 +1690,7 @@ test('rejected event create from group A cannot write into group B composer', as
   };
   component.state.groupEventTitle = 'Group A event';
   component.state.groupEventDescription = 'Group A description';
-  component.state.groupEventStartsAt = '2026-07-25T12:00';
+  component.state.groupEventStartsAt = '25-07-2026 12:00';
   global.AuthAPI.createGroupEvent = () => create.promise;
   global.AuthAPI.group = async () => rawGroup(8, 'member', 2, 2);
   global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
@@ -1654,7 +1701,7 @@ test('rejected event create from group A cannot write into group B composer', as
   component.openGroup(8);
   component.setState({
     groupEventTitle: 'Group B event', groupEventDescription: 'Group B description',
-    groupEventStartsAt: '2026-07-26T12:00', groupEventCreatePending: false, groupEventCreateError: ''
+    groupEventStartsAt: '26-07-2026 12:00', groupEventCreatePending: false, groupEventCreateError: ''
   });
   create.reject(new Error('group A network failure'));
   await pendingCreate;
@@ -1674,7 +1721,7 @@ test('chat remove clears events and ignores pending list and RSVP responses', as
   component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(71, 7, 2))];
   component.state.groupEventTitle = 'Discarded event';
   component.state.groupEventDescription = 'Discarded description';
-  component.state.groupEventStartsAt = '2026-07-25T12:00';
+  component.state.groupEventStartsAt = '25-07-2026 12:00';
   global.AuthAPI.groupEvents = () => list.promise;
   global.AuthAPI.respondToGroupEvent = () => response.promise;
 
@@ -1723,7 +1770,7 @@ test('logout invalidates pending event list create and RSVP operations', async (
   component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(71, 7, 2))];
   component.state.groupEventTitle = 'Pending event';
   component.state.groupEventDescription = 'Pending description';
-  component.state.groupEventStartsAt = '2026-07-25T12:00';
+  component.state.groupEventStartsAt = '25-07-2026 12:00';
   global.AuthAPI.groupEvents = () => list.promise;
   global.AuthAPI.createGroupEvent = () => create.promise;
   global.AuthAPI.respondToGroupEvent = () => response.promise;
