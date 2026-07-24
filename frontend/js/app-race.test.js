@@ -234,6 +234,36 @@ test('full profile exposes email and optional gender while locked profile hides 
   assert.equal(component.apiUser(2).gender, '');
 });
 
+test('registration avatar preview replaces and releases object URLs', () => {
+  const component = createComponent();
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+  const revoked = [];
+  let nextPreview = 0;
+  URL.createObjectURL = () => 'blob:registration-' + (++nextPreview);
+  URL.revokeObjectURL = value => revoked.push(value);
+
+  try {
+    component.onRegistrationAvatar({ target: { files: [{ name: 'first.webp' }] } });
+    let view = component.renderVals();
+    assert.equal(component.state.regAvatarName, 'first.webp');
+    assert.equal(view.registrationAvatarHasPreview, true);
+    assert.equal(view.registrationAvatarPreviewURL, 'blob:registration-1');
+
+    component.onRegistrationAvatar({ target: { files: [{ name: 'second.png' }] } });
+    view = component.renderVals();
+    assert.deepEqual(revoked, ['blob:registration-1']);
+    assert.equal(component.state.regAvatarName, 'second.png');
+    assert.equal(view.registrationAvatarPreviewURL, 'blob:registration-2');
+
+    component.componentWillUnmount();
+    assert.deepEqual(revoked, ['blob:registration-1', 'blob:registration-2']);
+  } finally {
+    URL.createObjectURL = originalCreateObjectURL;
+    URL.revokeObjectURL = originalRevokeObjectURL;
+  }
+});
+
 test('directory ignores an older relationship response', async () => {
   const component = createComponent();
   const oldRequest = deferred();

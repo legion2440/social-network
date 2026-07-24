@@ -34,7 +34,8 @@ function emptyRegistrationForm() {
   return {
     authEmail: '', authPassword: '',
     regFirstName: '', regLastName: '', regDateOfBirth: '', regGender: '',
-    regNickname: '', regAboutMe: '', regAvatar: null, regAvatarName: ''
+    regNickname: '', regAboutMe: '', regAvatar: null, regAvatarName: '',
+    regAvatarPreviewURL: ''
   };
 }
 
@@ -243,6 +244,7 @@ class Component extends DCLogic {
     if (typeof document !== 'undefined' && document && typeof document.removeEventListener === 'function') {
       document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     }
+    this.revokeRegistrationAvatarPreview(this.state && this.state.regAvatarPreviewURL);
     this.disposeAllCommentPreviews();
     this.stopRealtime();
   }
@@ -359,6 +361,17 @@ class Component extends DCLogic {
   disposeAllCommentPreviews() {
     const entries = (this.state && this.state.commentsByPostID) || {};
     Object.keys(entries).forEach(key => this.revokeCommentPreview(entries[key] && entries[key].mediaPreviewURL));
+  }
+
+  revokeRegistrationAvatarPreview(previewURL) {
+    if (
+      previewURL &&
+      typeof URL !== 'undefined' &&
+      URL &&
+      typeof URL.revokeObjectURL === 'function'
+    ) {
+      URL.revokeObjectURL(previewURL);
+    }
   }
 
   commentMediaInputID(postID) {
@@ -1046,7 +1059,18 @@ class Component extends DCLogic {
 
   onRegistrationAvatar = (event) => {
     const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
-    this.setState({ regAvatar: file, regAvatarName: file ? file.name : '' });
+    this.revokeRegistrationAvatarPreview(this.state.regAvatarPreviewURL);
+    const previewURL = (
+      file &&
+      typeof URL !== 'undefined' &&
+      URL &&
+      typeof URL.createObjectURL === 'function'
+    ) ? URL.createObjectURL(file) : '';
+    this.setState({
+      regAvatar: file,
+      regAvatarName: file ? file.name : '',
+      regAvatarPreviewURL: previewURL
+    });
   };
 
   submitAuth = async (event) => {
@@ -1084,9 +1108,13 @@ class Component extends DCLogic {
         profilePrivacyPending: false, profilePrivacyError: ''
       };
       Object.assign(authenticatedState, emptyNotificationState());
+      const registrationAvatarPreviewURL = s.authMode === 'register' ? s.regAvatarPreviewURL : '';
       if (s.authMode === 'register') Object.assign(authenticatedState, emptyRegistrationForm());
       Object.assign(authenticatedState, emptyProfileEditor());
-      this.setState(authenticatedState, () => this.startAuthenticatedRealtime(authGeneration));
+      this.setState(authenticatedState, () => {
+        this.revokeRegistrationAvatarPreview(registrationAvatarPreviewURL);
+        this.startAuthenticatedRealtime(authGeneration);
+      });
       this.loadFeed(true);
       this.loadPostFollowers();
       this.loadDirectory();
@@ -1145,6 +1173,7 @@ class Component extends DCLogic {
       this.revokedChatKeys.clear();
       this.revokedGroupAccessIDs.clear();
       this.stopRealtime();
+      this.revokeRegistrationAvatarPreview(this.state.regAvatarPreviewURL);
       this.disposeAllCommentPreviews();
       Object.keys(this.groupGenerationsByID).forEach(key => this.groupGenerationsByID[key].begin());
       this.groupGenerationsByID = {};
@@ -3652,6 +3681,9 @@ class Component extends DCLogic {
       regNickname: s.regNickname, onRegNickname: (e) => this.setState({ regNickname: e.target.value }),
       regAboutMe: s.regAboutMe, onRegAboutMe: (e) => this.setState({ regAboutMe: e.target.value }),
       avatarButtonLabel: s.regAvatarName || 'avatar',
+      registrationAvatarHasPreview: !!s.regAvatarPreviewURL,
+      registrationAvatarMissingPreview: !s.regAvatarPreviewURL,
+      registrationAvatarPreviewURL: s.regAvatarPreviewURL,
       pickRegistrationAvatar: this.pickRegistrationAvatar,
       onRegistrationAvatar: this.onRegistrationAvatar,
       submitAuth: this.submitAuth,
