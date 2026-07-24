@@ -465,16 +465,7 @@ const chatMessageSelect = `
 			ELSE m.group_id
 		END,
 		sender.id, sender.first_name, sender.last_name, sender.nickname,
-		CASE
-			WHEN sender.avatar_media_id IS NULL THEN NULL
-			WHEN sender.id = ? OR sender.is_private = 0 OR EXISTS (
-				SELECT 1 FROM follows sender_avatar_follow
-				WHERE sender_avatar_follow.follower_user_id = ?
-					AND sender_avatar_follow.followed_user_id = sender.id
-					AND sender_avatar_follow.status = 'accepted'
-			) THEN sender.avatar_media_id
-			ELSE NULL
-		END,
+		sender.avatar_media_id,
 		sender.is_private
 	FROM chat_messages m
 	LEFT JOIN direct_conversations dc ON dc.id = m.direct_conversation_id
@@ -486,7 +477,7 @@ func (r *ChatRepo) GetMessageByClientID(ctx context.Context, senderUserID int64,
 		return nil, repo.ErrNotFound
 	}
 	query := chatMessageSelect + ` WHERE m.sender_user_id = ? AND m.client_message_id = ?`
-	return scanChatMessage(r.db.QueryRowContext(ctx, query, senderUserID, senderUserID, senderUserID, senderUserID, clientMessageID))
+	return scanChatMessage(r.db.QueryRowContext(ctx, query, senderUserID, senderUserID, clientMessageID))
 }
 
 func (r *ChatRepo) ListDirectMessages(ctx context.Context, viewerUserID, targetUserID int64, cursor *domain.ChatMessageCursor, limit int) ([]*domain.ChatMessage, error) {
@@ -497,7 +488,7 @@ func (r *ChatRepo) ListDirectMessages(ctx context.Context, viewerUserID, targetU
 	query := chatMessageSelect + `
 		WHERE dc.user_low_id = ? AND dc.user_high_id = ?
 	`
-	args := []any{viewerUserID, viewerUserID, viewerUserID, low, high}
+	args := []any{viewerUserID, low, high}
 	query, args = appendChatMessageCursor(query, args, cursor)
 	query += ` ORDER BY m.created_at DESC, m.id DESC LIMIT ?`
 	args = append(args, limit)
@@ -509,7 +500,7 @@ func (r *ChatRepo) ListGroupMessages(ctx context.Context, viewerUserID, groupID 
 		return []*domain.ChatMessage{}, nil
 	}
 	query := chatMessageSelect + ` WHERE m.group_id = ?`
-	args := []any{viewerUserID, viewerUserID, viewerUserID, groupID}
+	args := []any{viewerUserID, groupID}
 	query, args = appendChatMessageCursor(query, args, cursor)
 	query += ` ORDER BY m.created_at DESC, m.id DESC LIMIT ?`
 	args = append(args, limit)
@@ -666,15 +657,7 @@ func (r *ChatRepo) ListChats(ctx context.Context, viewerUserID int64, cursor *do
 			row.kind, row.kind_rank, row.entity_id, row.target_id, row.activity_at, row.membership_status,
 			row.unread_count,
 			peer.id, peer.first_name, peer.last_name, peer.nickname,
-			CASE
-				WHEN peer.avatar_media_id IS NULL THEN NULL
-				WHEN peer.id = ? OR peer.is_private = 0 OR EXISTS (
-					SELECT 1 FROM follows peer_avatar_follow
-					WHERE peer_avatar_follow.follower_user_id = ?
-						AND peer_avatar_follow.followed_user_id = peer.id
-						AND peer_avatar_follow.status = 'accepted'
-				) THEN peer.avatar_media_id ELSE NULL
-			END,
+			peer.avatar_media_id,
 			peer.is_private,
 			g.id, g.owner_user_id, g.title, g.description, g.created_at,
 			CASE WHEN g.id IS NULL THEN NULL ELSE (
@@ -682,28 +665,12 @@ func (r *ChatRepo) ListChats(ctx context.Context, viewerUserID int64, cursor *do
 				WHERE counted.group_id = g.id AND counted.status IN ('owner', 'member')
 			) END,
 			owner.id, owner.first_name, owner.last_name, owner.nickname,
-			CASE
-				WHEN owner.avatar_media_id IS NULL THEN NULL
-				WHEN owner.id = ? OR owner.is_private = 0 OR EXISTS (
-					SELECT 1 FROM follows owner_avatar_follow
-					WHERE owner_avatar_follow.follower_user_id = ?
-						AND owner_avatar_follow.followed_user_id = owner.id
-						AND owner_avatar_follow.status = 'accepted'
-				) THEN owner.avatar_media_id ELSE NULL
-			END,
+			owner.avatar_media_id,
 			owner.is_private,
 			last.id, last.direct_conversation_id, last.group_id, last.sender_user_id,
 			last.client_message_id, last.body, last.created_at,
 			sender.id, sender.first_name, sender.last_name, sender.nickname,
-			CASE
-				WHEN sender.avatar_media_id IS NULL THEN NULL
-				WHEN sender.id = ? OR sender.is_private = 0 OR EXISTS (
-					SELECT 1 FROM follows sender_avatar_follow
-					WHERE sender_avatar_follow.follower_user_id = ?
-						AND sender_avatar_follow.followed_user_id = sender.id
-						AND sender_avatar_follow.status = 'accepted'
-				) THEN sender.avatar_media_id ELSE NULL
-			END,
+			sender.avatar_media_id,
 			sender.is_private
 		FROM chat_rows row
 		LEFT JOIN users peer ON row.kind = 'direct' AND peer.id = row.target_id
@@ -715,9 +682,6 @@ func (r *ChatRepo) ListChats(ctx context.Context, viewerUserID int64, cursor *do
 	`
 	args := []any{
 		viewerUserID, viewerUserID, viewerUserID, viewerUserID, viewerUserID,
-		viewerUserID, viewerUserID,
-		viewerUserID, viewerUserID,
-		viewerUserID, viewerUserID,
 	}
 	if cursor != nil {
 		timestamp := timeToUnix(cursor.ActivityAt)

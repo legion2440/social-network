@@ -37,13 +37,10 @@ func (s *AvatarDeliveryService) Open(ctx context.Context, currentUserID, targetU
 
 	var media *domain.Media
 	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
-		target, err := authorizeProfileRead(
-			ctx,
-			repositories.Users(),
-			repositories.Follows(),
-			currentUserID,
-			targetUserID,
-		)
+		target, err := repositories.Users().GetByID(ctx, targetUserID)
+		if errors.Is(err, repo.ErrNotFound) {
+			return ErrNotFound
+		}
 		if err != nil {
 			return err
 		}

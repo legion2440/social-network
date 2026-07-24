@@ -320,8 +320,8 @@ func TestGroupEventCreatorAvatarIsViewerAware(t *testing.T) {
 		t.Fatalf("creator did not receive own avatar: %q", event.Creator.AvatarURL)
 	}
 	page := getGroupEventPage(t, env, ownerToken, fmt.Sprintf("/api/groups/%d/events", group.ID), http.StatusOK)
-	if len(page.Events) != 1 || page.Events[0].Creator.AvatarURL != domain.FemaleAvatarPlaceholderURL {
-		t.Fatalf("private creator avatar leaked: %+v", page.Events)
+	if len(page.Events) != 1 || page.Events[0].Creator.AvatarURL != wantCustom {
+		t.Fatalf("private creator custom avatar missing: %+v", page.Events)
 	}
 	if _, err := sqlite.NewFollowRepo(env.db).Upsert(context.Background(), ownerID, memberID, domain.FollowAccepted, testNow); err != nil {
 		t.Fatalf("create accepted follow: %v", err)

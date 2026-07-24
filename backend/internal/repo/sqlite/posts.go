@@ -30,17 +30,7 @@ const viewerPostSelectColumns = `
 	(SELECT COUNT(*) FROM post_comments comment_count WHERE comment_count.post_id = p.id),
 	p.created_at,
 	u.id, u.first_name, u.last_name, u.gender, u.nickname,
-	CASE
-		WHEN u.avatar_media_id IS NULL THEN NULL
-		WHEN u.id = ? OR u.is_private = 0 OR EXISTS (
-			SELECT 1 FROM follows avatar_follow
-			WHERE avatar_follow.follower_user_id = ?
-				AND avatar_follow.followed_user_id = u.id
-				AND avatar_follow.status = 'accepted'
-		) THEN u.avatar_media_id
-		ELSE NULL
-	END,
-	u.is_private
+	u.avatar_media_id, u.is_private
 `
 
 // Every personal post read uses this predicate. viewer_follow is the current
@@ -158,7 +148,6 @@ func (r *PostRepo) GetAccessibleByID(ctx context.Context, viewerUserID, postID i
 		)`
 	return scanPost(r.db.QueryRowContext(
 		ctx, query,
-		viewerUserID, viewerUserID,
 		viewerUserID,
 		postID,
 		viewerUserID, viewerUserID,
@@ -180,7 +169,6 @@ func (r *PostRepo) ListFeed(
 		AND (p.author_user_id = ? OR viewer_follow.id IS NOT NULL)
 		AND ` + personalPostAccessPredicate
 	args := []any{
-		viewerUserID, viewerUserID,
 		viewerUserID,
 		viewerUserID,
 		viewerUserID, viewerUserID,
@@ -203,7 +191,6 @@ func (r *PostRepo) ListByAuthor(
 	query := `SELECT ` + viewerPostSelectColumns + postFromAndViewerJoin + `
 		WHERE p.group_id IS NULL AND p.author_user_id = ? AND ` + personalPostAccessPredicate
 	args := []any{
-		viewerUserID, viewerUserID,
 		viewerUserID,
 		authorUserID,
 		viewerUserID, viewerUserID,
@@ -233,7 +220,7 @@ func (r *PostRepo) ListByGroup(
 				AND content_member.user_id = ?
 				AND content_member.status IN ('owner', 'member')
 		)`
-	args := []any{viewerUserID, viewerUserID, groupID, viewerUserID}
+	args := []any{groupID, viewerUserID}
 	query, args = appendPostCursor(query, args, cursor)
 	query += ` ORDER BY p.created_at DESC, p.id DESC LIMIT ?`
 	args = append(args, limit)

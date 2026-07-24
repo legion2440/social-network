@@ -75,21 +75,12 @@ func (r *CommentRepo) ListByPost(
 		SELECT
 			c.id, c.post_id, c.author_user_id, c.text, c.media_id, c.created_at,
 			u.id, u.first_name, u.last_name, u.gender, u.nickname,
-			CASE
-				WHEN u.avatar_media_id IS NULL THEN NULL
-				WHEN u.id = ? OR u.is_private = 0 OR EXISTS (
-					SELECT 1 FROM follows avatar_follow
-					WHERE avatar_follow.follower_user_id = ?
-						AND avatar_follow.followed_user_id = u.id
-						AND avatar_follow.status = 'accepted'
-				) THEN u.avatar_media_id
-				ELSE NULL
-			END,
+			u.avatar_media_id,
 			u.is_private
 		FROM post_comments c
 		JOIN users u ON u.id = c.author_user_id
 		WHERE c.post_id = ?`
-	args := []any{viewerUserID, viewerUserID, postID}
+	args := []any{postID}
 	if cursor != nil {
 		timestamp := timeToUnix(cursor.CreatedAt)
 		query += ` AND (c.created_at > ? OR (c.created_at = ? AND c.id > ?))`

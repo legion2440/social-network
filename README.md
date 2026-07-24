@@ -150,7 +150,7 @@ Notifications support:
 - 20 MB upload limit;
 - transactional media metadata and relation creation;
 - staged files removed when a transaction fails;
-- controlled avatar, post, and comment media routes;
+- authenticated avatar delivery and access-controlled post/comment media routes;
 - no generic public upload directory.
 
 ## 🏗️ Architecture
@@ -220,9 +220,9 @@ The browser application is not organized as a conventional React component tree.
 - passwords are stored as bcrypt hashes;
 - session tokens are transported through an HttpOnly, SameSite=Lax cookie;
 - the backend is not published to the host in Docker;
-- private-profile data is returned only to the owner and accepted followers;
+- private-profile fields and content are returned only to the owner and accepted followers; custom avatars remain visible to authenticated users;
 - post, comment, group, event, and chat access is checked on the backend;
-- media access is revalidated against the current parent object policy;
+- post and comment media access is revalidated against the current parent object policy;
 - media MIME type is detected from file content, not trusted from the filename;
 - successful protected media responses use `X-Content-Type-Options: nosniff`;
 - Docker runtime processes use numeric non-root users;

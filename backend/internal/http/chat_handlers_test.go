@@ -175,6 +175,17 @@ func TestChatHTTPListAndHistoryReturnRealMessages(t *testing.T) {
 	); err != nil {
 		t.Fatalf("create accepted follow: %v", err)
 	}
+	avatarMediaID, err := env.dbInsertMedia(firstID, "private-chat-avatar.png", []byte("\x89PNG\r\n\x1a\nprivate-chat-avatar"))
+	if err != nil {
+		t.Fatalf("create private chat avatar: %v", err)
+	}
+	if err := env.users.SetAvatarMediaID(context.Background(), firstID, &avatarMediaID, testNow); err != nil {
+		t.Fatalf("set private chat avatar: %v", err)
+	}
+	if _, err := env.db.Exec(`UPDATE users SET is_private = 1 WHERE id = ?`, firstID); err != nil {
+		t.Fatalf("make chat sender private: %v", err)
+	}
+	wantPrivateAvatar := "/api/users/" + strconv.FormatInt(firstID, 10) + "/avatar?v=" + strconv.FormatInt(avatarMediaID, 10)
 	group := createGroupForTest(t, env, firstToken, "Listed chat group")
 	chats := service.NewChatService(sqlite.NewTransactionManager(env.db), fixedClock{})
 	sendResult, err := chats.Send(context.Background(), firstID, firstToken, service.ChatSendInput{
@@ -216,10 +227,17 @@ func TestChatHTTPListAndHistoryReturnRealMessages(t *testing.T) {
 		message.Chat.TargetID != secondID || message.Sender.ID != firstID {
 		t.Fatalf("unexpected history message: %+v", message)
 	}
+	if message.Sender.AvatarURL != wantPrivateAvatar {
+		t.Fatalf("private sender avatar missing from history: got %q want %q", message.Sender.AvatarURL, wantPrivateAvatar)
+	}
 
 	recorder = chatGET(t, env, "/api/chats", secondToken, http.StatusOK)
 	if err := json.NewDecoder(recorder.Body).Decode(&list); err != nil || len(list.Chats) != 1 ||
 		list.Chats[0].TargetID != firstID {
 		t.Fatalf("recipient chat list: response=%+v err=%v", list, err)
+	}
+	if list.Chats[0].User == nil || list.Chats[0].User.AvatarURL != wantPrivateAvatar ||
+		list.Chats[0].LastMessage == nil || list.Chats[0].LastMessage.Sender.AvatarURL != wantPrivateAvatar {
+		t.Fatalf("private sender avatar missing from recipient chat summary: %+v", list.Chats[0])
 	}
 }

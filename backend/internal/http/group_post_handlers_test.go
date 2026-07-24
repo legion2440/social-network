@@ -249,15 +249,15 @@ func TestGroupPostsStayOutOfPersonalSurfacesAndUseViewerAwareAvatars(t *testing.
 	createCommentThroughHTTP(t, env, memberToken, groupPost.ID, "private commenter", http.StatusCreated)
 	base := "/api/groups/" + strconv.FormatInt(group.ID, 10) + "/posts"
 	ownerPage := getPostPage(t, env, ownerToken, base, http.StatusOK)
-	if len(ownerPage.Posts) != 1 || ownerPage.Posts[0].Author.AvatarURL != domain.FemaleAvatarPlaceholderURL {
-		t.Fatalf("inaccessible group author avatar leaked: %+v", ownerPage.Posts)
+	wantAvatar := fmt.Sprintf("/api/users/%d/avatar?v=%d", memberID, mediaID)
+	if len(ownerPage.Posts) != 1 || ownerPage.Posts[0].Author.AvatarURL != wantAvatar {
+		t.Fatalf("group author custom avatar missing: %+v", ownerPage.Posts)
 	}
 	ownerComments := getCommentPage(t, env, ownerToken, "/api/posts/"+strconv.FormatInt(groupPost.ID, 10)+"/comments", http.StatusOK)
-	if len(ownerComments.Comments) != 1 || ownerComments.Comments[0].Author.AvatarURL != domain.FemaleAvatarPlaceholderURL {
-		t.Fatalf("inaccessible comment author avatar leaked: %+v", ownerComments.Comments)
+	if len(ownerComments.Comments) != 1 || ownerComments.Comments[0].Author.AvatarURL != wantAvatar {
+		t.Fatalf("comment author custom avatar missing: %+v", ownerComments.Comments)
 	}
 	memberPage := getPostPage(t, env, memberToken, base, http.StatusOK)
-	wantAvatar := fmt.Sprintf("/api/users/%d/avatar?v=%d", memberID, mediaID)
 	if memberPage.Posts[0].Author.AvatarURL != wantAvatar {
 		t.Fatalf("own group author avatar missing: got %q want %q", memberPage.Posts[0].Author.AvatarURL, wantAvatar)
 	}

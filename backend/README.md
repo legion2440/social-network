@@ -265,6 +265,7 @@ DELETE /api/follow-requests/{id}
 |---|---|
 | public profile | every authenticated user |
 | private profile | owner or accepted follower |
+| custom avatar | every authenticated user |
 | followers post | current accepted follower |
 | selected post | accepted follower plus selected audience row |
 | group content | current `owner` or `member` |
@@ -280,7 +281,7 @@ Important invariants:
 
 - leaving a group immediately revokes its content and chat;
 - selected audience rows survive unfollow, but access does not;
-- group membership never reveals an otherwise private profile;
+- group membership never reveals private profile fields or content; custom avatars are independent of profile privacy;
 - protected media is authorized on every read;
 - stale frontend state cannot grant backend access.
 
@@ -320,6 +321,8 @@ GET /api/users/{id}/avatar
 GET /api/posts/{id}/media
 GET /api/comments/{id}/media
 ```
+
+Custom avatars are available to every authenticated user. Post and comment media continue to use the current parent-object access policy.
 
 Successful responses include the detected MIME, actual length, `X-Content-Type-Options: nosniff`, and `Cache-Control: private, no-store`.
 

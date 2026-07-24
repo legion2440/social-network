@@ -97,9 +97,8 @@
     }
 
     var rawURL = user.rawAvatarUrl || '';
-    var canUseCustomAvatar = user.canViewProfile !== false && canViewPrivate;
     if (!canViewPrivate) user.canViewProfile = false;
-    user.avatarUrl = isStaticAvatar(rawURL) || canUseCustomAvatar ? rawURL : '';
+    user.avatarUrl = rawURL;
     user.hasAvatar = !!user.avatarUrl;
     user.noAvatar = !user.avatarUrl;
     user.hasCustomAvatar = !!user.avatarUrl && !isStaticAvatar(user.avatarUrl);

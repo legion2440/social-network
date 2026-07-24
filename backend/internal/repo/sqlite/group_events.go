@@ -38,7 +38,7 @@ func (r *GroupEventRepo) Get(ctx context.Context, viewerUserID, eventID int64) (
 	}
 	return scanGroupEvent(r.db.QueryRowContext(ctx, groupEventSelect+`
 		WHERE ge.id = ?
-	`, viewerUserID, viewerUserID, viewerUserID, eventID))
+	`, viewerUserID, eventID))
 }
 
 func (r *GroupEventRepo) List(
@@ -51,7 +51,7 @@ func (r *GroupEventRepo) List(
 		return []*domain.GroupEvent{}, nil
 	}
 	query := groupEventSelect + ` WHERE ge.group_id = ?`
-	args := []any{viewerUserID, viewerUserID, viewerUserID, groupID}
+	args := []any{viewerUserID, groupID}
 	if cursor != nil {
 		startsAt := timeToUnix(cursor.StartsAt)
 		query += ` AND (ge.starts_at > ? OR (ge.starts_at = ? AND ge.id > ?))`
@@ -122,16 +122,7 @@ const groupEventSelect = `
 		viewer_response.response,
 		creator.id, creator.email, creator.password_hash, creator.first_name, creator.last_name,
 		creator.date_of_birth, creator.gender, creator.nickname, creator.about_me,
-		CASE
-			WHEN creator.avatar_media_id IS NULL THEN NULL
-			WHEN creator.id = ? OR creator.is_private = 0 OR EXISTS (
-				SELECT 1 FROM follows avatar_follow
-				WHERE avatar_follow.follower_user_id = ?
-					AND avatar_follow.followed_user_id = creator.id
-					AND avatar_follow.status = 'accepted'
-			) THEN creator.avatar_media_id
-			ELSE NULL
-		END,
+		creator.avatar_media_id,
 		creator.is_private, creator.created_at, creator.updated_at
 	FROM group_events ge
 	JOIN users creator ON creator.id = ge.creator_user_id

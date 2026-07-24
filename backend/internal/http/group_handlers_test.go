@@ -218,8 +218,9 @@ func TestGroupPaginationMemberOrderAndViewerAwareAvatar(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&members2); err != nil || len(members2.Members) != 1 || members2.Members[0].User.ID != privateID {
 		t.Fatalf("unexpected member page: %+v err=%v", members2, err)
 	}
-	if members2.Members[0].User.AvatarURL != domain.NeutralAvatarPlaceholderURL {
-		t.Fatalf("group membership exposed inaccessible custom avatar: %q", members2.Members[0].User.AvatarURL)
+	wantAvatar := fmt.Sprintf("/api/users/%d/avatar?v=%d", privateID, mediaID)
+	if members2.Members[0].User.AvatarURL != wantAvatar {
+		t.Fatalf("group member custom avatar missing: got %q want %q", members2.Members[0].User.AvatarURL, wantAvatar)
 	}
 }
 

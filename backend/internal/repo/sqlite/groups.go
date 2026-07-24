@@ -38,7 +38,7 @@ func (r *GroupRepo) Get(ctx context.Context, groupID, viewerUserID int64) (*doma
 	}
 	return scanGroup(r.db.QueryRowContext(ctx, groupSelect+`
 		WHERE g.id = ?
-	`, viewerUserID, viewerUserID, viewerUserID, groupID))
+	`, viewerUserID, groupID))
 }
 
 func (r *GroupRepo) List(ctx context.Context, viewerUserID int64, cursor *domain.GroupCursor, limit int) ([]*domain.Group, error) {
@@ -46,7 +46,7 @@ func (r *GroupRepo) List(ctx context.Context, viewerUserID int64, cursor *domain
 		return []*domain.Group{}, nil
 	}
 	query := groupSelect + ` WHERE 1 = 1`
-	args := []any{viewerUserID, viewerUserID, viewerUserID}
+	args := []any{viewerUserID}
 	if cursor != nil {
 		timestamp := timeToUnix(cursor.CreatedAt)
 		query += ` AND (g.created_at < ? OR (g.created_at = ? AND g.id < ?))`
@@ -249,7 +249,7 @@ func (r *GroupRepo) ListMembers(
 	query := membershipSelect + `
 		WHERE gm.group_id = ? AND gm.status IN ('owner', 'member')
 	`
-	args := []any{viewerUserID, viewerUserID, groupID}
+	args := []any{groupID}
 	if cursor != nil {
 		timestamp := timeToUnix(cursor.UpdatedAt)
 		query += ` AND (
@@ -275,7 +275,7 @@ func (r *GroupRepo) ListMemberships(
 		return []*domain.GroupMembership{}, nil
 	}
 	query := membershipSelect + ` WHERE gm.group_id = ? AND gm.status = ?`
-	args := []any{viewerUserID, viewerUserID, groupID, status}
+	args := []any{groupID, status}
 	if cursor != nil {
 		timestamp := timeToUnix(cursor.CreatedAt)
 		query += ` AND (gm.created_at > ? OR (gm.created_at = ? AND gm.user_id > ?))`
@@ -318,7 +318,7 @@ func (r *GroupRepo) ListInvitationInbox(
 	query := groupSelect + `
 		WHERE viewer.status = 'invited'
 	`
-	args := []any{userID, userID, userID}
+	args := []any{userID}
 	if cursor != nil {
 		timestamp := timeToUnix(cursor.CreatedAt)
 		query += ` AND (viewer.created_at > ? OR (viewer.created_at = ? AND g.id > ?))`
@@ -356,16 +356,7 @@ const groupSelect = `
 		viewer.status, viewer.created_at,
 		owner.id, owner.email, owner.password_hash, owner.first_name, owner.last_name,
 		owner.date_of_birth, owner.gender, owner.nickname, owner.about_me,
-		CASE
-			WHEN owner.avatar_media_id IS NULL THEN NULL
-			WHEN owner.id = ? OR owner.is_private = 0 OR EXISTS (
-				SELECT 1 FROM follows avatar_follow
-				WHERE avatar_follow.follower_user_id = ?
-					AND avatar_follow.followed_user_id = owner.id
-					AND avatar_follow.status = 'accepted'
-			) THEN owner.avatar_media_id
-			ELSE NULL
-		END,
+		owner.avatar_media_id,
 		owner.is_private, owner.created_at, owner.updated_at
 	FROM groups g
 	JOIN users owner ON owner.id = g.owner_user_id
@@ -377,16 +368,7 @@ const membershipSelect = `
 		gm.id, gm.group_id, gm.user_id, gm.status, gm.created_at, gm.updated_at,
 		u.id, u.email, u.password_hash, u.first_name, u.last_name,
 		u.date_of_birth, u.gender, u.nickname, u.about_me,
-		CASE
-			WHEN u.avatar_media_id IS NULL THEN NULL
-			WHEN u.id = ? OR u.is_private = 0 OR EXISTS (
-				SELECT 1 FROM follows avatar_follow
-				WHERE avatar_follow.follower_user_id = ?
-					AND avatar_follow.followed_user_id = u.id
-					AND avatar_follow.status = 'accepted'
-			) THEN u.avatar_media_id
-			ELSE NULL
-		END,
+		u.avatar_media_id,
 		u.is_private, u.created_at, u.updated_at
 	FROM group_memberships gm
 	JOIN users u ON u.id = gm.user_id

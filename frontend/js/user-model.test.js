@@ -28,7 +28,7 @@ test('normalization keeps one backend user object and merges full profile data',
   assert.deepEqual(first.relationship, { status: 'none', follows_me: true });
 });
 
-test('locked private user clears sensitive data and hides a custom avatar', () => {
+test('locked private user clears sensitive data but keeps a custom avatar', () => {
   const user = UserModel.normalizeUser({
     id: 9, first_name: 'Private', last_name: 'User', nickname: null,
     is_private: true, avatar_url: '/api/users/9/avatar?v=4',
@@ -45,11 +45,12 @@ test('locked private user clears sensitive data and hides a custom avatar', () =
   assert.equal(user.gender, '');
   assert.equal(user.bio, '');
   assert.equal(user.postsCount, 0);
-  assert.equal(user.avatarUrl, '');
+  assert.equal(user.avatarUrl, '/api/users/9/avatar?v=4');
+  assert.equal(user.hasCustomAvatar, true);
   assert.equal(user.rawAvatarUrl, '/api/users/9/avatar?v=4');
 });
 
-test('server-locked profile hides custom avatar despite a stale accepted relationship', () => {
+test('server-locked profile keeps custom avatar independent of profile access', () => {
   const user = UserModel.normalizeUser({
     id: 9, first_name: 'Private', last_name: 'User', nickname: null,
     is_private: true, avatar_url: '/api/users/9/avatar?v=5',
@@ -59,18 +60,19 @@ test('server-locked profile hides custom avatar despite a stale accepted relatio
 
   assert.equal(user.relationship.status, 'accepted');
   assert.equal(user.canViewProfile, false);
-  assert.equal(user.avatarUrl, '');
-  assert.equal(user.hasCustomAvatar, false);
+  assert.equal(user.avatarUrl, '/api/users/9/avatar?v=5');
+  assert.equal(user.hasCustomAvatar, true);
   assert.equal(user.rawAvatarUrl, '/api/users/9/avatar?v=5');
 });
 
-test('accepted relationship restores access to the stored custom avatar', () => {
+test('relationship changes do not gate a private custom avatar', () => {
   const previous = UserModel.normalizeUser({
     id: 9, first_name: 'Private', last_name: 'User', is_private: true,
-    avatar_url: '/api/users/9/avatar?v=4', relationship: { status: 'none', follows_me: false }
+    avatar_url: '/api/users/9/avatar?v=4', can_view_profile: false,
+    relationship: { status: 'none', follows_me: false }
   }, null, 1);
   const accepted = UserModel.normalizeUser({
-    id: 9, can_view_profile: true,
+    id: 9,
     relationship: { status: 'accepted', follows_me: false }
   }, previous, 1);
 

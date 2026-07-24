@@ -65,7 +65,7 @@ func (r *NotificationRepo) GetForRecipient(ctx context.Context, recipientUserID,
 	}
 	return scanNotification(r.db.QueryRowContext(ctx, notificationSelect+`
 		WHERE n.recipient_user_id = ? AND n.id = ?
-	`, recipientUserID, recipientUserID, recipientUserID, notificationID))
+	`, recipientUserID, notificationID))
 }
 
 func (r *NotificationRepo) ListForRecipient(
@@ -78,7 +78,7 @@ func (r *NotificationRepo) ListForRecipient(
 		return []*domain.Notification{}, nil
 	}
 	query := notificationSelect + ` WHERE n.recipient_user_id = ?`
-	args := []any{recipientUserID, recipientUserID, recipientUserID}
+	args := []any{recipientUserID}
 	if cursor != nil {
 		timestamp := timeToUnix(cursor.CreatedAt)
 		query += ` AND (n.created_at < ? OR (n.created_at = ? AND n.id < ?))`
@@ -257,16 +257,7 @@ const notificationSelect = `
 		n.membership_id, n.resolution, n.resolved_at, n.read_at, n.created_at,
 		actor.id, actor.email, actor.password_hash, actor.first_name, actor.last_name,
 		actor.date_of_birth, actor.gender, actor.nickname, actor.about_me,
-		CASE
-			WHEN actor.avatar_media_id IS NULL THEN NULL
-			WHEN actor.id = ? OR actor.is_private = 0 OR EXISTS (
-				SELECT 1 FROM follows avatar_follow
-				WHERE avatar_follow.follower_user_id = ?
-					AND avatar_follow.followed_user_id = actor.id
-					AND avatar_follow.status = 'accepted'
-			) THEN actor.avatar_media_id
-			ELSE NULL
-		END,
+		actor.avatar_media_id,
 		actor.is_private, actor.created_at, actor.updated_at
 	FROM notifications n
 	JOIN users actor ON actor.id = n.actor_user_id

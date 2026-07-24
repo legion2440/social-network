@@ -665,8 +665,8 @@ func TestUserAvatarDeliveryEnforcesCurrentPrivacyAndFollowRelation(t *testing.T)
 
 	requestAvatar("private-owner", ownerToken, http.StatusOK)
 	requestAvatar("private-accepted", acceptedToken, http.StatusOK)
-	requestAvatar("private-pending", pendingToken, http.StatusForbidden)
-	requestAvatar("private-outsider", outsiderToken, http.StatusForbidden)
+	requestAvatar("private-pending", pendingToken, http.StatusOK)
+	requestAvatar("private-outsider", outsiderToken, http.StatusOK)
 	requestAvatar("unauthenticated", "", http.StatusUnauthorized)
 
 	unfollowRec := httptest.NewRecorder()
@@ -674,7 +674,7 @@ func TestUserAvatarDeliveryEnforcesCurrentPrivacyAndFollowRelation(t *testing.T)
 	if unfollowRec.Code != http.StatusNoContent {
 		t.Fatalf("unfollow avatar owner: status=%d body=%q", unfollowRec.Code, unfollowRec.Body.String())
 	}
-	requestAvatar("private-after-unfollow", acceptedToken, http.StatusForbidden)
+	requestAvatar("private-after-unfollow", acceptedToken, http.StatusOK)
 
 	setProfilePrivacy(t, env, ownerToken, false)
 	follow(acceptedToken, service.RelationshipAccepted)
@@ -685,8 +685,8 @@ func TestUserAvatarDeliveryEnforcesCurrentPrivacyAndFollowRelation(t *testing.T)
 
 	setProfilePrivacy(t, env, ownerToken, true)
 	requestAvatar("private-restored-accepted", acceptedToken, http.StatusOK)
-	requestAvatar("private-closes-pending", pendingToken, http.StatusForbidden)
-	requestAvatar("private-closes-outsider", outsiderToken, http.StatusForbidden)
+	requestAvatar("private-keeps-pending-avatar", pendingToken, http.StatusOK)
+	requestAvatar("private-keeps-outsider-avatar", outsiderToken, http.StatusOK)
 }
 
 func TestUserAvatarDeliveryRejectsMissingAndForeignMedia(t *testing.T) {
@@ -703,8 +703,8 @@ func TestUserAvatarDeliveryRejectsMissingAndForeignMedia(t *testing.T) {
 	setProfilePrivacy(t, env, targetToken, true)
 	privateNoAvatarRec := httptest.NewRecorder()
 	env.handler.ServeHTTP(privateNoAvatarRec, authenticatedRequest(http.MethodGet, avatarPath, otherToken, nil))
-	if privateNoAvatarRec.Code != http.StatusForbidden || privateNoAvatarRec.Body.String() != "{\"error\":\"forbidden\"}\n" {
-		t.Fatalf("private avatar existence leaked: status=%d body=%q", privateNoAvatarRec.Code, privateNoAvatarRec.Body.String())
+	if privateNoAvatarRec.Code != http.StatusNotFound {
+		t.Fatalf("missing private avatar: status=%d body=%q", privateNoAvatarRec.Code, privateNoAvatarRec.Body.String())
 	}
 	setProfilePrivacy(t, env, targetToken, false)
 	unknownUserRec := httptest.NewRecorder()
