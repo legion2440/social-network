@@ -201,18 +201,18 @@ Caddy проксирует точные и вложенные маршруты:
 
 ## 🧰 Стек технологий
 
-| Слой | Технология |
-|---|---|
-| Backend | Go `1.24.2` |
-| База данных | SQLite через `mattn/go-sqlite3` |
-| Миграции | `golang-migrate` |
-| Аутентификация | server-side sessions, cookies, bcrypt |
-| Realtime | Gorilla WebSocket |
-| ID | Google UUID |
-| Frontend | собственный декларативный `dc-runtime` |
-| Rendering layer | React и ReactDOM |
-| Static server / reverse proxy | Caddy |
-| Контейнеры | Docker и Docker Compose |
+| Слой                          | Технология                             |
+|-------------------------------|----------------------------------------|
+| Backend                       | Go `1.24.2`                            |
+| База данных                   | SQLite через `mattn/go-sqlite3`        |
+| Миграции                      | `golang-migrate`                       |
+| Аутентификация                | server-side sessions, cookies, bcrypt  |
+| Realtime                      | Gorilla WebSocket                      |
+| ID                            | Google UUID                            |
+| Frontend                      | собственный декларативный `dc-runtime` |
+| Rendering layer               | React и ReactDOM                       |
+| Static server / reverse proxy | Caddy                                  |
+| Контейнеры                    | Docker и Docker Compose                |
 
 Browser-приложение не организовано как обычное React component tree. Собственный framework в `frontend/js/runtime.js` обрабатывает шаблон `<x-dc>` из `frontend/index.html`, а React и ReactDOM используются как rendering layer.
 

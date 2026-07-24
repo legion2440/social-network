@@ -200,18 +200,18 @@ Every other path is served from `/srv`, with `index.html` used for client-side r
 
 ## 🧰 Technology stack
 
-| Layer | Technology |
-|---|---|
-| Backend | Go `1.24.2` |
-| Database | SQLite with `mattn/go-sqlite3` |
-| Migrations | `golang-migrate` |
-| Authentication | server-side sessions, cookies, bcrypt |
-| Realtime | Gorilla WebSocket |
-| IDs | Google UUID |
-| Frontend | custom declarative `dc-runtime` |
-| Rendering layer | React and ReactDOM |
-| Static server / reverse proxy | Caddy |
-| Containers | Docker and Docker Compose |
+| Layer                         | Technology                            |
+|-------------------------------|---------------------------------------|
+| Backend                       | Go `1.24.2`                           |
+| Database                      | SQLite with `mattn/go-sqlite3`        |
+| Migrations                    | `golang-migrate`                      |
+| Authentication                | server-side sessions, cookies, bcrypt |
+| Realtime                      | Gorilla WebSocket                     |
+| IDs                           | Google UUID                           |
+| Frontend                      | custom declarative `dc-runtime`       |
+| Rendering layer               | React and ReactDOM                    |
+| Static server / reverse proxy | Caddy                                 |
+| Containers                    | Docker and Docker Compose             |
 
 The browser application is not organized as a conventional React component tree. The custom framework in `frontend/js/runtime.js` processes the `<x-dc>` template from `frontend/index.html`, while React and ReactDOM provide the rendering layer.
 
