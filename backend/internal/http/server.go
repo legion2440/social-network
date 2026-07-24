@@ -16,7 +16,6 @@ import (
 type Handler struct {
 	db                 *sql.DB
 	sessions           *service.SessionService
-	media              *service.MediaService
 	auth               *service.AuthService
 	profile            *service.ProfileService
 	follows            *service.FollowService
@@ -42,7 +41,6 @@ type Handler struct {
 func NewHandler(
 	db *sql.DB,
 	sessions *service.SessionService,
-	media *service.MediaService,
 	auth *service.AuthService,
 	profile *service.ProfileService,
 	follows *service.FollowService,
@@ -70,7 +68,6 @@ func NewHandler(
 	handler := &Handler{
 		db:            db,
 		sessions:      sessions,
-		media:         media,
 		auth:          auth,
 		profile:       profile,
 		follows:       follows,
@@ -138,7 +135,6 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/auth/me", protected(h.handleMe))
 	mux.Handle("/api/profile", protected(h.handleProfile))
 	mux.Handle("/api/profile/avatar", protected(h.handleProfileAvatar))
-	mux.Handle("/api/profile/", protected(h.handleNotImplemented))
 	mux.Handle("/api/users", protected(h.handleUsers))
 	mux.Handle("/api/users/{id}", protected(h.handleUserProfile))
 	mux.Handle("/api/users/{id}/follow", protected(h.handleFollow))
@@ -149,9 +145,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/follow-requests", protected(h.handleFollowRequests))
 	mux.Handle("/api/follow-requests/{id}/accept", protected(h.handleFollowRequestAccept))
 	mux.Handle("/api/follow-requests/{id}", protected(h.handleFollowRequestReject))
-	mux.Handle("/api/follow-requests/", protected(h.handleNotImplemented))
 	mux.Handle("/ws", protected(h.handleWS))
-	mux.Handle("/api/media", protected(h.handleMediaUpload))
 	mux.Handle("/api/posts", protected(h.handlePosts))
 	mux.Handle("/api/posts/feed", protected(h.handlePostFeed))
 	mux.Handle("/api/posts/{id}/media", protected(h.handlePostMedia))
@@ -181,18 +175,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/chats/direct/{user_id}/read", protected(h.handleDirectChatRead))
 	mux.Handle("/api/groups/{id}/chat/messages", protected(h.handleGroupChatMessages))
 	mux.Handle("/api/groups/{id}/chat/read", protected(h.handleGroupChatRead))
-	mux.HandleFunc("/api/posts/", h.handleNotImplemented)
-	mux.Handle("/uploads/", protected(h.handleMediaDownload))
 	mux.Handle("/static/avatars/", http.FileServer(http.FS(avatarPlaceholderFiles)))
-
-	for _, group := range []string{
-		"/api/auth",
-		"/api/follow",
-		"/api/events",
-	} {
-		mux.HandleFunc(group, h.handleNotImplemented)
-		mux.HandleFunc(group+"/", h.handleNotImplemented)
-	}
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")

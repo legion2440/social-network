@@ -48,7 +48,6 @@ func (r *MediaRepo) GetByID(ctx context.Context, id int64) (*domain.Media, error
 	media.StorageKey = strings.TrimSpace(media.StorageKey)
 	media.OriginalName = strings.TrimSpace(media.OriginalName)
 	media.CreatedAt = unixToTime(createdAt)
-	media.URL = domain.MediaURL(media.ID)
 	return &media, nil
 }
 

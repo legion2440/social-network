@@ -4,10 +4,16 @@
 }
 
 :8080 {
-	@backend path /api /api/* /ws /ws/* /uploads /uploads/* /static/avatars /static/avatars/*
+	@backend path /api /api/* /ws /ws/* /static/avatars /static/avatars/*
 
 	handle @backend {
 		reverse_proxy {$BACKEND_UPSTREAM:backend:8080}
+	}
+
+	@removedUploads path /uploads /uploads/*
+
+	handle @removedUploads {
+		respond 404
 	}
 
 	handle {

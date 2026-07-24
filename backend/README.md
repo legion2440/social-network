@@ -171,10 +171,10 @@ users, media rows, foreign-owned media, and missing physical files also return
 `404`. Successful image responses include the stored MIME, actual file length,
 `X-Content-Type-Options: nosniff`, and `Cache-Control: private, no-store`.
 
-The legacy `/uploads/{mediaID}` route remains owner-only for general media and
-is no longer emitted as a user avatar URL. The frontend recognizes only the
-controlled user-avatar URL as custom, so replace keeps the Remove action and
-delete switches it off when the response returns a placeholder.
+The removed `/uploads/{mediaID}` fallback is not part of the API. The frontend
+recognizes only the controlled user-avatar URL as custom, so replace keeps the
+Remove action and delete switches it off when the response returns a
+placeholder.
 
 ## Followers
 
@@ -498,8 +498,6 @@ Implemented endpoints:
 - `POST /api/follow-requests/{id}/accept`
 - `DELETE /api/follow-requests/{id}`
 - `GET /ws` (authenticated WebSocket)
-- `POST /api/media` (authenticated multipart upload, field name `file`)
-- `GET /uploads/{id}` (authenticated, owner-only)
 - `POST /api/posts` (authenticated multipart post creation)
 - `GET /api/posts/feed` (authenticated cursor feed)
 - `GET /api/posts/{id}/media` (authenticated and privacy-controlled)

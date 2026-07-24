@@ -6,7 +6,7 @@ The application runs as two Linux containers:
 browser
   -> social-network-frontend:8080 (Caddy, public)
        -> static frontend
-       -> /api, /ws, /uploads, /static/avatars
+       -> /api, /ws, /static/avatars
             -> social-network-backend:8080 (private)
                  -> SQLite
                  -> uploaded files

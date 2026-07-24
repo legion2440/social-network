@@ -104,10 +104,6 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 	ids := &sequenceID{}
 	sessions := service.NewSessionService(sqlite.NewSessionRepo(db), fixedClock{}, ids, 24*time.Hour)
 	uploadDir := filepath.Join(root, "uploads")
-	media, err := service.NewMediaService(sqlite.NewMediaRepo(db), fixedClock{}, ids, uploadDir)
-	if err != nil {
-		t.Fatalf("new media service: %v", err)
-	}
 	avatarStager, err := service.NewMediaStager(ids, uploadDir, service.MaxAvatarBytes)
 	if err != nil {
 		t.Fatalf("new avatar stager: %v", err)
@@ -149,7 +145,7 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 		case <-ctx.Done():
 		}
 	})
-	handler := NewHandler(db, sessions, media, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, commentMedia, groups, groupEvents, notifications, chats, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil)
+	handler := NewHandler(db, sessions, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, commentMedia, groups, groupEvents, notifications, chats, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil)
 	handler.SetRealtimeHub(hub)
 
 	return &testEnvironment{
@@ -328,7 +324,6 @@ func newSessionFailureHandlerWithFrontend(store *failingSessionRepo, frontendDir
 	return NewHandler(
 		nil,
 		sessions,
-		nil,
 		auth,
 		nil,
 		nil,
@@ -404,9 +399,11 @@ func TestFrontendFilesAreServedWithoutShadowingBackendRoutes(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/uploads/1", nil))
-	if rec.Code != http.StatusUnauthorized || rec.Header().Get("Content-Type") != "application/json" {
-		t.Fatalf("uploads route was shadowed by frontend: status=%d content-type=%q body=%q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
+	removedUploadsReq := httptest.NewRequest(http.MethodGet, "/uploads/1", nil)
+	addSessionCookie(removedUploadsReq, "session-token")
+	handler.ServeHTTP(rec, removedUploadsReq)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("removed uploads route reached backend auth or SPA: status=%d content-type=%q body=%q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
 	}
 
 	if store.getCalls != 0 {
@@ -440,16 +437,24 @@ func TestHealthIsPublicAndChecksDatabase(t *testing.T) {
 	}
 }
 
-func TestReservedAPIGroupsReturnJSONNotImplemented(t *testing.T) {
+func TestUnknownAPIRoutesReturnJSONNotFound(t *testing.T) {
 	env := newTestEnvironment(t)
-	for _, path := range []string{"/api/auth", "/api/posts/42"} {
+	for _, path := range []string{
+		"/api/auth",
+		"/api/auth/unknown",
+		"/api/profile/unknown",
+		"/api/follow",
+		"/api/follow-requests/unknown/path",
+		"/api/posts/42",
+		"/api/events",
+	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		env.handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotImplemented {
-			t.Fatalf("%s: expected 501, got %d", path, rec.Code)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: expected 404, got %d", path, rec.Code)
 		}
-		if rec.Header().Get("Content-Type") != "application/json" || rec.Body.String() != "{\"error\":\"not implemented\"}\n" {
+		if rec.Header().Get("Content-Type") != "application/json" || rec.Body.String() != "{\"error\":\"not found\"}\n" {
 			t.Fatalf("%s: unexpected response %q", path, rec.Body.String())
 		}
 	}
@@ -682,22 +687,6 @@ func TestUserAvatarDeliveryEnforcesCurrentPrivacyAndFollowRelation(t *testing.T)
 	requestAvatar("private-restored-accepted", acceptedToken, http.StatusOK)
 	requestAvatar("private-closes-pending", pendingToken, http.StatusForbidden)
 	requestAvatar("private-closes-outsider", outsiderToken, http.StatusForbidden)
-
-	var mediaID int64
-	if err := env.db.QueryRow(`SELECT avatar_media_id FROM users WHERE id = ?`, owner.ID).Scan(&mediaID); err != nil {
-		t.Fatalf("query avatar media ID: %v", err)
-	}
-	legacyPath := "/uploads/" + strconv.FormatInt(mediaID, 10)
-	ownerLegacyRec := httptest.NewRecorder()
-	env.handler.ServeHTTP(ownerLegacyRec, authenticatedRequest(http.MethodGet, legacyPath, ownerToken, nil))
-	if ownerLegacyRec.Code != http.StatusOK || !bytes.Equal(ownerLegacyRec.Body.Bytes(), avatarBytes) {
-		t.Fatalf("owner legacy avatar access failed: status=%d body=%q", ownerLegacyRec.Code, ownerLegacyRec.Body.Bytes())
-	}
-	outsiderLegacyRec := httptest.NewRecorder()
-	env.handler.ServeHTTP(outsiderLegacyRec, authenticatedRequest(http.MethodGet, legacyPath, outsiderToken, nil))
-	if outsiderLegacyRec.Code != http.StatusNotFound {
-		t.Fatalf("outsider accessed owner-only upload: status=%d body=%q", outsiderLegacyRec.Code, outsiderLegacyRec.Body.String())
-	}
 }
 
 func TestUserAvatarDeliveryRejectsMissingAndForeignMedia(t *testing.T) {
@@ -1473,70 +1462,6 @@ func TestSessionDeleteFailureReturnsInternalServerErrorWithoutClearingCookie(t *
 	}
 }
 
-func TestMediaUploadAndOwnerOnlyDelivery(t *testing.T) {
-	env := newTestEnvironment(t)
-	_, ownerToken := env.createUserAndSession(t, "owner@example.com")
-	_, otherToken := env.createUserAndSession(t, "other@example.com")
-	png := append([]byte(nil), []byte("\x89PNG\r\n\x1a\nbootstrap-media")...)
-
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	part, err := writer.CreateFormFile("file", "avatar.png")
-	if err != nil {
-		t.Fatalf("create multipart file: %v", err)
-	}
-	if _, err := part.Write(png); err != nil {
-		t.Fatalf("write multipart file: %v", err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close multipart writer: %v", err)
-	}
-
-	uploadReq := httptest.NewRequest(http.MethodPost, "/api/media", body)
-	uploadReq.Header.Set("Content-Type", writer.FormDataContentType())
-	addSessionCookie(uploadReq, ownerToken)
-	uploadRec := httptest.NewRecorder()
-	env.handler.ServeHTTP(uploadRec, uploadReq)
-	if uploadRec.Code != http.StatusCreated {
-		t.Fatalf("upload: expected 201, got %d body=%q", uploadRec.Code, uploadRec.Body.String())
-	}
-	var uploaded mediaResponse
-	if err := json.NewDecoder(uploadRec.Body).Decode(&uploaded); err != nil {
-		t.Fatalf("decode upload response: %v", err)
-	}
-	if uploaded.ID == "" || uploaded.MIME != "image/png" || uploaded.URL != "/uploads/"+uploaded.ID {
-		t.Fatalf("unexpected upload response: %+v", uploaded)
-	}
-
-	withoutSession := httptest.NewRecorder()
-	env.handler.ServeHTTP(withoutSession, httptest.NewRequest(http.MethodGet, uploaded.URL, nil))
-	if withoutSession.Code != http.StatusUnauthorized {
-		t.Fatalf("without session: expected 401, got %d", withoutSession.Code)
-	}
-
-	otherReq := httptest.NewRequest(http.MethodGet, uploaded.URL, nil)
-	addSessionCookie(otherReq, otherToken)
-	otherRec := httptest.NewRecorder()
-	env.handler.ServeHTTP(otherRec, otherReq)
-	if otherRec.Code != http.StatusNotFound {
-		t.Fatalf("other owner: expected 404, got %d body=%q", otherRec.Code, otherRec.Body.String())
-	}
-
-	ownerReq := httptest.NewRequest(http.MethodGet, uploaded.URL, nil)
-	addSessionCookie(ownerReq, ownerToken)
-	ownerRec := httptest.NewRecorder()
-	env.handler.ServeHTTP(ownerRec, ownerReq)
-	if ownerRec.Code != http.StatusOK {
-		t.Fatalf("owner: expected 200, got %d body=%q", ownerRec.Code, ownerRec.Body.String())
-	}
-	if ownerRec.Header().Get("Content-Type") != "image/png" {
-		t.Fatalf("owner: unexpected content type %q", ownerRec.Header().Get("Content-Type"))
-	}
-	if !bytes.Equal(ownerRec.Body.Bytes(), png) {
-		t.Fatalf("owner: media body changed: %q", ownerRec.Body.Bytes())
-	}
-}
-
 func TestWebSocketRequiresSessionBeforeUpgrade(t *testing.T) {
 	env := newTestEnvironment(t)
 	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
@@ -1610,7 +1535,7 @@ func TestExpiredSessionIsDeletedAndCookieCleared(t *testing.T) {
 		t.Fatalf("expire session: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/uploads/1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
 	addSessionCookie(req, token)
 	rec := httptest.NewRecorder()
 	env.handler.ServeHTTP(rec, req)
@@ -1628,20 +1553,6 @@ func TestExpiredSessionIsDeletedAndCookieCleared(t *testing.T) {
 	}
 	if remaining != 0 {
 		t.Fatal("expired session was not deleted")
-	}
-}
-
-func TestMalformedAndMissingMediaIDsReturnNotFoundForOwner(t *testing.T) {
-	env := newTestEnvironment(t)
-	_, token := env.createUserAndSession(t, "missing@example.com")
-	for _, path := range []string{"/uploads/not-a-number", "/uploads/" + strconv.FormatInt(999, 10), "/uploads/1/nested"} {
-		req := httptest.NewRequest(http.MethodGet, path, strings.NewReader(""))
-		addSessionCookie(req, token)
-		rec := httptest.NewRecorder()
-		env.handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("%s: expected 404, got %d", path, rec.Code)
-		}
 	}
 }
 

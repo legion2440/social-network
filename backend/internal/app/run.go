@@ -102,11 +102,6 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 	ids := id.UUIDGenerator{}
 	users := sqlite.NewUserRepo(db)
 	sessions := service.NewSessionService(sqlite.NewSessionRepo(db), appClock, ids, cfg.SessionTTL)
-	media, err := service.NewMediaService(sqlite.NewMediaRepo(db), appClock, ids, cfg.UploadDir)
-	if err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("media init: %w", err)
-	}
 	avatarStager, err := service.NewMediaStager(ids, cfg.UploadDir, service.MaxAvatarBytes)
 	if err != nil {
 		_ = db.Close()
@@ -143,7 +138,6 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 	handler := httpserver.NewHandler(
 		db,
 		sessions,
-		media,
 		auth,
 		profile,
 		follows,
