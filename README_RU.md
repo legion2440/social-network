@@ -37,7 +37,7 @@
 ### Запуск через Docker Compose
 
 ```bash
-git clone https://github.com/legion2440/social-network.git
+git clone https://01.tomorrow-school.ai/git/nyestaye/social-network
 cd social-network
 
 docker compose config
