@@ -735,18 +735,29 @@ test('pending comment create cannot update state after logout', async () => {
   assert.deepEqual(component.state.posts, []);
 });
 
-test('group posts no longer retain a mock comment mutation', () => {
+test('personal and group posts use the same backend comment mutation', () => {
   const component = createComponent();
-  let realCalls = 0;
-  let mockCalls = 0;
-  component.createComment = () => { realCalls += 1; };
-  component.addGroupComment = () => { mockCalls += 1; };
+  const calls = [];
+  component.createComment = postID => { calls.push(Number(postID)); };
 
-  component.mapPost({ id: '7', real: true, apiAuthorID: 2, privacy: 'public', commentsCount: 0 }, false).onSendComment();
-  component.mapPost({ id: 'group-post', uid: 'me', comments: [], privacy: 'public' }, true).onSendComment();
+  component.mapPost(component.mapAPIPost(rawPost(7, 2))).onSendComment();
+  component.mapPost(component.mapAPIPost(rawGroupPost(8, 3, 2))).onSendComment();
 
-  assert.equal(realCalls, 1);
-  assert.equal(mockCalls, 0);
+  assert.deepEqual(calls, [7, 8]);
+});
+
+test('production runtime has no prototype identities or seeded post state', () => {
+  const component = new Component({ defaultTheme: 'light' });
+  const source = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+
+  for (const prototypeValue of [
+    'Alex Morgan', 'Mei Lin', 'David Okafor', 'Nina Kovács', 'Tomás Rivera', 'Sara Bishop',
+    '@alexmorgan', 'alex@loop.social', 'Product designer. Building calm interfaces.'
+  ]) {
+    assert.equal(source.includes(prototypeValue), false, prototypeValue);
+  }
+  assert.deepEqual(component.state.openComments, {});
+  assert.equal(Object.prototype.hasOwnProperty.call(component.state, 'drafts'), false);
 });
 
 test('group mutation invalidates an older directory response', async () => {

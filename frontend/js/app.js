@@ -13,14 +13,14 @@ const IC = {
   cal: 'M8 2.5v3m8-3v3M3.5 9h17m-15-3.5h13a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z'
 };
 
-const USERS = {
-  me:    { id: 'me', name: 'Alex Morgan', handle: '@alexmorgan', initials: 'AM', color: '#6b62c9', bio: 'Product designer. Building calm interfaces.', email: 'alex@loop.social', dob: 'March 14, 1996', private: false },
-  mei:   { id: 'mei', name: 'Mei Lin', handle: '@meilin', initials: 'ML', color: '#b3813f', bio: 'Design systems at Fluxo. Type nerd.', email: 'mei@fluxo.co', dob: 'June 2, 1994', private: false },
-  david: { id: 'david', name: 'David Okafor', handle: '@dokafor', initials: 'DO', color: '#3f9a85', bio: 'Frontend engineer. Weekend trail runner.', email: 'david@okafor.dev', dob: 'Nov 20, 1991', private: false },
-  nina:  { id: 'nina', name: 'Nina Kov\u00e1cs', handle: '@ninak', initials: 'NK', color: '#c25a83', bio: 'Brand designer. Mostly lurking.', email: 'nina@studio-nk.com', dob: 'Feb 8, 1997', private: true },
-  tom:   { id: 'tom', name: 'Tom\u00e1s Rivera', handle: '@tomriv', initials: 'TR', color: '#4d84c4', bio: 'Photographer. Film only, no exceptions.', email: 'tom@rivera.photo', dob: 'Aug 30, 1993', private: true },
-  sara:  { id: 'sara', name: 'Sara Bishop', handle: '@sarab', initials: 'SB', color: '#8f6cc9', bio: 'Illustrator and printmaker.', email: 'sara@bishop.ink', dob: 'Apr 17, 1995', private: false }
-};
+function emptyCurrentUser() {
+  return decorateUser({
+    id: 'me', apiId: 0, name: '', handle: '', initials: '?', color: '#5661d8',
+    bio: '', email: '', dob: '', gender: '', private: false
+  });
+}
+
+const USERS = { me: emptyCurrentUser() };
 
 const EMOJIS = ['\ud83d\ude00', '\ud83d\ude02', '\ud83d\ude0d', '\ud83d\udd25', '\ud83d\udc4d', '\ud83c\udf89', '\ud83d\ude2e', '\ud83d\ude22', '\u2764\ufe0f', '\ud83d\udc40', '\u2728', '\ud83d\ude4c'];
 const GROUP_COLORS = ['#6b62c9', '#b3813f', '#3f9a85', '#c25a83', '#4d84c4', '#8f6cc9'];
@@ -138,7 +138,7 @@ class Component extends DCLogic {
       composerText: '', composerFile: null, composerFileName: '', composerError: '', composerPending: false,
       privacy: 'public', privacyOpen: false,
       selectedFollowers: {}, postFollowers: [], postFollowersLoading: false,
-      openComments: { p1: true }, drafts: {},
+      openComments: {},
       commentsByPostID: {},
       posts: [],
       apiUsersByID: {}, directoryUserIDs: [], directoryNextCursor: null, directoryLoading: false, directoryError: '',
@@ -283,7 +283,6 @@ class Component extends DCLogic {
     const normalized = PostModel.normalizePostResponse(post, USERS.me.apiId);
     return {
       id: normalized.id,
-      real: true,
       apiAuthorID: normalized.apiAuthorID,
 	  groupID: normalized.groupID,
       text: normalized.text,
@@ -1027,6 +1026,7 @@ class Component extends DCLogic {
     } catch (error) {
       if (!this.authGate.isCurrent(authGeneration)) return;
       if (error && error.status === 401) {
+        USERS.me = emptyCurrentUser();
         this.setState({ authStatus: 'anonymous', screen: 'auth', bootstrapError: '' });
         return;
       }
@@ -1151,6 +1151,7 @@ class Component extends DCLogic {
       Object.keys(this.commentAccessGatesByPostID).forEach(key => this.commentAccessGatesByPostID[key].begin());
       this.commentAccessGatesByPostID = {};
       this.commentLoadGatesByPostID = {};
+      USERS.me = emptyCurrentUser();
       this.setState(Object.assign({
         authStatus: 'anonymous', logoutPending: false, authMode: 'login',
         authError: '', screen: 'auth', myPrivacy: 'public',
@@ -1450,17 +1451,6 @@ class Component extends DCLogic {
     }
   };
 
-  likePost = (pid) => {
-    this.setState({ posts: this.state.posts.map(p => p.id === pid ? Object.assign({}, p, { liked: !p.liked, likes: p.likes + (p.liked ? -1 : 1) }) : p) });
-  };
-  addComment = (pid) => {
-    const text = (this.state.drafts[pid] || '').trim();
-    if (!text) return;
-    this.setState({
-      posts: this.state.posts.map(p => p.id === pid ? Object.assign({}, p, { comments: p.comments.concat([{ uid: 'me', text, time: 'now' }]) }) : p),
-      drafts: Object.assign({}, this.state.drafts, { [pid]: '' })
-    });
-  };
   pickComposerMedia = () => {
     const input = document.getElementById('post-media');
     if (input) input.click();
@@ -3200,66 +3190,55 @@ class Component extends DCLogic {
     const key = p.id;
     const privacyMeta = { public: { icon: IC.globe, label: 'Public' }, followers: { icon: IC.users, label: 'Followers' }, selected: { icon: IC.lock, label: 'Selected' } };
     const pm = privacyMeta[p.privacy] || privacyMeta.public;
-    const commentState = p.real ? this.commentState(p.id) : null;
-    const comments = p.real ? commentState.comments : (p.comments || []);
-    const likes = p.likes || 0;
-    const user = p.real ? this.apiUser(p.apiAuthorID) : (p.user || USERS[p.uid] || USERS.me);
+    const commentState = this.commentState(p.id);
+    const comments = commentState.comments;
+    const user = this.apiUser(p.apiAuthorID);
     return Object.assign({}, p, {
       user,
       privacyIcon: pm.icon, privacyLabel: pm.label,
-      hasImage: !!p.mediaUrl || !!p.image,
+      hasImage: !!p.mediaUrl,
       mediaUrl: p.mediaUrl || '',
-      showRealMedia: !!p.mediaUrl,
-      showMockImage: !p.mediaUrl && !!p.image,
-      showMockActions: !p.real,
-      notLiked: !p.liked,
-      likeColor: p.liked ? 'var(--danger)' : 'var(--text2)',
-      commentCount: num(p.real ? (p.commentsCount || 0) : comments.length),
-      likes: num(likes),
+      commentCount: num(p.commentsCount || 0),
       showComments: !!s.openComments[key],
       comments: comments.map(c => Object.assign({}, c, {
-        user: p.real ? this.apiUser(c.apiAuthorID) : USERS[c.uid],
-        time: p.real ? this.formatPostTime(c.createdAt) : c.time,
+        user: this.apiUser(c.apiAuthorID),
+        time: this.formatPostTime(c.createdAt),
         hasMedia: !!c.mediaUrl
       })),
-      draft: p.real ? commentState.draft : (s.drafts[key] || ''),
-      commentsLoading: p.real && commentState.loading,
-      commentsPending: p.real && commentState.pending,
-      commentsHasError: p.real && !!commentState.error,
-      commentsError: p.real ? commentState.error : '',
-      commentsHasMore: p.real && !!commentState.nextCursor,
-      commentCreatePending: p.real && commentState.createPending,
-      commentCreateHasError: p.real && !!commentState.createError,
-      commentCreateError: p.real ? commentState.createError : '',
-      commentSendDisabled: p.real && (commentState.createPending || !commentState.draft.trim()),
+      draft: commentState.draft,
+      commentsLoading: commentState.loading,
+      commentsPending: commentState.pending,
+      commentsHasError: !!commentState.error,
+      commentsError: commentState.error,
+      commentsHasMore: !!commentState.nextCursor,
+      commentCreatePending: commentState.createPending,
+      commentCreateHasError: !!commentState.createError,
+      commentCreateError: commentState.createError,
+      commentSendDisabled: commentState.createPending || !commentState.draft.trim(),
       commentMediaInputID: this.commentMediaInputID(p.id),
-      commentHasMedia: p.real && !!commentState.mediaFile,
-      commentMediaFileName: p.real ? commentState.mediaFileName : '',
-      commentMediaPreviewURL: p.real ? commentState.mediaPreviewURL : '',
-      commentMediaControlsDisabled: p.real && commentState.createPending,
-      commentSendLabel: p.real && commentState.createPending ? '…' : 'Send',
-      onLike: () => this.likePost(p.id),
-      onToggleComments: () => p.real
-        ? this.togglePostComments(p.id)
-        : this.setState({ openComments: Object.assign({}, s.openComments, { [key]: !s.openComments[key] }) }),
-      onDraft: (e) => p.real
-        ? this.setCommentDraft(p.id, e.target.value)
-        : this.setState({ drafts: Object.assign({}, this.state.drafts, { [key]: e.target.value }) }),
+      commentHasMedia: !!commentState.mediaFile,
+      commentMediaFileName: commentState.mediaFileName,
+      commentMediaPreviewURL: commentState.mediaPreviewURL,
+      commentMediaControlsDisabled: commentState.createPending,
+      commentSendLabel: commentState.createPending ? '…' : 'Send',
+      onToggleComments: () => this.togglePostComments(p.id),
+      onDraft: (e) => this.setCommentDraft(p.id, e.target.value),
       onKey: (e) => {
         if (e.key !== 'Enter') return;
-        if (p.real) { e.preventDefault(); this.createComment(p.id); }
+        e.preventDefault();
+        this.createComment(p.id);
       },
-      onSendComment: () => { if (p.real) this.createComment(p.id); },
-      onCommentMedia: (e) => { if (p.real) this.selectCommentMedia(p.id, e); },
+      onSendComment: () => this.createComment(p.id),
+      onCommentMedia: (e) => this.selectCommentMedia(p.id, e),
       onChooseCommentMedia: () => {
-        if (!p.real || commentState.createPending || typeof document === 'undefined') return;
+        if (commentState.createPending || typeof document === 'undefined') return;
         const input = document.getElementById(this.commentMediaInputID(p.id));
         if (input) input.click();
       },
-      onRemoveCommentMedia: () => { if (p.real) this.removeCommentMedia(p.id); },
+      onRemoveCommentMedia: () => this.removeCommentMedia(p.id),
       loadMoreComments: () => this.loadComments(p.id, false),
       retryComments: () => this.loadComments(p.id, true),
-      goProfile: () => { if (p.real) this.openProfile(p.apiAuthorID); }
+      goProfile: () => this.openProfile(p.apiAuthorID)
     });
   }
 
@@ -3290,7 +3269,7 @@ class Component extends DCLogic {
     });
 
     // feed
-    const feedPosts = s.posts.map((p, i) => Object.assign(this.mapPost(p, false), { delay: (i * 0.06).toFixed(2) + 's' }));
+    const feedPosts = s.posts.map((p, i) => Object.assign(this.mapPost(p), { delay: (i * 0.06).toFixed(2) + 's' }));
     const privacyMeta = { public: { icon: IC.globe, label: 'Public' }, followers: { icon: IC.users, label: 'Followers' }, selected: { icon: IC.lock, label: 'Selected' } };
     const privacyOptions = [
       { k: 'public', label: 'Public', desc: 'Anyone on loop can see this', icon: IC.globe },
@@ -3712,7 +3691,7 @@ class Component extends DCLogic {
       pStatFollowing: num(pUser.followingCount || 0),
       pTabs,
       pTabPosts: s.profileTab === 'posts', pTabFollowers: s.profileTab === 'followers', pTabFollowing: s.profileTab === 'following',
-      pPosts: pPostsRaw.map(p => this.mapPost(p, false)),
+      pPosts: pPostsRaw.map(p => this.mapPost(p)),
       pNoPosts: !s.profilePostsLoading && !s.profilePostsError && pPostsRaw.length === 0,
       pPostsLoading: s.profilePostsLoading,
       pPostsHasError: !!s.profilePostsError,
