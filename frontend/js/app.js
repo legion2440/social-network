@@ -3581,8 +3581,14 @@ class Component extends DCLogic {
     });
 
     // right rail
+    const pendingRequestActorIDs = new Set(
+      s.notifications
+        .filter(n => n.type === 'follow_request' && NotificationModel.isActionable(n))
+        .map(n => Number(n.actorID))
+    );
     const suggestions = s.directoryUserIDs.map(userID => this.apiUser(userID))
       .filter(user => !user.relationship || user.relationship.status !== 'accepted')
+      .filter(user => !pendingRequestActorIDs.has(Number(user.apiId)))
       .map(user => {
         const b = this.followBtn(user.apiId);
         return {
@@ -3674,8 +3680,10 @@ class Component extends DCLogic {
       privacyIsSelected: s.privacy === 'selected',
       followerChips,
       selectedFollowersEmpty: s.postFollowers.length === 0 && !s.postFollowersLoading,
-      postBtnOp: s.composerText.trim() && composerAudienceReady && !s.composerPending ? '1' : '0.45',
       postBtnDisabled: s.composerPending || !s.composerText.trim() || !composerAudienceReady,
+      postBtnBg: (s.composerText.trim() && composerAudienceReady && !s.composerPending) ? 'var(--accent)' : 'var(--surface2)',
+      postBtnColor: (s.composerText.trim() && composerAudienceReady && !s.composerPending) ? '#fff' : 'var(--text3)',
+      postBtnCursor: s.composerPending ? 'wait' : ((s.composerText.trim() && composerAudienceReady) ? 'pointer' : 'not-allowed'),
       postButtonLabel: s.composerPending ? 'Posting…' : 'Post',
       sendPost: this.sendPost,
       // profile
