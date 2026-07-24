@@ -13,10 +13,6 @@ type CommentRepo struct {
 	db sqlExecutor
 }
 
-func NewCommentRepo(db *sql.DB) *CommentRepo {
-	return &CommentRepo{db: db}
-}
-
 func (r *CommentRepo) Create(ctx context.Context, comment *domain.Comment) (int64, error) {
 	if r == nil || r.db == nil || comment == nil || comment.PostID <= 0 || comment.AuthorUserID <= 0 || comment.Text == "" || comment.CreatedAt.IsZero() {
 		return 0, fmt.Errorf("invalid comment")

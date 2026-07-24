@@ -338,36 +338,12 @@ func (s *GroupService) createMembership(
 	return result, nil
 }
 
-func (s *GroupService) CancelJoinRequest(ctx context.Context, userID, groupID int64) (*domain.Group, error) {
-	result, err := s.CancelJoinRequestWithEffects(ctx, userID, groupID)
-	if err != nil {
-		return nil, err
-	}
-	return result.Group, nil
-}
-
 func (s *GroupService) CancelJoinRequestWithEffects(ctx context.Context, userID, groupID int64) (*GroupMutationResult, error) {
 	return s.deleteMembership(ctx, userID, groupID, userID, domain.GroupRequested, false, domain.NotificationCancelled)
 }
 
-func (s *GroupService) RejectJoinRequest(ctx context.Context, ownerUserID, groupID, targetUserID int64) (*domain.Group, error) {
-	result, err := s.RejectJoinRequestWithEffects(ctx, ownerUserID, groupID, targetUserID)
-	if err != nil {
-		return nil, err
-	}
-	return result.Group, nil
-}
-
 func (s *GroupService) RejectJoinRequestWithEffects(ctx context.Context, ownerUserID, groupID, targetUserID int64) (*GroupMutationResult, error) {
 	return s.deleteMembership(ctx, ownerUserID, groupID, targetUserID, domain.GroupRequested, true, domain.NotificationDeclined)
-}
-
-func (s *GroupService) DeclineInvitation(ctx context.Context, userID, groupID int64) (*domain.Group, error) {
-	result, err := s.DeclineInvitationWithEffects(ctx, userID, groupID)
-	if err != nil {
-		return nil, err
-	}
-	return result.Group, nil
 }
 
 func (s *GroupService) DeclineInvitationWithEffects(ctx context.Context, userID, groupID int64) (*GroupMutationResult, error) {

@@ -658,22 +658,6 @@ func normalizeUserPair(first, second int64) (int64, int64) {
 	return second, first
 }
 
-func removeUserID(ids []int64, userID int64) []int64 {
-	result := make([]int64, 0, len(ids))
-	seen := make(map[int64]struct{}, len(ids))
-	for _, id := range ids {
-		if id <= 0 || id == userID {
-			continue
-		}
-		if _, exists := seen[id]; exists {
-			continue
-		}
-		seen[id] = struct{}{}
-		result = append(result, id)
-	}
-	return result
-}
-
 func emptyChatUnreadEffects() *ChatUnreadEffects {
 	return &ChatUnreadEffects{StatesByUser: make(map[int64]*domain.ChatUnreadState)}
 }

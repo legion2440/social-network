@@ -18,10 +18,6 @@ type ChatRepo struct {
 	db sqlExecutor
 }
 
-func NewChatRepo(db *sql.DB) *ChatRepo {
-	return &ChatRepo{db: db}
-}
-
 func (r *ChatRepo) EnsureUserState(ctx context.Context, userID int64) error {
 	if r == nil || r.db == nil || userID <= 0 {
 		return fmt.Errorf("invalid chat user state")

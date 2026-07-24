@@ -18,10 +18,6 @@ type GroupRepo struct {
 	db sqlExecutor
 }
 
-func NewGroupRepo(db *sql.DB) *GroupRepo {
-	return &GroupRepo{db: db}
-}
-
 func (r *GroupRepo) Create(ctx context.Context, group *domain.Group) (int64, error) {
 	if group == nil || group.OwnerUserID <= 0 || strings.TrimSpace(group.Title) == "" || strings.TrimSpace(group.Description) == "" || group.CreatedAt.IsZero() {
 		return 0, fmt.Errorf("invalid group")

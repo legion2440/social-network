@@ -16,10 +16,6 @@ type GroupEventRepo struct {
 	db sqlExecutor
 }
 
-func NewGroupEventRepo(db *sql.DB) *GroupEventRepo {
-	return &GroupEventRepo{db: db}
-}
-
 func (r *GroupEventRepo) Create(ctx context.Context, event *domain.GroupEvent) (int64, error) {
 	if event == nil || event.GroupID <= 0 || event.CreatorUserID <= 0 || strings.TrimSpace(event.Title) == "" ||
 		strings.TrimSpace(event.Description) == "" || event.StartsAt.IsZero() || event.CreatedAt.IsZero() {

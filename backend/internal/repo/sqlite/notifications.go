@@ -18,10 +18,6 @@ type NotificationRepo struct {
 	db sqlExecutor
 }
 
-func NewNotificationRepo(db *sql.DB) *NotificationRepo {
-	return &NotificationRepo{db: db}
-}
-
 func (r *NotificationRepo) EnsureUserState(ctx context.Context, userID int64) error {
 	if userID <= 0 {
 		return fmt.Errorf("invalid notification user state")

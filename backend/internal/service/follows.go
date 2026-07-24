@@ -181,14 +181,6 @@ func (s *FollowService) Relationship(ctx context.Context, currentUserID, targetU
 	return &Relationship{Status: status, FollowsMe: followsMe}, nil
 }
 
-func (s *FollowService) AcceptRequest(ctx context.Context, currentUserID, requestID int64) (*domain.Follow, error) {
-	result, err := s.AcceptRequestWithEffects(ctx, currentUserID, requestID)
-	if err != nil {
-		return nil, err
-	}
-	return result.Follow, nil
-}
-
 func (s *FollowService) AcceptRequestWithEffects(ctx context.Context, currentUserID, requestID int64) (*FollowMutationResult, error) {
 	if s == nil || s.transactions == nil || s.clock == nil || currentUserID <= 0 || requestID <= 0 {
 		return nil, ErrInvalidInput
@@ -217,11 +209,6 @@ func (s *FollowService) AcceptRequestWithEffects(ctx context.Context, currentUse
 		return nil, err
 	}
 	return result, nil
-}
-
-func (s *FollowService) RejectRequest(ctx context.Context, currentUserID, requestID int64) error {
-	_, err := s.RejectRequestWithEffects(ctx, currentUserID, requestID)
-	return err
 }
 
 func (s *FollowService) RejectRequestWithEffects(ctx context.Context, currentUserID, requestID int64) (*FollowMutationResult, error) {
