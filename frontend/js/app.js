@@ -29,6 +29,12 @@ function cover(color) {
   return 'linear-gradient(135deg, color-mix(in oklab, ' + color + ' 55%, var(--surface2)), color-mix(in oklab, ' + color + ' 14%, var(--surface2)))';
 }
 function num(x) { return String(x); }
+function formatDateOfBirthInput(value) {
+  const digits = String(value || '').replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return digits.slice(0, 2) + '-' + digits.slice(2);
+  return digits.slice(0, 2) + '-' + digits.slice(2, 4) + '-' + digits.slice(4);
+}
 
 function emptyRegistrationForm() {
   return {
@@ -3676,7 +3682,7 @@ class Component extends DCLogic {
       authPassword: s.authPassword, onAuthPassword: (e) => this.setState({ authPassword: e.target.value }),
       regFirstName: s.regFirstName, onRegFirstName: (e) => this.setState({ regFirstName: e.target.value }),
       regLastName: s.regLastName, onRegLastName: (e) => this.setState({ regLastName: e.target.value }),
-      regDateOfBirth: s.regDateOfBirth, onRegDateOfBirth: (e) => this.setState({ regDateOfBirth: e.target.value }),
+      regDateOfBirth: s.regDateOfBirth, onRegDateOfBirth: (e) => this.setState({ regDateOfBirth: formatDateOfBirthInput(e.target.value) }),
       regGender: s.regGender, onRegGender: (e) => this.setState({ regGender: e.target.value }),
       regNickname: s.regNickname, onRegNickname: (e) => this.setState({ regNickname: e.target.value }),
       regAboutMe: s.regAboutMe, onRegAboutMe: (e) => this.setState({ regAboutMe: e.target.value }),
@@ -3764,7 +3770,7 @@ class Component extends DCLogic {
       profileEditError: s.profileEditError,
       editFirstName: s.editFirstName, onEditFirstName: (e) => this.setState({ editFirstName: e.target.value }),
       editLastName: s.editLastName, onEditLastName: (e) => this.setState({ editLastName: e.target.value }),
-      editDateOfBirth: s.editDateOfBirth, onEditDateOfBirth: (e) => this.setState({ editDateOfBirth: e.target.value }),
+      editDateOfBirth: s.editDateOfBirth, onEditDateOfBirth: (e) => this.setState({ editDateOfBirth: formatDateOfBirthInput(e.target.value) }),
       editGender: s.editGender, onEditGender: (e) => this.setState({ editGender: e.target.value }),
       editNickname: s.editNickname, onEditNickname: (e) => this.setState({ editNickname: e.target.value }),
       editAboutMe: s.editAboutMe, onEditAboutMe: (e) => this.setState({ editAboutMe: e.target.value }),

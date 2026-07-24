@@ -264,6 +264,24 @@ test('registration avatar preview replaces and releases object URLs', () => {
   }
 });
 
+test('date of birth inputs format digit-only values as DD-MM-YYYY', () => {
+  const component = createComponent();
+  let view = component.renderVals();
+
+  view.onRegDateOfBirth({ target: { value: '02021986' } });
+  assert.equal(component.state.regDateOfBirth, '02-02-1986');
+
+  view = component.renderVals();
+  view.onRegDateOfBirth({ target: { value: '0202' } });
+  assert.equal(component.state.regDateOfBirth, '02-02');
+
+  view.onEditDateOfBirth({ target: { value: '29/02/2000' } });
+  assert.equal(component.state.editDateOfBirth, '29-02-2000');
+
+  view.onEditDateOfBirth({ target: { value: '311219999' } });
+  assert.equal(component.state.editDateOfBirth, '31-12-1999');
+});
+
 test('directory ignores an older relationship response', async () => {
   const component = createComponent();
   const oldRequest = deferred();
