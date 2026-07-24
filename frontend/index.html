@@ -975,7 +975,7 @@
   </main>
 
   <sc-if value="{{rightRail}}" hint-placeholder-val="{{true}}">
-  <aside style="width:300px;flex:none;position:sticky;top:0;height:100vh;overflow-y:auto;padding:{{rightRailPaddingTop}} 4px 24px 0;display:flex;flex-direction:column;gap:16px">
+  <aside style="width:300px;flex:none;position:sticky;top:0;height:100vh;overflow-y:auto;padding:24px 4px 24px 0;display:flex;flex-direction:column;gap:16px">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 18px 12px">
       <div style="font:800 14px 'Manrope',sans-serif;margin-bottom:14px">Suggested for you</div>
       <sc-if value="{{suggestionsHasError}}" hint-placeholder-val="{{false}}"><div role="alert" style="padding:8px 0 14px;color:var(--danger);font:600 11.5px/1.4 'Manrope',sans-serif">{{suggestionsError}}</div></sc-if>
