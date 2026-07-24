@@ -263,18 +263,19 @@ test('group events client uses JSON create and idempotent RSVP endpoints', async
   assert.ok(calls.every(call => call.options.credentials === 'same-origin'));
 });
 
-test('comment create sends strict JSON to the post comments endpoint', async () => {
+test('comment create sends original FormData without setting Content-Type', async () => {
   let call;
   const api = createAuthAPI(async (path, options) => {
     call = { path, options };
     return jsonResponse(201, { id: 15, post_id: 7, text: 'Hello' });
   });
+  const formData = { kind: 'comment-form-data-test-double' };
 
-  await api.createComment(7, 'Hello');
+  await api.createComment(7, formData);
   assert.equal(call.path, '/api/posts/7/comments');
   assert.equal(call.options.method, 'POST');
-  assert.equal(call.options.headers['Content-Type'], 'application/json');
-  assert.deepEqual(JSON.parse(call.options.body), { text: 'Hello' });
+  assert.equal(call.options.headers['Content-Type'], undefined);
+  assert.equal(call.options.body, formData);
   assert.equal(call.options.credentials, 'same-origin');
 });
 

@@ -1,8 +1,10 @@
 package service_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -37,12 +39,21 @@ func TestCreateCommentRollsBackWhenTransactionFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create post: %v", err)
 	}
+	uploadDir := filepath.Join(root, "uploads")
+	stager, err := service.NewMediaStager(&authTestIDGenerator{}, uploadDir, service.MaxMediaBytes)
+	if err != nil {
+		t.Fatalf("new comment media stager: %v", err)
+	}
 
 	comments := service.NewCommentService(
 		failAfterCallbackTransactions{delegate: sqlite.NewTransactionManager(db)},
 		fixedPostClock{now: now},
+		stager,
 	)
-	comment, err := comments.Create(ctx, commenterID, postID, "rollback comment")
+	comment, err := comments.Create(ctx, commenterID, postID, service.CreateCommentInput{
+		Text:  "rollback comment",
+		Media: &service.MediaUpload{OriginalName: "rollback.png", Reader: bytes.NewReader([]byte("\x89PNG\r\n\x1a\ncomment"))},
+	})
 	if !errors.Is(err, errForcedCommitFailure) || comment != nil {
 		t.Fatalf("expected forced transaction failure, comment=%+v err=%v", comment, err)
 	}
@@ -53,6 +64,19 @@ func TestCreateCommentRollsBackWhenTransactionFails(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("rollback left %d comment rows", count)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM media WHERE owner_user_id = ?`, commenterID).Scan(&count); err != nil {
+		t.Fatalf("count comment media: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("rollback left %d media rows", count)
+	}
+	entries, err := os.ReadDir(uploadDir)
+	if err != nil {
+		t.Fatalf("read upload directory: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("rollback left upload files: %+v", entries)
 	}
 }
 
@@ -79,13 +103,17 @@ func TestCreateCommentCountsTrimmedUnicodeCodePoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create post: %v", err)
 	}
-	comments := service.NewCommentService(sqlite.NewTransactionManager(db), fixedPostClock{now: now})
+	stager, err := service.NewMediaStager(&authTestIDGenerator{}, filepath.Join(root, "uploads"), service.MaxMediaBytes)
+	if err != nil {
+		t.Fatalf("new comment media stager: %v", err)
+	}
+	comments := service.NewCommentService(sqlite.NewTransactionManager(db), fixedPostClock{now: now}, stager)
 
 	valid := strings.Repeat("🙂", service.MaxCommentTextRunes)
 	if utf8.RuneCountInString(valid) != service.MaxCommentTextRunes {
 		t.Fatal("test input does not contain the expected rune count")
 	}
-	created, err := comments.Create(ctx, commenterID, postID, " \n"+valid+"\t ")
+	created, err := comments.Create(ctx, commenterID, postID, service.CreateCommentInput{Text: " \n" + valid + "\t "})
 	if err != nil {
 		t.Fatalf("create max-length Unicode comment: %v", err)
 	}
@@ -98,7 +126,7 @@ func TestCreateCommentCountsTrimmedUnicodeCodePoints(t *testing.T) {
 		"invalid UTF-8": string([]byte{0xff}),
 	} {
 		t.Run(name, func(t *testing.T) {
-			comment, err := comments.Create(ctx, commenterID, postID, value)
+			comment, err := comments.Create(ctx, commenterID, postID, service.CreateCommentInput{Text: value})
 			if !errors.Is(err, service.ErrInvalidInput) || comment != nil {
 				t.Fatalf("expected invalid comment rejection, comment=%+v err=%v", comment, err)
 			}

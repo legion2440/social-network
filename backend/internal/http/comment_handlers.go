@@ -1,21 +1,18 @@
 package http
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"time"
-	"unicode/utf8"
 
 	"social-network/backend/internal/domain"
 	"social-network/backend/internal/service"
 )
 
-const maxCommentJSONBytes = 64 << 10
+const commentMultipartMemory = 1 << 20
 
 func (h *Handler) handlePostComments(w http.ResponseWriter, r *http.Request) {
 	if h.comments == nil {
@@ -43,21 +40,27 @@ func (h *Handler) handlePostComments(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, newCommentPageResponse(page))
 	case http.MethodPost:
 		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-		if err != nil || mediaType != "application/json" {
-			writeError(w, http.StatusUnsupportedMediaType, "content type must be application/json")
+		if err != nil || mediaType != "multipart/form-data" {
+			writeError(w, http.StatusUnsupportedMediaType, "content type must be multipart/form-data")
 			return
 		}
-		text, err := readCreateCommentText(w, r)
+		r.Body = http.MaxBytesReader(w, r.Body, service.MaxMediaBodyBytes)
+		input, mediaFile, err := readCreateCommentInput(r)
+		if mediaFile != nil {
+			defer mediaFile.Close()
+		}
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
+		}
 		if err != nil {
-			var tooLarge *http.MaxBytesError
-			if errors.As(err, &tooLarge) {
-				writeError(w, http.StatusRequestEntityTooLarge, "request body is too large")
+			if isMultipartTooLarge(err) {
+				writeError(w, http.StatusRequestEntityTooLarge, "media is too big (max 20MB)")
 				return
 			}
 			writeError(w, http.StatusBadRequest, "invalid input")
 			return
 		}
-		comment, err := h.comments.Create(r.Context(), current.ID, postID, text)
+		comment, err := h.comments.Create(r.Context(), current.ID, postID, input)
 		if h.handleCommentServiceError(w, err) {
 			return
 		}
@@ -68,48 +71,45 @@ func (h *Handler) handlePostComments(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func readCreateCommentText(w http.ResponseWriter, r *http.Request) (string, error) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCommentJSONBytes))
+func readCreateCommentInput(r *http.Request) (service.CreateCommentInput, multipart.File, error) {
+	if err := r.ParseMultipartForm(commentMultipartMemory); err != nil {
+		return service.CreateCommentInput{}, nil, err
+	}
+	form := r.MultipartForm
+	if form == nil {
+		return service.CreateCommentInput{}, nil, service.ErrInvalidInput
+	}
+	for name := range form.Value {
+		if name != "text" {
+			return service.CreateCommentInput{}, nil, service.ErrInvalidInput
+		}
+	}
+	for name := range form.File {
+		if name != "media" {
+			return service.CreateCommentInput{}, nil, service.ErrInvalidInput
+		}
+	}
+	textValues, exists := form.Value["text"]
+	if !exists || len(textValues) != 1 {
+		return service.CreateCommentInput{}, nil, service.ErrInvalidInput
+	}
+	input := service.CreateCommentInput{Text: textValues[0]}
+	mediaHeaders := form.File["media"]
+	if len(mediaHeaders) > 1 {
+		return service.CreateCommentInput{}, nil, service.ErrInvalidInput
+	}
+	if len(mediaHeaders) == 0 {
+		return input, nil, nil
+	}
+	mediaFile, err := mediaHeaders[0].Open()
 	if err != nil {
-		return "", err
+		return service.CreateCommentInput{}, nil, err
 	}
-	if !utf8.Valid(body) {
-		return "", service.ErrInvalidInput
+	input.Media = &service.MediaUpload{
+		OriginalName: mediaHeaders[0].Filename,
+		Reader:       mediaFile,
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	opening, err := decoder.Token()
-	if err != nil || opening != json.Delim('{') {
-		return "", service.ErrInvalidInput
-	}
-
-	seenText := false
-	text := ""
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return "", service.ErrInvalidInput
-		}
-		name, ok := token.(string)
-		if !ok || name != "text" || seenText {
-			return "", service.ErrInvalidInput
-		}
-		seenText = true
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return "", service.ErrInvalidInput
-		}
-		if err := json.Unmarshal(raw, &text); err != nil {
-			return "", service.ErrInvalidInput
-		}
-	}
-	closing, err := decoder.Token()
-	if err != nil || closing != json.Delim('}') || !seenText {
-		return "", service.ErrInvalidInput
-	}
-	if err := ensureJSONEOF(decoder); err != nil {
-		return "", service.ErrInvalidInput
-	}
-	return text, nil
+	return input, mediaFile, nil
 }
 
 func readCommentPageQuery(r *http.Request) (*domain.CommentCursor, int, error) {
@@ -157,6 +157,10 @@ func (h *Handler) handleCommentServiceError(w http.ResponseWriter, err error) bo
 		writeError(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, service.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
+	case errors.Is(err, service.ErrInvalidMediaType):
+		writeError(w, http.StatusBadRequest, "media must be JPEG, PNG, GIF or WebP")
+	case errors.Is(err, service.ErrMediaTooBig):
+		writeError(w, http.StatusRequestEntityTooLarge, "media is too big (max 20MB)")
 	default:
 		h.logger.Printf("comment request: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
@@ -168,6 +172,7 @@ type commentResponse struct {
 	ID        int64               `json:"id"`
 	PostID    int64               `json:"post_id"`
 	Text      string              `json:"text"`
+	MediaURL  *string             `json:"media_url"`
 	CreatedAt time.Time           `json:"created_at"`
 	Author    userSummaryResponse `json:"author"`
 }
@@ -180,6 +185,7 @@ func newCommentResponse(comment *domain.Comment) *commentResponse {
 		ID:        comment.ID,
 		PostID:    comment.PostID,
 		Text:      comment.Text,
+		MediaURL:  domain.CommentMediaURL(comment),
 		CreatedAt: comment.CreatedAt,
 		Author:    newUserSummaryResponse(comment.Author),
 	}

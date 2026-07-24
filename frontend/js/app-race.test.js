@@ -90,7 +90,8 @@ function rawComment(id, postID, authorID, createdAt) {
 function emptyCommentStateForTest() {
   return {
     comments: [], loading: false, pending: false, error: '', nextCursor: null,
-    draft: '', createPending: false, createError: '', loaded: false
+    draft: '', mediaFile: null, mediaFileName: '', mediaPreviewURL: '',
+    createPending: false, createError: '', loaded: false
   };
 }
 
@@ -282,7 +283,8 @@ test('unfollow purges target posts immediately and stale feed cannot restore the
 function emptyTestCommentState() {
   return {
     comments: [], loading: false, pending: false, error: '', nextCursor: null,
-    draft: '', createPending: false, createError: '', loaded: false
+    draft: '', mediaFile: null, mediaFileName: '', mediaPreviewURL: '',
+    createPending: false, createError: '', loaded: false
   };
 }
 
@@ -513,6 +515,140 @@ test('comment create error keeps the draft', async () => {
   assert.equal(component.commentState(7).draft, 'keep me');
   assert.equal(component.commentState(7).createPending, false);
   assert.match(component.commentState(7).createError, /offline/);
+});
+
+test('comment media replace and remove revoke object URLs immediately', () => {
+  const component = createComponent();
+  const revoked = [];
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+  let nextPreview = 0;
+  URL.createObjectURL = () => 'blob:comment-' + (++nextPreview);
+  URL.revokeObjectURL = value => revoked.push(value);
+  try {
+    const first = new Blob(['first'], { type: 'image/png' });
+    Object.defineProperty(first, 'name', { value: 'first.png' });
+    const second = new Blob(['second'], { type: 'image/webp' });
+    Object.defineProperty(second, 'name', { value: 'second.webp' });
+
+    component.selectCommentMedia(7, { target: { files: [first] } });
+    assert.equal(component.commentState(7).mediaPreviewURL, 'blob:comment-1');
+    component.selectCommentMedia(7, { target: { files: [second] } });
+    assert.deepEqual(revoked, ['blob:comment-1']);
+    assert.equal(component.commentState(7).mediaFile, second);
+    assert.equal(component.commentState(7).mediaFileName, 'second.webp');
+
+    component.removeCommentMedia(7);
+    assert.deepEqual(revoked, ['blob:comment-1', 'blob:comment-2']);
+    assert.equal(component.commentState(7).mediaFile, null);
+    assert.equal(component.commentState(7).mediaPreviewURL, '');
+  } finally {
+    URL.createObjectURL = originalCreateObjectURL;
+    URL.revokeObjectURL = originalRevokeObjectURL;
+  }
+});
+
+test('pending comment media is immutable and successful multipart create clears it', async () => {
+  const component = createComponent();
+  const response = deferred();
+  const revoked = [];
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+  URL.revokeObjectURL = value => revoked.push(value);
+  const file = new Blob(['png'], { type: 'image/png' });
+  Object.defineProperty(file, 'name', { value: 'comment.png' });
+  let sentFormData;
+  global.AuthAPI.createComment = (postID, formData) => {
+    assert.equal(postID, 7);
+    sentFormData = formData;
+    return response.promise;
+  };
+  component.state.commentsByPostID = {
+    '7': Object.assign(emptyTestCommentState(), {
+      draft: 'attached comment',
+      mediaFile: file,
+      mediaFileName: 'comment.png',
+      mediaPreviewURL: 'blob:submitted'
+    })
+  };
+
+  try {
+    const create = component.createComment(7);
+    assert.equal(component.commentState(7).createPending, true);
+    const replacement = new Blob(['webp'], { type: 'image/webp' });
+    Object.defineProperty(replacement, 'name', { value: 'replacement.webp' });
+    component.selectCommentMedia(7, { target: { files: [replacement] } });
+    component.removeCommentMedia(7);
+    assert.equal(component.commentState(7).mediaFile, file);
+    assert.equal(sentFormData.get('text'), 'attached comment');
+    assert.equal(sentFormData.get('media').type, 'image/png');
+
+    const created = rawComment(9, 7, 1);
+    created.media_url = '/api/comments/9/media';
+    response.resolve(created);
+    await create;
+
+    assert.deepEqual(revoked, ['blob:submitted']);
+    assert.equal(component.commentState(7).draft, '');
+    assert.equal(component.commentState(7).mediaFile, null);
+    assert.equal(component.commentState(7).mediaPreviewURL, '');
+    assert.equal(component.commentState(7).comments[0].mediaUrl, '/api/comments/9/media');
+  } finally {
+    URL.revokeObjectURL = originalRevokeObjectURL;
+  }
+});
+
+test('comment media survives retryable errors but is revoked on access loss, purge, logout and unmount', async () => {
+  const component = createComponent();
+  const revoked = [];
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+  URL.revokeObjectURL = value => revoked.push(value);
+  const file = new Blob(['gif'], { type: 'image/gif' });
+  Object.defineProperty(file, 'name', { value: 'comment.gif' });
+  component.state.commentsByPostID = {
+    '7': Object.assign(emptyTestCommentState(), {
+      draft: 'keep attachment',
+      mediaFile: file,
+      mediaFileName: 'comment.gif',
+      mediaPreviewURL: 'blob:retry'
+    })
+  };
+  global.AuthAPI.createComment = async () => { throw new Error('offline'); };
+  global.AuthAPI.postComments = async () => ({ comments: [], next_cursor: null });
+  try {
+    await component.createComment(7);
+    await component.loadComments(7, true);
+    assert.equal(component.commentState(7).mediaFile, file);
+    assert.equal(component.commentState(7).mediaPreviewURL, 'blob:retry');
+    assert.deepEqual(revoked, []);
+
+    global.AuthAPI.createComment = async () => {
+      const error = new Error('forbidden');
+      error.status = 403;
+      throw error;
+    };
+    await component.createComment(7);
+    assert.equal(component.commentState(7).mediaFile, null);
+    assert.deepEqual(revoked, ['blob:retry']);
+
+    component.state.commentsByPostID = {
+      '8': Object.assign(emptyTestCommentState(), { mediaPreviewURL: 'blob:purge' }),
+      '9': Object.assign(emptyTestCommentState(), { mediaPreviewURL: 'blob:logout' })
+    };
+    component.purgeCommentStates([8]);
+    assert.ok(revoked.includes('blob:purge'));
+    global.AuthAPI.logout = async () => null;
+    await component.logout();
+    assert.ok(revoked.includes('blob:logout'));
+
+    const unmount = createComponent();
+    unmount.state.commentsByPostID = {
+      '10': Object.assign(emptyTestCommentState(), { mediaPreviewURL: 'blob:unmount' })
+    };
+    unmount.componentWillUnmount();
+    assert.ok(revoked.includes('blob:unmount'));
+  } finally {
+    URL.revokeObjectURL = originalRevokeObjectURL;
+  }
 });
 
 test('comment reset ignores an older response', async () => {

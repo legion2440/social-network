@@ -25,6 +25,7 @@ type Handler struct {
 	posts              *service.PostService
 	postMedia          *service.PostMediaDeliveryService
 	comments           *service.CommentService
+	commentMedia       *service.CommentMediaDeliveryService
 	groups             *service.GroupService
 	groupEvents        *service.GroupEventService
 	notifications      *service.NotificationService
@@ -50,6 +51,7 @@ func NewHandler(
 	posts *service.PostService,
 	postMedia *service.PostMediaDeliveryService,
 	comments *service.CommentService,
+	commentMedia *service.CommentMediaDeliveryService,
 	groups *service.GroupService,
 	groupEvents *service.GroupEventService,
 	notifications *service.NotificationService,
@@ -77,6 +79,7 @@ func NewHandler(
 		posts:         posts,
 		postMedia:     postMedia,
 		comments:      comments,
+		commentMedia:  commentMedia,
 		groups:        groups,
 		groupEvents:   groupEvents,
 		notifications: notifications,
@@ -153,6 +156,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("/api/posts/feed", protected(h.handlePostFeed))
 	mux.Handle("/api/posts/{id}/media", protected(h.handlePostMedia))
 	mux.Handle("/api/posts/{id}/comments", protected(h.handlePostComments))
+	mux.Handle("/api/comments/{id}/media", protected(h.handleCommentMedia))
 	mux.Handle("/api/groups", protected(h.handleGroups))
 	mux.Handle("/api/groups/{id}", protected(h.handleGroupDetail))
 	mux.Handle("/api/groups/{id}/members", protected(h.handleGroupMembers))

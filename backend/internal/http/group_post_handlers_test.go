@@ -157,9 +157,15 @@ func TestGroupPostsAccessStrictMultipartCommentsMediaAndRejoin(t *testing.T) {
 		t.Fatalf("group posts method contract: status=%d allow=%q", methodRecorder.Code, methodRecorder.Header().Get("Allow"))
 	}
 
-	comment := createCommentThroughHTTP(t, env, memberToken, ownerPost.ID, "member comment", http.StatusCreated)
+	commentMedia := []byte("\x89PNG\r\n\x1a\ngroup-comment-image")
+	comment := createCommentWithMediaThroughHTTP(t, env, memberToken, ownerPost.ID, "member comment", &postMultipartFile{
+		fieldName: "media", filename: "group-comment.png", contents: commentMedia,
+	}, http.StatusCreated)
 	if comment.PostID != ownerPost.ID {
 		t.Fatalf("unexpected group comment: %+v", comment)
+	}
+	if comment.MediaURL == nil {
+		t.Fatal("group comment media URL is missing")
 	}
 	countedPage := getPostPage(t, env, ownerToken, base+"/posts?limit=10", http.StatusOK)
 	var counted bool
@@ -180,6 +186,11 @@ func TestGroupPostsAccessStrictMultipartCommentsMediaAndRejoin(t *testing.T) {
 	if mediaRecorder.Code != http.StatusOK || mediaRecorder.Body.String() != string(png) {
 		t.Fatalf("group media before leave: status=%d body=%q", mediaRecorder.Code, mediaRecorder.Body.String())
 	}
+	commentMediaRecorder := httptest.NewRecorder()
+	env.handler.ServeHTTP(commentMediaRecorder, authenticatedRequest(http.MethodGet, *comment.MediaURL, memberToken, nil))
+	if commentMediaRecorder.Code != http.StatusOK || commentMediaRecorder.Body.String() != string(commentMedia) {
+		t.Fatalf("group comment media before leave: status=%d body=%q", commentMediaRecorder.Code, commentMediaRecorder.Body.String())
+	}
 
 	groupMutation(t, env, http.MethodDelete, base+"/membership", memberToken, http.StatusOK)
 	getPostPage(t, env, memberToken, base+"/posts", http.StatusForbidden)
@@ -190,6 +201,11 @@ func TestGroupPostsAccessStrictMultipartCommentsMediaAndRejoin(t *testing.T) {
 	if mediaRecorder.Code != http.StatusForbidden {
 		t.Fatalf("group media after leave: status=%d body=%q", mediaRecorder.Code, mediaRecorder.Body.String())
 	}
+	commentMediaRecorder = httptest.NewRecorder()
+	env.handler.ServeHTTP(commentMediaRecorder, authenticatedRequest(http.MethodGet, *comment.MediaURL, memberToken, nil))
+	if commentMediaRecorder.Code != http.StatusForbidden {
+		t.Fatalf("group comment media after leave: status=%d body=%q", commentMediaRecorder.Code, commentMediaRecorder.Body.String())
+	}
 
 	addGroupMemberForPostTest(t, env, group.ID, memberID, ownerToken, memberToken)
 	if restored := getPostPage(t, env, memberToken, base+"/posts", http.StatusOK); len(restored.Posts) != 2 {
@@ -198,6 +214,11 @@ func TestGroupPostsAccessStrictMultipartCommentsMediaAndRejoin(t *testing.T) {
 	comments := getCommentPage(t, env, memberToken, "/api/posts/"+strconv.FormatInt(ownerPost.ID, 10)+"/comments", http.StatusOK)
 	if len(comments.Comments) != 1 || comments.Comments[0].ID != comment.ID {
 		t.Fatalf("group comments not restored after rejoin: %+v", comments.Comments)
+	}
+	commentMediaRecorder = httptest.NewRecorder()
+	env.handler.ServeHTTP(commentMediaRecorder, authenticatedRequest(http.MethodGet, *comment.MediaURL, memberToken, nil))
+	if commentMediaRecorder.Code != http.StatusOK || commentMediaRecorder.Body.String() != string(commentMedia) {
+		t.Fatalf("group comment media after rejoin: status=%d body=%q", commentMediaRecorder.Code, commentMediaRecorder.Body.String())
 	}
 
 	if ownerID == requestedID {

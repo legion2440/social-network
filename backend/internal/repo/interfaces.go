@@ -56,6 +56,7 @@ type PostRepo interface {
 
 type CommentRepo interface {
 	Create(ctx context.Context, comment *domain.Comment) (int64, error)
+	GetByID(ctx context.Context, commentID int64) (*domain.Comment, error)
 	ListByPost(ctx context.Context, viewerUserID, postID int64, cursor *domain.CommentCursor, limit int) ([]*domain.Comment, error)
 }
 

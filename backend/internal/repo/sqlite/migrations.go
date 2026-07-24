@@ -13,7 +13,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
-const latestMigrationVersion uint = 14
+const latestMigrationVersion uint = 15
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -35,6 +35,9 @@ func migrateDown(db *sql.DB) error {
 	if err := guardGroupPostsDownMigration(db); err != nil {
 		return err
 	}
+	if err := guardCommentMediaDownMigration(db); err != nil {
+		return err
+	}
 	migrator, sourceDriver, err := newMigrator(db)
 	if err != nil {
 		return err
@@ -43,6 +46,35 @@ func migrateDown(db *sql.DB) error {
 
 	if err := migrator.Down(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return err
+	}
+	return nil
+}
+
+func guardCommentMediaDownMigration(db *sql.DB) error {
+	if db == nil {
+		return errors.New("database is required")
+	}
+	var version uint
+	var dirty bool
+	err := db.QueryRow(`SELECT version, dirty FROM schema_migrations LIMIT 1`).Scan(&version, &dirty)
+	if errors.Is(err, sql.ErrNoRows) || strings.Contains(fmt.Sprint(err), "no such table") {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read migration version: %w", err)
+	}
+	if dirty {
+		return errors.New("database migration state is dirty")
+	}
+	if version < 15 {
+		return nil
+	}
+	var attachments int64
+	if err := db.QueryRow(`SELECT COUNT(*) FROM post_comments WHERE media_id IS NOT NULL`).Scan(&attachments); err != nil {
+		return fmt.Errorf("check comment attachments before down migration: %w", err)
+	}
+	if attachments > 0 {
+		return errors.New("cannot migrate down while comment attachments exist")
 	}
 	return nil
 }

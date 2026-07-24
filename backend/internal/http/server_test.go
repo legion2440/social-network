@@ -132,7 +132,8 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 	}
 	posts := service.NewPostService(transactions, fixedClock{}, postStager)
 	postMedia := service.NewPostMediaDeliveryService(transactions, uploadDir)
-	comments := service.NewCommentService(transactions, fixedClock{})
+	comments := service.NewCommentService(transactions, fixedClock{}, postStager)
+	commentMedia := service.NewCommentMediaDeliveryService(transactions, uploadDir)
 	groups := service.NewGroupService(transactions, fixedClock{})
 	groupEvents := service.NewGroupEventService(transactions, fixedClock{})
 	notifications := service.NewNotificationService(transactions, fixedClock{})
@@ -148,7 +149,7 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 		case <-ctx.Done():
 		}
 	})
-	handler := NewHandler(db, sessions, media, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, groups, groupEvents, notifications, chats, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil)
+	handler := NewHandler(db, sessions, media, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, commentMedia, groups, groupEvents, notifications, chats, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil)
 	handler.SetRealtimeHub(hub)
 
 	return &testEnvironment{
@@ -329,6 +330,7 @@ func newSessionFailureHandlerWithFrontend(store *failingSessionRepo, frontendDir
 		sessions,
 		nil,
 		auth,
+		nil,
 		nil,
 		nil,
 		nil,

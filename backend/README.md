@@ -61,6 +61,7 @@ Current migrations:
 - `000012_create_group_events`
 - `000013_create_notifications`
 - `000014_create_chat_read_states`
+- `000015_add_comment_media`
 
 Migration `000011` rebuilds `posts` so personal and group publications share
 one table while keeping existing post IDs, selected audiences, comments,
@@ -69,6 +70,12 @@ comments, including IDs above the current maximum that belonged to deleted
 rows. Its down migration preserves the same AUTOINCREMENT state and is
 allowed only while no group posts exist; the application rejects that down
 operation before `golang-migrate` can mark the database dirty.
+
+Migration `000015` adds the nullable, unique comment-media link without
+rebuilding `post_comments`, so existing comment IDs, timestamps, and the real
+AUTOINCREMENT high-water mark are preserved in both directions. Its down
+migration is allowed only when no comment attachments exist; the application
+performs that preflight check before changing the schema.
 
 To inspect the current version with the SQLite CLI:
 
@@ -252,20 +259,31 @@ physical file. Successful responses use the detected MIME, actual file length,
 
 `GET /api/posts/{id}/comments` lists comments in `(created_at ASC, id ASC)`
 order. It uses an opaque cursor, defaults to `limit=20`, and enforces a maximum
-of 50. `POST /api/posts/{id}/comments` accepts strict `application/json` with
-exactly one `text` field. The request body is limited to 64 KiB; comment text is
-trimmed and must contain 1–5000 Unicode code points. Unknown or duplicate JSON
-fields and invalid values return `400`; an oversized body returns `413` and an
-unsupported content type returns `415`.
+of 50. `POST /api/posts/{id}/comments` accepts only
+`multipart/form-data`, with exactly one required `text` field and at most one
+optional `media` file. Text is trimmed and must contain 1–5000 Unicode code
+points; media-only comments are rejected. Unknown or duplicate fields,
+malformed multipart bodies, empty files, and unsupported file contents return
+`400`; a non-multipart content type returns `415`. JPEG, PNG, GIF, and WebP are
+detected by content and accepted up to 20 MB; an oversized request or file
+returns `413`.
 
 Both endpoints resolve access by post kind. Personal posts use the current
 profile/follow/audience policy; group posts require a current `owner` or
 `member` membership. Existing inaccessible posts return `403`, while unknown
-posts return `404`. Comments are created inside a SQL transaction, and a
-failed commit leaves no comment row. Comment author summaries are mapped for
-the current viewer, so group membership never exposes an inaccessible private
-custom avatar. Editing, deletion, replies, likes, and realtime delivery are
-outside this step.
+posts return `404`. Comment media is staged before the transaction; its media
+row, ownership check, and comment row are committed atomically, and rollback
+removes staged or finalized files.
+
+`GET /api/comments/{commentID}/media` is authenticated and rechecks the current
+parent-post policy before checking whether an attachment exists. Therefore an
+inaccessible parent always returns `403`; after successful access, absent
+attachments, broken media rows, ownership mismatches, and missing files return
+`404`. Successful responses use the stored MIME, actual file length,
+`X-Content-Type-Options: nosniff`, and `Cache-Control: private, no-store`.
+Comment author summaries are viewer-aware, so group membership never exposes
+an inaccessible private custom avatar. Editing, deletion, replies, likes, and
+realtime delivery are outside this step.
 
 ## Groups
 
@@ -486,7 +504,8 @@ Implemented endpoints:
 - `GET /api/posts/feed` (authenticated cursor feed)
 - `GET /api/posts/{id}/media` (authenticated and privacy-controlled)
 - `GET /api/posts/{id}/comments` (authenticated privacy-controlled pagination)
-- `POST /api/posts/{id}/comments` (authenticated strict JSON creation)
+- `POST /api/posts/{id}/comments` (authenticated strict multipart creation)
+- `GET /api/comments/{id}/media` (authenticated and parent-post-controlled)
 - `GET|POST /api/groups` (authenticated cursor catalog and strict JSON creation)
 - `GET /api/groups/{id}`
 - `GET /api/groups/{id}/members`

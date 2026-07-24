@@ -17,6 +17,7 @@
       postID: postID,
       apiAuthorID: authorID,
       text: String(comment.text || ''),
+      mediaUrl: comment.media_url ? String(comment.media_url) : '',
       createdAt: comment.created_at
     };
   }

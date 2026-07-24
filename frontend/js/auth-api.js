@@ -185,11 +185,10 @@
           expectedStatus: 200
         });
       },
-      createComment: function (postID, text) {
+      createComment: function (postID, formData) {
         return request('/api/posts/' + encodeURIComponent(String(postID)) + '/comments', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: text }),
+          body: formData,
           expectedStatus: 201
         });
       },

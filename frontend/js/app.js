@@ -49,7 +49,8 @@ function emptyProfileEditor() {
 function emptyCommentState() {
   return {
     comments: [], loading: false, pending: false, error: '', nextCursor: null,
-    draft: '', createPending: false, createError: '', loaded: false
+    draft: '', mediaFile: null, mediaFileName: '', mediaPreviewURL: '',
+    createPending: false, createError: '', loaded: false
   };
 }
 
@@ -242,6 +243,7 @@ class Component extends DCLogic {
     if (typeof document !== 'undefined' && document && typeof document.removeEventListener === 'function') {
       document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     }
+    this.disposeAllCommentPreviews();
     this.stopRealtime();
   }
   applyTokens() {
@@ -344,6 +346,64 @@ class Component extends DCLogic {
     });
   }
 
+  revokeCommentPreview(previewURL) {
+    if (
+      previewURL &&
+      typeof URL !== 'undefined' &&
+      URL &&
+      typeof URL.revokeObjectURL === 'function'
+    ) {
+      URL.revokeObjectURL(previewURL);
+    }
+  }
+
+  disposeAllCommentPreviews() {
+    const entries = (this.state && this.state.commentsByPostID) || {};
+    Object.keys(entries).forEach(key => this.revokeCommentPreview(entries[key] && entries[key].mediaPreviewURL));
+  }
+
+  commentMediaInputID(postID) {
+    return 'comment-media-' + String(Number(postID));
+  }
+
+  resetCommentMediaInput(postID) {
+    if (typeof document === 'undefined' || !document || typeof document.getElementById !== 'function') return;
+    const input = document.getElementById(this.commentMediaInputID(postID));
+    if (input) input.value = '';
+  }
+
+  selectCommentMedia = (postID, event) => {
+    const state = this.commentState(postID);
+    if (state.createPending) return;
+    const file = event && event.target && event.target.files && event.target.files[0];
+    if (!file) return;
+    this.revokeCommentPreview(state.mediaPreviewURL);
+    const previewURL = (
+      typeof URL !== 'undefined' &&
+      URL &&
+      typeof URL.createObjectURL === 'function'
+    ) ? URL.createObjectURL(file) : '';
+    this.patchCommentState(postID, {
+      mediaFile: file,
+      mediaFileName: file.name || 'attachment',
+      mediaPreviewURL: previewURL,
+      createError: ''
+    });
+  };
+
+  removeCommentMedia = (postID) => {
+    const state = this.commentState(postID);
+    if (state.createPending) return;
+    this.revokeCommentPreview(state.mediaPreviewURL);
+    this.resetCommentMediaInput(postID);
+    this.patchCommentState(postID, {
+      mediaFile: null,
+      mediaFileName: '',
+      mediaPreviewURL: '',
+      createError: ''
+    });
+  };
+
   purgeCommentStates(postIDs) {
     const removed = {};
     (postIDs || []).forEach(postID => {
@@ -354,6 +414,11 @@ class Component extends DCLogic {
       }
     });
     if (!Object.keys(removed).length) return;
+    Object.keys(removed).forEach(key => {
+      const state = this.state.commentsByPostID[key];
+      this.revokeCommentPreview(state && state.mediaPreviewURL);
+      this.resetCommentMediaInput(key);
+    });
     this.setState(state => {
       const entries = Object.assign({}, state.commentsByPostID);
       const openComments = Object.assign({}, state.openComments);
@@ -403,6 +468,9 @@ class Component extends DCLogic {
       ) return;
       if (error && (error.status === 403 || error.status === 404)) {
         accessGate.begin();
+        const latest = this.commentState(postID);
+        this.revokeCommentPreview(latest.mediaPreviewURL);
+        this.resetCommentMediaInput(postID);
         this.patchCommentState(postID, Object.assign(emptyCommentState(), {
           error: error.status === 403 ? 'You no longer have access to these comments.' : 'Post not found.'
         }));
@@ -438,7 +506,10 @@ class Component extends DCLogic {
 	const countAtCreateStart = this.maxPostCommentsCount(postID, this.state.posts, this.state.profilePosts, this.state.groupPosts);
     this.patchCommentState(postID, { createPending: true, createError: '' });
     try {
-      const response = await AuthAPI.createComment(postID, text);
+      const formData = new FormData();
+      formData.append('text', text);
+      if (state.mediaFile) formData.append('media', state.mediaFile, state.mediaFileName || state.mediaFile.name || 'attachment');
+      const response = await AuthAPI.createComment(postID, formData);
       if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration)) return;
       const comment = CommentModel.normalizeCommentResponse(response);
       const apiUsersByID = this.mergeAPIUsers([response.author]);
@@ -455,14 +526,20 @@ class Component extends DCLogic {
 		  ? Object.assign({}, post, { commentsCount: Math.max(Number(post.commentsCount) || 0, countAtCreateStart + 1) })
 		  : post)
       }));
+      this.revokeCommentPreview(latest.mediaPreviewURL);
+      this.resetCommentMediaInput(postID);
       this.patchCommentState(postID, {
         comments: CommentModel.mergeComments(latest.comments, [comment]),
-        draft: '', createPending: false, createError: ''
+        draft: '', mediaFile: null, mediaFileName: '', mediaPreviewURL: '',
+        createPending: false, createError: ''
       });
     } catch (error) {
       if (!this.authGate.isCurrent(authGeneration) || !accessGate.isCurrent(accessGeneration)) return;
       if (error && (error.status === 403 || error.status === 404)) {
         accessGate.begin();
+        const latest = this.commentState(postID);
+        this.revokeCommentPreview(latest.mediaPreviewURL);
+        this.resetCommentMediaInput(postID);
         this.patchCommentState(postID, Object.assign(emptyCommentState(), {
           draft: text,
           createError: error.status === 403 ? 'You no longer have access to this post.' : 'Post not found.'
@@ -1068,6 +1145,7 @@ class Component extends DCLogic {
       this.revokedChatKeys.clear();
       this.revokedGroupAccessIDs.clear();
       this.stopRealtime();
+      this.disposeAllCommentPreviews();
       Object.keys(this.groupGenerationsByID).forEach(key => this.groupGenerationsByID[key].begin());
       this.groupGenerationsByID = {};
       Object.keys(this.commentAccessGatesByPostID).forEach(key => this.commentAccessGatesByPostID[key].begin());
@@ -3141,7 +3219,8 @@ class Component extends DCLogic {
       showComments: !!s.openComments[key],
       comments: comments.map(c => Object.assign({}, c, {
         user: p.real ? this.apiUser(c.apiAuthorID) : USERS[c.uid],
-        time: p.real ? this.formatPostTime(c.createdAt) : c.time
+        time: p.real ? this.formatPostTime(c.createdAt) : c.time,
+        hasMedia: !!c.mediaUrl
       })),
       draft: p.real ? commentState.draft : (s.drafts[key] || ''),
       commentsLoading: p.real && commentState.loading,
@@ -3153,6 +3232,11 @@ class Component extends DCLogic {
       commentCreateHasError: p.real && !!commentState.createError,
       commentCreateError: p.real ? commentState.createError : '',
       commentSendDisabled: p.real && (commentState.createPending || !commentState.draft.trim()),
+      commentMediaInputID: this.commentMediaInputID(p.id),
+      commentHasMedia: p.real && !!commentState.mediaFile,
+      commentMediaFileName: p.real ? commentState.mediaFileName : '',
+      commentMediaPreviewURL: p.real ? commentState.mediaPreviewURL : '',
+      commentMediaControlsDisabled: p.real && commentState.createPending,
       commentSendLabel: p.real && commentState.createPending ? '…' : 'Send',
       onLike: () => this.likePost(p.id),
       onToggleComments: () => p.real
@@ -3166,6 +3250,13 @@ class Component extends DCLogic {
         if (p.real) { e.preventDefault(); this.createComment(p.id); }
       },
       onSendComment: () => { if (p.real) this.createComment(p.id); },
+      onCommentMedia: (e) => { if (p.real) this.selectCommentMedia(p.id, e); },
+      onChooseCommentMedia: () => {
+        if (!p.real || commentState.createPending || typeof document === 'undefined') return;
+        const input = document.getElementById(this.commentMediaInputID(p.id));
+        if (input) input.click();
+      },
+      onRemoveCommentMedia: () => { if (p.real) this.removeCommentMedia(p.id); },
       loadMoreComments: () => this.loadComments(p.id, false),
       retryComments: () => this.loadComments(p.id, true),
       goProfile: () => { if (p.real) this.openProfile(p.apiAuthorID); }

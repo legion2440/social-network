@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -25,44 +27,99 @@ type CommentPage struct {
 	NextCursor *string
 }
 
+type CreateCommentInput struct {
+	Text  string
+	Media *MediaUpload
+}
+
 type CommentService struct {
 	transactions repo.TransactionManager
 	clock        clock.Clock
+	media        *MediaStager
 }
 
-func NewCommentService(transactions repo.TransactionManager, appClock clock.Clock) *CommentService {
-	return &CommentService{transactions: transactions, clock: appClock}
+func NewCommentService(transactions repo.TransactionManager, appClock clock.Clock, media *MediaStager) *CommentService {
+	return &CommentService{transactions: transactions, clock: appClock, media: media}
 }
 
-func (s *CommentService) Create(ctx context.Context, authorUserID, postID int64, value string) (*domain.Comment, error) {
-	if s == nil || s.transactions == nil || s.clock == nil || authorUserID <= 0 || postID <= 0 {
+func (s *CommentService) Create(ctx context.Context, authorUserID, postID int64, input CreateCommentInput) (*domain.Comment, error) {
+	if s == nil || s.transactions == nil || s.clock == nil || s.media == nil || authorUserID <= 0 || postID <= 0 {
 		return nil, ErrInvalidInput
 	}
-	text := strings.TrimSpace(value)
+	text := strings.TrimSpace(input.Text)
 	if !utf8.ValidString(text) || utf8.RuneCountInString(text) < 1 || utf8.RuneCountInString(text) > MaxCommentTextRunes {
 		return nil, ErrInvalidInput
 	}
 
+	var staged *StagedMedia
+	var err error
+	if input.Media != nil {
+		staged, err = s.media.Stage(*input.Media)
+		if err != nil {
+			return nil, err
+		}
+		defer staged.Discard()
+	}
+
+	now := s.clock.Now()
 	comment := &domain.Comment{
 		PostID:       postID,
 		AuthorUserID: authorUserID,
 		Text:         text,
-		CreatedAt:    s.clock.Now(),
+		CreatedAt:    now,
 	}
-	err := s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
+	err = s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
 		if _, err := authorizePostAccess(ctx, repositories, authorUserID, postID); err != nil {
 			return err
 		}
 		author, err := repositories.Users().GetByID(ctx, authorUserID)
+		if errors.Is(err, repo.ErrNotFound) {
+			return ErrUnauthorized
+		}
 		if err != nil {
 			return err
 		}
 		comment.Author = author
+
+		if staged != nil {
+			mediaID, err := repositories.Media().Create(
+				ctx,
+				authorUserID,
+				staged.MIME,
+				staged.Size,
+				staged.StorageKey,
+				staged.OriginalName,
+				now,
+			)
+			if err != nil {
+				return err
+			}
+			createdMedia, err := repositories.Media().GetByID(ctx, mediaID)
+			if err != nil {
+				return err
+			}
+			if createdMedia.OwnerUserID != authorUserID {
+				return fmt.Errorf("comment media %d is not owned by user %d", mediaID, authorUserID)
+			}
+			comment.MediaID = &mediaID
+		}
+
 		comment.ID, err = repositories.Comments().Create(ctx, comment)
-		return err
+		if err != nil {
+			return err
+		}
+		if staged != nil {
+			if err := staged.Finalize(); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	if staged != nil {
+		staged.Keep()
 	}
 	return comment, nil
 }

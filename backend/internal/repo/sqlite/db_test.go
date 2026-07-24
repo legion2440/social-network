@@ -200,6 +200,7 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "post_selected_users", "user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "post_comments", "post_id", "posts", "id", "CASCADE")
 	assertForeignKey(t, db, "post_comments", "author_user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "post_comments", "media_id", "media", "id", "SET NULL")
 	assertForeignKey(t, db, "groups", "owner_user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "group_memberships", "group_id", "groups", "id", "CASCADE")
 	assertForeignKey(t, db, "group_memberships", "user_id", "users", "id", "CASCADE")
@@ -219,6 +220,9 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "chat_messages", "direct_conversation_id", "direct_conversations", "id", "CASCADE")
 	assertForeignKey(t, db, "chat_messages", "group_id", "groups", "id", "CASCADE")
 	assertForeignKey(t, db, "chat_messages", "sender_user_id", "users", "id", "CASCADE")
+	if !schemaObjectExists(t, db, "index", "idx_post_comments_media") {
+		t.Fatal("expected unique comment media index")
+	}
 }
 
 func TestGroupPostSchemaConstraintsAndIndex(t *testing.T) {
@@ -604,6 +608,164 @@ func TestMigration14BackfillsChatReadStatesAndConstraints(t *testing.T) {
 	}
 	if err := db.QueryRow(`SELECT COUNT(*) FROM group_chat_read_states WHERE membership_id = 11`).Scan(&groupStates); err != nil || groupStates != 0 {
 		t.Fatalf("group read-state cascade: count=%d err=%v", groupStates, err)
+	}
+}
+
+func TestMigration15PreservesCommentGraphAndAutoincrementUpAndDown(t *testing.T) {
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "migration-15.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("enable foreign keys: %v", err)
+	}
+	migrator, sourceDriver, err := newMigrator(db)
+	if err != nil {
+		t.Fatalf("new migrator: %v", err)
+	}
+	if err := migrator.Migrate(14); err != nil {
+		t.Fatalf("migrate to version 14: %v", err)
+	}
+	_ = sourceDriver.Close()
+
+	if _, err := db.Exec(`
+		INSERT INTO users (id, email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
+		VALUES
+			(1, 'comment-media-author@example.com', 'hash', 'Media', 'Author', '22-07-1992', 1, 1),
+			(2, 'comment-media-commenter@example.com', 'hash', 'Media', 'Commenter', '22-07-1992', 1, 1)
+	`); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	mediaResult, err := db.Exec(`
+		INSERT INTO media (owner_user_id, mime, size, storage_key, original_name, created_at)
+		VALUES (2, 'image/png', 8, 'comment.png', 'comment.png', 2)
+	`)
+	if err != nil {
+		t.Fatalf("seed media: %v", err)
+	}
+	mediaID, _ := mediaResult.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO posts (id, author_user_id, text, privacy, created_at) VALUES (1, 1, 'post', 'public', 3)`); err != nil {
+		t.Fatalf("seed post: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO post_comments (id, post_id, author_user_id, text, created_at) VALUES (41, 1, 2, 'preserved', 4)`); err != nil {
+		t.Fatalf("seed preserved comment: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO post_comments (id, post_id, author_user_id, text, created_at) VALUES (170, 1, 2, 'deleted high', 5)`); err != nil {
+		t.Fatalf("seed high comment sequence: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM post_comments WHERE id = 170`); err != nil {
+		t.Fatalf("delete high comment: %v", err)
+	}
+
+	migrator, sourceDriver, err = newMigrator(db)
+	if err != nil {
+		t.Fatalf("new version 15 migrator: %v", err)
+	}
+	if err := migrator.Migrate(15); err != nil {
+		t.Fatalf("migrate to version 15: %v", err)
+	}
+	_ = sourceDriver.Close()
+	assertMigrationVersion(t, db, 15, false)
+	if _, exists := tableColumns(t, db, "post_comments")["media_id"]; !exists {
+		t.Fatal("post_comments.media_id is missing after migration")
+	}
+	var (
+		text      string
+		createdAt int64
+	)
+	if err := db.QueryRow(`SELECT text, created_at FROM post_comments WHERE id = 41`).Scan(&text, &createdAt); err != nil || text != "preserved" || createdAt != 4 {
+		t.Fatalf("preserved comment mismatch: text=%q created_at=%d err=%v", text, createdAt, err)
+	}
+	result, err := db.Exec(`
+		INSERT INTO post_comments (post_id, author_user_id, text, media_id, created_at)
+		VALUES (1, 2, 'after up', ?, 6)
+	`, mediaID)
+	if err != nil {
+		t.Fatalf("insert comment after up: %v", err)
+	}
+	nextID, _ := result.LastInsertId()
+	if nextID <= 170 {
+		t.Fatalf("comment AUTOINCREMENT did not preserve deleted high ID after up: %d", nextID)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO post_comments (post_id, author_user_id, text, media_id, created_at)
+		VALUES (1, 2, 'duplicate media', ?, 7)
+	`, mediaID); err == nil {
+		t.Fatal("expected partial unique comment media constraint")
+	}
+	if _, err := db.Exec(`UPDATE post_comments SET media_id = NULL WHERE id = ?`, nextID); err != nil {
+		t.Fatalf("detach media before down: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO post_comments (id, post_id, author_user_id, text, created_at) VALUES (220, 1, 2, 'deleted high down', 8)`); err != nil {
+		t.Fatalf("seed high down sequence: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM post_comments WHERE id = 220`); err != nil {
+		t.Fatalf("delete high down comment: %v", err)
+	}
+	if err := guardCommentMediaDownMigration(db); err != nil {
+		t.Fatalf("preflight version 15 down: %v", err)
+	}
+	migrator, sourceDriver, err = newMigrator(db)
+	if err != nil {
+		t.Fatalf("new down migrator: %v", err)
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("migrate version 15 down: %v", err)
+	}
+	_ = sourceDriver.Close()
+	assertMigrationVersion(t, db, 14, false)
+	if _, exists := tableColumns(t, db, "post_comments")["media_id"]; exists {
+		t.Fatal("post_comments.media_id remained after version 15 down")
+	}
+	result, err = db.Exec(`INSERT INTO post_comments (post_id, author_user_id, text, created_at) VALUES (1, 2, 'after down', 9)`)
+	if err != nil {
+		t.Fatalf("insert comment after down: %v", err)
+	}
+	nextID, _ = result.LastInsertId()
+	if nextID <= 220 {
+		t.Fatalf("comment AUTOINCREMENT did not preserve deleted high ID after down: %d", nextID)
+	}
+}
+
+func TestMigration15DownRefusesCommentAttachmentsWithoutDirtyState(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "migration-15-down.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+		INSERT INTO users (id, email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
+		VALUES (1, 'comment-down@example.com', 'hash', 'Comment', 'Down', '22-07-1992', 1, 1)
+	`); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	mediaResult, err := db.Exec(`
+		INSERT INTO media (owner_user_id, mime, size, storage_key, original_name, created_at)
+		VALUES (1, 'image/png', 8, 'comment-down.png', 'comment-down.png', 2)
+	`)
+	if err != nil {
+		t.Fatalf("seed media: %v", err)
+	}
+	mediaID, _ := mediaResult.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO posts (id, author_user_id, text, privacy, created_at) VALUES (1, 1, 'post', 'public', 3)`); err != nil {
+		t.Fatalf("seed post: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO post_comments (id, post_id, author_user_id, text, media_id, created_at)
+		VALUES (1, 1, 1, 'attached', ?, 4)
+	`, mediaID); err != nil {
+		t.Fatalf("seed comment attachment: %v", err)
+	}
+
+	if err := migrateDown(db); err == nil {
+		t.Fatal("expected down migration refusal")
+	}
+	assertMigrationVersion(t, db, 15, false)
+	var gotMediaID int64
+	if err := db.QueryRow(`SELECT media_id FROM post_comments WHERE id = 1`).Scan(&gotMediaID); err != nil || gotMediaID != mediaID {
+		t.Fatalf("comment attachment changed after refused down: media=%d err=%v", gotMediaID, err)
 	}
 }
 
@@ -1236,7 +1398,7 @@ func TestPostCommentSchemaConstraintsIndexesAndCascades(t *testing.T) {
 	defer db.Close()
 
 	columns := tableColumns(t, db, "post_comments")
-	for _, column := range []string{"id", "post_id", "author_user_id", "text", "created_at"} {
+	for _, column := range []string{"id", "post_id", "author_user_id", "text", "media_id", "created_at"} {
 		if _, exists := columns[column]; !exists {
 			t.Fatalf("post_comments.%s is missing", column)
 		}
@@ -1246,6 +1408,9 @@ func TestPostCommentSchemaConstraintsIndexesAndCascades(t *testing.T) {
 	}
 	if !schemaObjectExists(t, db, "index", "idx_post_comments_post_created") {
 		t.Fatal("expected post comment pagination index")
+	}
+	if !schemaObjectExists(t, db, "index", "idx_post_comments_media") {
+		t.Fatal("expected unique post comment media index")
 	}
 
 	insertUser := func(email string) int64 {
@@ -1266,8 +1431,45 @@ func TestPostCommentSchemaConstraintsIndexesAndCascades(t *testing.T) {
 		t.Fatalf("insert post: %v", err)
 	}
 	postID, _ := postResult.LastInsertId()
-	if _, err := db.Exec(`INSERT INTO post_comments (post_id, author_user_id, text, created_at) VALUES (?, ?, 'comment', 1)`, postID, commenterID); err != nil {
+	mediaResult, err := db.Exec(`
+		INSERT INTO media (owner_user_id, mime, size, storage_key, original_name, created_at)
+		VALUES (?, 'image/png', 8, 'comment-schema.png', 'comment-schema.png', 1)
+	`, commenterID)
+	if err != nil {
+		t.Fatalf("insert comment media: %v", err)
+	}
+	mediaID, _ := mediaResult.LastInsertId()
+	commentResult, err := db.Exec(`
+		INSERT INTO post_comments (post_id, author_user_id, text, media_id, created_at)
+		VALUES (?, ?, 'comment', ?, 1)
+	`, postID, commenterID, mediaID)
+	if err != nil {
 		t.Fatalf("insert comment: %v", err)
+	}
+	commentID, _ := commentResult.LastInsertId()
+	if _, err := db.Exec(`
+		INSERT INTO post_comments (post_id, author_user_id, text, media_id, created_at)
+		VALUES (?, ?, 'duplicate attachment', ?, 1)
+	`, postID, commenterID, mediaID); err == nil {
+		t.Fatal("expected unique comment media constraint failure")
+	}
+	if _, err := db.Exec(`DELETE FROM media WHERE id = ?`, mediaID); err != nil {
+		t.Fatalf("delete attached media: %v", err)
+	}
+	var linkedMediaID sql.NullInt64
+	if err := db.QueryRow(`SELECT media_id FROM post_comments WHERE id = ?`, commentID).Scan(&linkedMediaID); err != nil || linkedMediaID.Valid {
+		t.Fatalf("media delete did not clear comment link: media=%+v err=%v", linkedMediaID, err)
+	}
+	remainingMediaResult, err := db.Exec(`
+		INSERT INTO media (owner_user_id, mime, size, storage_key, original_name, created_at)
+		VALUES (?, 'image/png', 8, 'comment-cascade.png', 'comment-cascade.png', 1)
+	`, commenterID)
+	if err != nil {
+		t.Fatalf("insert cascade media: %v", err)
+	}
+	remainingMediaID, _ := remainingMediaResult.LastInsertId()
+	if _, err := db.Exec(`UPDATE post_comments SET media_id = ? WHERE id = ?`, remainingMediaID, commentID); err != nil {
+		t.Fatalf("restore comment media link: %v", err)
 	}
 	for name, text := range map[string]string{"blank": "   ", "untrimmed": " comment "} {
 		t.Run(name, func(t *testing.T) {
@@ -1282,6 +1484,9 @@ func TestPostCommentSchemaConstraintsIndexesAndCascades(t *testing.T) {
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM post_comments WHERE post_id = ?`, postID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("post delete did not cascade comments: count=%d err=%v", count, err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM media WHERE id = ?`, remainingMediaID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("post delete unexpectedly removed media metadata: count=%d err=%v", count, err)
 	}
 }
 

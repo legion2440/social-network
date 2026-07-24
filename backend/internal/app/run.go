@@ -132,7 +132,8 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 	avatarDelivery := service.NewAvatarDeliveryService(transactions, cfg.UploadDir)
 	posts := service.NewPostService(transactions, appClock, postStager)
 	postMedia := service.NewPostMediaDeliveryService(transactions, cfg.UploadDir)
-	comments := service.NewCommentService(transactions, appClock)
+	comments := service.NewCommentService(transactions, appClock, postStager)
+	commentMedia := service.NewCommentMediaDeliveryService(transactions, cfg.UploadDir)
 	groups := service.NewGroupService(transactions, appClock)
 	groupEvents := service.NewGroupEventService(transactions, appClock)
 	notifications := service.NewNotificationService(transactions, appClock)
@@ -151,6 +152,7 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		posts,
 		postMedia,
 		comments,
+		commentMedia,
 		groups,
 		groupEvents,
 		notifications,
