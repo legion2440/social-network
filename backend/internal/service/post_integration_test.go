@@ -114,6 +114,66 @@ func TestCreatePostCountsTrimmedUnicodeCodePoints(t *testing.T) {
 	}
 }
 
+func TestCreateMediaOnlyPersonalAndGroupPosts(t *testing.T) {
+	root := t.TempDir()
+	db, err := sqlite.Open(context.Background(), filepath.Join(root, "social-network.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	now := time.Date(2026, time.July, 24, 10, 0, 0, 0, time.UTC)
+	authorID := createPostTestUser(t, ctx, sqlite.NewUserRepo(db), "media-only-posts@example.com", now)
+	transactions := sqlite.NewTransactionManager(db)
+	group, err := service.NewGroupService(transactions, fixedPostClock{now: now}).Create(ctx, authorID, "Media-only group", "Description")
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	stager, err := service.NewMediaStager(&authTestIDGenerator{}, filepath.Join(root, "uploads"), service.MaxMediaBytes)
+	if err != nil {
+		t.Fatalf("new media stager: %v", err)
+	}
+	posts := service.NewPostService(transactions, fixedPostClock{now: now}, stager)
+
+	personal, err := posts.Create(ctx, authorID, service.CreatePostInput{
+		Text:    " \n\t ",
+		Privacy: domain.PostPublic,
+		Media: &service.MediaUpload{
+			OriginalName: "personal.png",
+			Reader:       bytes.NewReader([]byte("\x89PNG\r\n\x1a\npersonal")),
+		},
+	})
+	if err != nil {
+		t.Fatalf("create media-only personal post: %v", err)
+	}
+	if personal.Text != "" || personal.MediaID == nil || personal.GroupID != nil || personal.GroupTitle != nil {
+		t.Fatalf("unexpected media-only personal post: %+v", personal)
+	}
+
+	groupPost, err := posts.CreateGroupPost(ctx, authorID, group.ID, service.CreateGroupPostInput{
+		Text: "  ",
+		Media: &service.MediaUpload{
+			OriginalName: "group.png",
+			Reader:       bytes.NewReader([]byte("\x89PNG\r\n\x1a\ngroup")),
+		},
+	})
+	if err != nil {
+		t.Fatalf("create media-only group post: %v", err)
+	}
+	if groupPost.Text != "" || groupPost.MediaID == nil || groupPost.GroupID == nil || *groupPost.GroupID != group.ID ||
+		groupPost.GroupTitle == nil || *groupPost.GroupTitle != group.Title {
+		t.Fatalf("unexpected media-only group post: %+v", groupPost)
+	}
+
+	if post, err := posts.Create(ctx, authorID, service.CreatePostInput{Text: " ", Privacy: domain.PostPublic}); !errors.Is(err, service.ErrInvalidInput) || post != nil {
+		t.Fatalf("expected empty personal post rejection, post=%+v err=%v", post, err)
+	}
+	if post, err := posts.CreateGroupPost(ctx, authorID, group.ID, service.CreateGroupPostInput{Text: "\t"}); !errors.Is(err, service.ErrInvalidInput) || post != nil {
+		t.Fatalf("expected empty group post rejection, post=%+v err=%v", post, err)
+	}
+}
+
 func TestCreateGroupPostRollbackRemovesFinalFileAndRows(t *testing.T) {
 	root := t.TempDir()
 	db, err := sqlite.Open(context.Background(), filepath.Join(root, "social-network.db"))

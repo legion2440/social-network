@@ -374,6 +374,11 @@ func TestFrontendFilesAreServedWithoutShadowingBackendRoutes(t *testing.T) {
 		{path: "/js/app.js", contentType: "text/javascript", body: "console.log('loop');"},
 		{path: "/css/app.css", contentType: "text/css", body: "body { color: black; }"},
 		{path: "/static/avatars/neutral.svg", contentType: "image/svg+xml", body: "<svg"},
+		{path: "/users/12", contentType: "text/html", body: "<h1>loop frontend</h1>"},
+		{path: "/groups/7", contentType: "text/html", body: "<h1>loop frontend</h1>"},
+		{path: "/messages/user/12", contentType: "text/html", body: "<h1>loop frontend</h1>"},
+		{path: "/messages/group/7", contentType: "text/html", body: "<h1>loop frontend</h1>"},
+		{path: "/unknown-client-route", contentType: "text/html", body: "<h1>loop frontend</h1>"},
 	} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, test.path, nil)
@@ -404,6 +409,13 @@ func TestFrontendFilesAreServedWithoutShadowingBackendRoutes(t *testing.T) {
 	handler.ServeHTTP(rec, removedUploadsReq)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("removed uploads route reached backend auth or SPA: status=%d content-type=%q body=%q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	missingAssetReq := httptest.NewRequest(http.MethodGet, "/js/missing.js", nil)
+	handler.ServeHTTP(rec, missingAssetReq)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing asset reached SPA fallback: status=%d content-type=%q body=%q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
 	}
 
 	if store.getCalls != 0 {
@@ -1640,7 +1652,13 @@ func TestUserProfileReadUsesCurrentPrivacyAndAccessiblePostCounts(t *testing.T) 
 		if response.CanViewProfile {
 			t.Fatalf("%s unexpectedly received full private profile", viewer.label)
 		}
-		for _, field := range []string{"email", "date_of_birth", "gender", "about_me", "posts_count", "followers_count", "following_count"} {
+		if response.PostsCount == nil || *response.PostsCount != 0 {
+			t.Fatalf("%s: locked profile posts_count must be zero: %+v", viewer.label, response)
+		}
+		if _, exists := fields["posts_count"]; !exists {
+			t.Fatalf("%s: locked profile omitted posts_count: %s", viewer.label, fields)
+		}
+		for _, field := range []string{"email", "date_of_birth", "gender", "about_me", "followers_count", "following_count"} {
 			if _, exists := fields[field]; exists {
 				t.Fatalf("%s: locked profile leaked %q: %s", viewer.label, field, fields)
 			}

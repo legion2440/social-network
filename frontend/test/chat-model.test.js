@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const ChatModel = require('./chat-model.js');
+const ChatModel = require('../src/js/chat-model.js');
 
 function rawMessage(id, clientMessageID, kind, targetID, senderID, createdAt) {
   return {

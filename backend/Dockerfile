@@ -15,6 +15,12 @@ RUN CGO_ENABLED=1 GOOS=linux go build \
     -o /out/server \
     ./cmd/server
 
+RUN CGO_ENABLED=1 GOOS=linux go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /out/seed \
+    ./cmd/seed
+
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
     -ldflags="-s -w" \
@@ -26,13 +32,17 @@ FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bb
 ARG APP_UID=10001
 ARG APP_GID=10001
 
-RUN groupadd --gid "${APP_GID}" app \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends sqlite3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid "${APP_GID}" app \
     && useradd --uid "${APP_UID}" --gid "${APP_GID}" \
         --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin app \
     && mkdir -p /app /data/db /data/uploads \
     && chown -R "${APP_UID}:${APP_GID}" /app /data
 
 COPY --from=builder --chown=10001:10001 /out/server /app/server
+COPY --from=builder --chown=10001:10001 /out/seed /app/seed
 COPY --from=builder --chown=10001:10001 /out/healthcheck /app/healthcheck
 
 ENV SOCIAL_NETWORK_HTTP_ADDR=0.0.0.0:8080 \

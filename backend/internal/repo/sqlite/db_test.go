@@ -58,6 +58,201 @@ func TestMigrationsRunAllTheWayDownAndBackUp(t *testing.T) {
 	assertMigrationVersion(t, db, int(latestMigrationVersion), false)
 }
 
+func TestMigration16PreservesPostGraphAndGuardsMediaOnlyDown(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "migration-16.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	migrator, sourceDriver, err := newMigrator(db)
+	if err != nil {
+		t.Fatalf("new version 15 migrator: %v", err)
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("migrate to version 15: %v", err)
+	}
+	_ = sourceDriver.Close()
+	assertMigrationVersion(t, db, 15, false)
+
+	if _, err := db.Exec(`
+		INSERT INTO users (id, email, password_hash, first_name, last_name, date_of_birth, created_at, updated_at)
+		VALUES
+			(1, 'migration-16-author@example.com', 'hash', 'Media', 'Author', '24-07-1992', 1, 1),
+			(2, 'migration-16-reader@example.com', 'hash', 'Media', 'Reader', '24-07-1992', 1, 1)
+	`); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO media (id, owner_user_id, mime, size, storage_key, original_name, created_at)
+		VALUES
+			(1, 1, 'image/png', 8, 'post.png', 'post.png', 1),
+			(2, 2, 'image/png', 8, 'comment.png', 'comment.png', 1),
+			(3, 1, 'image/png', 8, 'media-only-post.png', 'media-only-post.png', 1),
+			(4, 2, 'image/png', 8, 'media-only-comment.png', 'media-only-comment.png', 1)
+	`); err != nil {
+		t.Fatalf("seed media: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO groups (id, owner_user_id, title, description, created_at)
+		VALUES (1, 1, 'Migration group', 'Description', 1)
+	`); err != nil {
+		t.Fatalf("seed group: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO group_memberships (group_id, user_id, status, created_at, updated_at)
+		VALUES (1, 1, 'owner', 1, 1)
+	`); err != nil {
+		t.Fatalf("seed membership: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO posts (id, author_user_id, text, privacy, media_id, created_at)
+		VALUES (31, 1, 'selected post', 'selected', 1, 2)
+	`); err != nil {
+		t.Fatalf("seed selected post: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO posts (id, author_user_id, group_id, text, created_at)
+		VALUES (32, 1, 1, 'group post', 3)
+	`); err != nil {
+		t.Fatalf("seed group post: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO post_selected_users (post_id, user_id) VALUES (31, 2)`); err != nil {
+		t.Fatalf("seed selected audience: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO post_comments (id, post_id, author_user_id, text, media_id, created_at)
+		VALUES (61, 31, 2, 'comment', 2, 4)
+	`); err != nil {
+		t.Fatalf("seed comment: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO posts (id, author_user_id, text, privacy, created_at) VALUES (130, 1, 'deleted post', 'public', 5)`); err != nil {
+		t.Fatalf("seed deleted high post: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO post_comments (id, post_id, author_user_id, text, created_at) VALUES (190, 130, 2, 'deleted comment', 6)`); err != nil {
+		t.Fatalf("seed deleted high comment: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM posts WHERE id = 130`); err != nil {
+		t.Fatalf("delete high post graph: %v", err)
+	}
+	var beforePostSeq, beforeCommentSeq int64
+	if err := db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'posts'`).Scan(&beforePostSeq); err != nil {
+		t.Fatalf("read posts sequence: %v", err)
+	}
+	if err := db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'post_comments'`).Scan(&beforeCommentSeq); err != nil {
+		t.Fatalf("read comments sequence: %v", err)
+	}
+
+	migrator, sourceDriver, err = newMigrator(db)
+	if err != nil {
+		t.Fatalf("new version 16 migrator: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("migrate to version 16: %v", err)
+	}
+	_ = sourceDriver.Close()
+	assertMigrationVersion(t, db, 16, false)
+
+	var (
+		groupID, audienceID, commentMediaID int64
+		privacy                             string
+	)
+	if err := db.QueryRow(`SELECT privacy FROM posts WHERE id = 31 AND media_id = 1`).Scan(&privacy); err != nil || privacy != "selected" {
+		t.Fatalf("selected post changed: privacy=%q err=%v", privacy, err)
+	}
+	if err := db.QueryRow(`SELECT group_id FROM posts WHERE id = 32`).Scan(&groupID); err != nil || groupID != 1 {
+		t.Fatalf("group post changed: group=%d err=%v", groupID, err)
+	}
+	if err := db.QueryRow(`SELECT user_id FROM post_selected_users WHERE post_id = 31`).Scan(&audienceID); err != nil || audienceID != 2 {
+		t.Fatalf("selected audience changed: user=%d err=%v", audienceID, err)
+	}
+	if err := db.QueryRow(`SELECT media_id FROM post_comments WHERE id = 61`).Scan(&commentMediaID); err != nil || commentMediaID != 2 {
+		t.Fatalf("comment media changed: media=%d err=%v", commentMediaID, err)
+	}
+	for _, index := range []string{
+		"idx_posts_created",
+		"idx_posts_author_created",
+		"idx_posts_group_created",
+		"idx_posts_media_unique",
+		"idx_post_selected_users_user_post",
+		"idx_post_comments_post_created",
+		"idx_post_comments_media",
+	} {
+		if !schemaObjectExists(t, db, "index", index) {
+			t.Fatalf("missing index after version 16 up: %s", index)
+		}
+	}
+	var afterPostSeq, afterCommentSeq int64
+	if err := db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'posts'`).Scan(&afterPostSeq); err != nil {
+		t.Fatalf("read posts sequence after up: %v", err)
+	}
+	if err := db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'post_comments'`).Scan(&afterCommentSeq); err != nil {
+		t.Fatalf("read comments sequence after up: %v", err)
+	}
+	if afterPostSeq != beforePostSeq || afterCommentSeq != beforeCommentSeq {
+		t.Fatalf("AUTOINCREMENT changed after up: posts=%d/%d comments=%d/%d", afterPostSeq, beforePostSeq, afterCommentSeq, beforeCommentSeq)
+	}
+
+	if _, err := db.Exec(`INSERT INTO posts (id, author_user_id, text, privacy, media_id, created_at) VALUES (131, 1, '', 'public', 3, 7)`); err != nil {
+		t.Fatalf("insert media-only post: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO post_comments (id, post_id, author_user_id, text, media_id, created_at) VALUES (191, 31, 2, '', 4, 8)`); err != nil {
+		t.Fatalf("insert media-only comment: %v", err)
+	}
+	for name, statement := range map[string]string{
+		"empty post without media":    `INSERT INTO posts (author_user_id, text, privacy, created_at) VALUES (1, '', 'public', 9)`,
+		"blank post":                  `INSERT INTO posts (author_user_id, text, privacy, created_at) VALUES (1, ' ', 'public', 9)`,
+		"empty comment without media": `INSERT INTO post_comments (post_id, author_user_id, text, created_at) VALUES (31, 2, '', 9)`,
+		"blank comment":               `INSERT INTO post_comments (post_id, author_user_id, text, created_at) VALUES (31, 2, ' ', 9)`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := db.Exec(statement); err == nil {
+				t.Fatal("expected content constraint failure")
+			}
+		})
+	}
+	var postsSQLBefore string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'posts'`).Scan(&postsSQLBefore); err != nil {
+		t.Fatalf("read posts schema before guard: %v", err)
+	}
+	if err := migrateDown(db); err == nil {
+		t.Fatal("expected media-only down guard refusal")
+	}
+	assertMigrationVersion(t, db, 16, false)
+	var postsSQLAfter string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'posts'`).Scan(&postsSQLAfter); err != nil {
+		t.Fatalf("read posts schema after guard: %v", err)
+	}
+	if postsSQLAfter != postsSQLBefore {
+		t.Fatal("media-only guard changed schema before refusing down migration")
+	}
+
+	if _, err := db.Exec(`DELETE FROM post_comments WHERE id = 191`); err != nil {
+		t.Fatalf("delete media-only comment: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM posts WHERE id = 131`); err != nil {
+		t.Fatalf("delete media-only post: %v", err)
+	}
+	if err := guardMediaOnlyDownMigration(db); err != nil {
+		t.Fatalf("media-only down preflight: %v", err)
+	}
+	migrator, sourceDriver, err = newMigrator(db)
+	if err != nil {
+		t.Fatalf("new down migrator: %v", err)
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("migrate version 16 down: %v", err)
+	}
+	_ = sourceDriver.Close()
+	assertMigrationVersion(t, db, 15, false)
+	if _, err := db.Exec(`INSERT INTO posts (author_user_id, text, privacy, media_id, created_at) VALUES (1, '', 'public', 3, 10)`); err == nil {
+		t.Fatal("version 15 schema still accepts media-only posts")
+	}
+	if _, err := db.Exec(`INSERT INTO post_comments (post_id, author_user_id, text, media_id, created_at) VALUES (31, 2, '', 4, 10)`); err == nil {
+		t.Fatal("version 15 schema still accepts media-only comments")
+	}
+}
+
 func TestOpenRejectsDisposableLegacyBootstrapDatabase(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "legacy.db")
 	legacy, err := sql.Open("sqlite3", dbPath)
@@ -762,7 +957,7 @@ func TestMigration15DownRefusesCommentAttachmentsWithoutDirtyState(t *testing.T)
 	if err := migrateDown(db); err == nil {
 		t.Fatal("expected down migration refusal")
 	}
-	assertMigrationVersion(t, db, 15, false)
+	assertMigrationVersion(t, db, 16, false)
 	var gotMediaID int64
 	if err := db.QueryRow(`SELECT media_id FROM post_comments WHERE id = 1`).Scan(&gotMediaID); err != nil || gotMediaID != mediaID {
 		t.Fatalf("comment attachment changed after refused down: media=%d err=%v", gotMediaID, err)

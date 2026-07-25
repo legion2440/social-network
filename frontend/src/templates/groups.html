@@ -1,0 +1,71 @@
+<sc-if value="{{isGroups}}" hint-placeholder-val="{{false}}">
+    <div class="ui-247" data-screen-label="Groups">
+      <div class="page-header-row">
+        <h1 class="ui-083">Groups</h1>
+        <button class="ui-248" onclick="{{toggleCreate}}" style-hover="transform:translateY(-1px)" style-active="transform:scale(.97)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+          New group
+        </button>
+      </div>
+      <sc-if value="{{groupsHasError}}" hint-placeholder-val="{{false}}">
+        <div class="ui-249" role="alert">
+          {{groupsError}} <button class="ui-250" onclick="{{retryGroups}}">Retry</button>
+        </div>
+      </sc-if>
+      <sc-if value="{{groupInboxHasError}}" hint-placeholder-val="{{false}}"><div class="ui-251" role="alert">{{groupInboxError}}</div></sc-if>
+      <sc-if value="{{groupInboxHasItems}}" hint-placeholder-val="{{false}}">
+        <div class="ui-252">
+          <div class="ui-230">YOUR GROUP INVITATIONS</div>
+          <sc-for list="{{groupInboxCards}}" as="iv" hint-placeholder-count="1">
+            <div class="ui-253">
+              <div class="ui-254" onclick="{{iv.open}}"><div class="ui-213">{{iv.name}}</div><div class="ui-053">Owner: {{iv.owner.name}}</div></div>
+              <button class="ui-255" onclick="{{iv.accept}}" disabled="{{iv.pending}}">Accept</button>
+              <button class="ui-256" onclick="{{iv.decline}}" disabled="{{iv.pending}}">Decline</button>
+            </div>
+          </sc-for>
+          <sc-if value="{{groupInboxHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-257" onclick="{{loadMoreGroupInbox}}">Load more invitations</button></sc-if>
+        </div>
+      </sc-if>
+      <sc-if value="{{createOpen}}" hint-placeholder-val="{{false}}">
+        <div class="ui-258">
+          <input class="ui-025" placeholder="Group name" value="{{ngName}}" onchange="{{onNgName}}">
+          <input class="ui-025" placeholder="What is this group about?" value="{{ngDesc}}" onchange="{{onNgDesc}}">
+          <sc-if value="{{groupCreateHasError}}" hint-placeholder-val="{{false}}"><div class="ui-141" role="alert">{{groupCreateError}}</div></sc-if>
+          <div class="ui-259">
+            <button class="ui-260" onclick="{{toggleCreate}}">Cancel</button>
+            <button class="ui-261" onclick="{{createGroup}}" disabled="{{groupCreatePending}}">Create</button>
+          </div>
+        </div>
+      </sc-if>
+      <div class="responsive-grid ui-262">
+        <sc-for list="{{groupCards}}" as="g" hint-placeholder-count="4">
+          <div class="ui-263" style="animation-delay:{{g.delay}}">
+            <div class="ui-264" onclick="{{g.open}}" style="background:{{g.cover}}"></div>
+            <div class="ui-265">
+              <div class="ui-266" onclick="{{g.open}}">{{g.name}}</div>
+              <div class="ui-092">{{g.membersLabel}} members</div>
+              <div class="ui-053">by {{g.owner.name}}</div>
+              <p class="ui-267">{{g.desc}}</p>
+              <sc-if value="{{g.isJoined}}" hint-placeholder-val="{{false}}">
+                <div class="ui-203"><button class="ui-268" onclick="{{g.open}}" style-hover="background:var(--soft2)">Open group</button><sc-if value="{{g.isMember}}" hint-placeholder-val="{{false}}"><button class="ui-269" onclick="{{g.leave}}" disabled="{{g.pending}}">Leave</button></sc-if></div>
+              </sc-if>
+              <sc-if value="{{g.hasError}}" hint-placeholder-val="{{false}}"><div class="ui-207" role="alert">{{g.error}}</div></sc-if>
+              <sc-if value="{{g.isNone}}" hint-placeholder-val="{{false}}">
+                <button class="ui-270" onclick="{{g.join}}" disabled="{{g.pending}}" style-active="transform:scale(.97)">Request to join</button>
+              </sc-if>
+              <sc-if value="{{g.isRequested}}" hint-placeholder-val="{{false}}">
+                <button class="ui-271" onclick="{{g.join}}" disabled="{{g.pending}}" title="Click to cancel request">Requested ✓</button>
+              </sc-if>
+              <sc-if value="{{g.isInvited}}" hint-placeholder-val="{{false}}">
+                <div class="ui-203">
+                  <button class="ui-272" onclick="{{g.acceptInvite}}" disabled="{{g.pending}}">Accept invite</button>
+                  <button class="ui-273" onclick="{{g.declineInvite}}" disabled="{{g.pending}}">Decline</button>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+      <sc-if value="{{groupsHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-274" onclick="{{loadMoreGroups}}">{{groupsLoadMoreLabel}}</button></sc-if>
+    </div>
+    </sc-if>

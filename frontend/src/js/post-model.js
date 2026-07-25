@@ -33,7 +33,8 @@
       id: String(post.id),
       apiAuthorID: authorID,
       isOwn: authorID === Number(currentUserID),
-	  groupID: post.group_id == null ? null : Number(post.group_id),
+      groupID: post.group_id == null ? null : Number(post.group_id),
+      groupTitle: post.group_title || '',
       text: String(post.text || ''),
       privacy: post.privacy,
       mediaUrl: post.media_url || '',
@@ -60,7 +61,7 @@
 
   return {
     buildCreatePostForm: buildCreatePostForm,
-	buildCreateGroupPostForm: buildCreateGroupPostForm,
+    buildCreateGroupPostForm: buildCreateGroupPostForm,
     normalizePostResponse: normalizePostResponse
   };
 });

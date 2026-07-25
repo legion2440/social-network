@@ -1,0 +1,106 @@
+<sc-if value="{{isChat}}" hint-placeholder-val="{{false}}">
+    <div class="ui-028" data-screen-label="Messages">
+      <h1 class="ui-029">Messages</h1>
+      <div class="chat-layout {{chatLayoutClass}} ui-030">
+        <div class="chat-list ui-031">
+          <sc-if value="{{chatsLoading}}" hint-placeholder-val="{{false}}"><div class="ui-032">Loading conversations…</div></sc-if>
+          <sc-if value="{{chatsHasError}}" hint-placeholder-val="{{false}}"><div class="ui-033" role="alert">{{chatsError}} <button class="ui-034" onclick="{{retryChats}}">Retry</button></div></sc-if>
+          <sc-for list="{{convos}}" as="cv" hint-placeholder-count="3">
+            <div class="ui-035" onclick="{{cv.open}}" style="background:{{cv.bg}}">
+              <div class="ui-036">
+                <div class="ui-037" style="background:{{cv.color}}">
+                  <sc-if value="{{cv.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{cv.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if>
+                  <sc-if value="{{cv.noAvatar}}" hint-placeholder-val="{{true}}">{{cv.initials}}</sc-if>
+                </div>
+                <sc-if value="{{cv.online}}" hint-placeholder-val="{{false}}"><span class="ui-039"></span></sc-if>
+              </div>
+              <div class="ui-040">
+                <div class="ui-041">
+                  <span class="ui-042">{{cv.title}}</span>
+                  <span class="ui-043">{{cv.time}}</span>
+                </div>
+                <div class="ui-044">
+                  <span class="ui-045" style="color:{{cv.previewColor}};font-weight:{{cv.previewW}}">{{cv.preview}}</span>
+                  <sc-if value="{{cv.hasUnread}}" hint-placeholder-val="{{false}}"><span class="ui-046">{{cv.unread}}</span></sc-if>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+          <sc-if value="{{chatsHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-047" onclick="{{loadMoreChats}}" disabled="{{chatsLoadMoreDisabled}}">Load more</button></sc-if>
+        </div>
+        <div class="chat-panel ui-048">
+          <sc-if value="{{chatHasNoActive}}" hint-placeholder-val="{{false}}"><div class="ui-049">No conversations yet.<br>Open a profile or a group to start one.</div></sc-if>
+          <sc-if value="{{chatHasActive}}" hint-placeholder-val="{{true}}">
+          <div class="ui-050">
+            <button class="chat-back-button" onclick="{{backToChats}}" aria-label="Back to conversations" title="Back to conversations">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+            </button>
+            <div class="ui-051" style="background:{{activeColor}}">
+              <sc-if value="{{activeHasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{activeAvatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if>
+              <sc-if value="{{activeNoAvatar}}" hint-placeholder-val="{{true}}">{{activeInitials}}</sc-if>
+            </div>
+            <div>
+              <div class="ui-052">{{activeTitle}}</div>
+              <div class="ui-053">{{activeSub}} · {{chatStatus}}</div>
+            </div>
+          </div>
+          <div class="ui-054" ref="{{msgRef}}">
+            <sc-if value="{{historyHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-055" onclick="{{loadMoreHistory}}" disabled="{{historyLoadMoreDisabled}}">Load older messages</button></sc-if>
+            <sc-if value="{{historyLoading}}" hint-placeholder-val="{{false}}"><div class="ui-056">Loading messages…</div></sc-if>
+            <sc-if value="{{historyHasError}}" hint-placeholder-val="{{false}}"><div class="ui-057" role="alert">{{historyError}} <button class="ui-034" onclick="{{retryHistory}}">Retry</button></div></sc-if>
+            <sc-for list="{{messages}}" as="msg" hint-placeholder-count="4">
+              <sc-if value="{{msg.mine}}" hint-placeholder-val="{{false}}">
+                <div class="ui-058">
+                  <div class="ui-059">{{msg.text}}</div>
+                  <div class="ui-060">{{msg.time}}</div>
+                  <sc-if value="{{msg.hasStatus}}" hint-placeholder-val="{{false}}"><div class="ui-061">{{msg.statusLabel}} <sc-if value="{{msg.failed}}" hint-placeholder-val="{{false}}"><button class="ui-062" onclick="{{msg.retry}}">Retry</button></sc-if></div></sc-if>
+                </div>
+              </sc-if>
+              <sc-if value="{{msg.theirs}}" hint-placeholder-val="{{true}}">
+                <div class="ui-063">
+                  <div class="ui-064" style="background:{{msg.user.color}}">
+                    <sc-if value="{{msg.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{msg.user.avatarUrl}}" alt=""></sc-if>
+                    <sc-if value="{{msg.user.noAvatar}}" hint-placeholder-val="{{true}}">{{msg.user.initials}}</sc-if>
+                  </div>
+                  <div>
+                    <sc-if value="{{msg.showName}}" hint-placeholder-val="{{false}}"><div class="ui-065">{{msg.user.name}}</div></sc-if>
+                    <div class="ui-066">{{msg.text}}</div>
+                    <div class="ui-067">{{msg.time}}</div>
+                  </div>
+                </div>
+              </sc-if>
+            </sc-for>
+            <sc-if value="{{typing}}" hint-placeholder-val="{{false}}">
+              <div class="ui-068">
+                <div class="ui-069" style="background:{{activeColor}}">{{activeInitials}}</div>
+                <div class="ui-070">
+                  <span class="ui-071"></span>
+                  <span class="ui-072"></span>
+                  <span class="ui-073"></span>
+                </div>
+                <span class="ui-074">{{typingLabel}}</span>
+              </div>
+            </sc-if>
+          </div>
+          <div class="ui-075">
+            <sc-if value="{{emojiOpen}}" hint-placeholder-val="{{false}}">
+              <div class="ui-076">
+                <sc-for list="{{emojis}}" as="e" hint-placeholder-count="6">
+                  <button class="ui-077" onclick="{{e.add}}" style-hover="background:var(--surface2);transform:scale(1.15)">{{e.ch}}</button>
+                </sc-for>
+              </div>
+            </sc-if>
+            <button class="ui-078" onclick="{{toggleEmoji}}" title="Emoji" style-hover="background:var(--surface2)">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM8.5 14s1.3 1.8 3.5 1.8 3.5-1.8 3.5-1.8M9.2 9.5h.01m5.6 0h.01"></path></svg>
+            </button>
+            <input class="ui-079" placeholder="Message…" value="{{chatDraft}}" onchange="{{onChatDraft}}" onkeydown="{{onChatKey}}" onblur="{{onChatBlur}}" disabled="{{chatInputDisabled}}">
+            <button class="ui-080" onclick="{{sendMsg}}" disabled="{{chatSendDisabled}}" style-hover="transform:translateY(-1px)" style-active="transform:scale(.92)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2.5 10.8 13.2m10.7-10.7-6.8 19-3.9-8.3-8.3-3.9Z"></path></svg>
+            </button>
+            <sc-if value="{{chatHasError}}" hint-placeholder-val="{{false}}"><div class="ui-081" role="alert">{{chatError}}</div></sc-if>
+          </div>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+    </sc-if>

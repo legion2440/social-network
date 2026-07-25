@@ -1,0 +1,200 @@
+<sc-if value="{{isGroup}}" hint-placeholder-val="{{false}}">
+    <div class="ui-151" data-screen-label="Group detail">
+      <button class="ui-152" onclick="{{gBack}}" style-hover="background:var(--surface2)">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg>
+        All groups
+      </button>
+      <sc-if value="{{groupHasError}}" hint-placeholder-val="{{false}}"><div class="ui-153" role="alert">{{groupError}} <button class="ui-154" onclick="{{retryGroup}}">Retry</button></div></sc-if>
+      <div class="ui-155">
+        <div class="ui-156" style="background:{{gCover}}"></div>
+        <div class="ui-157">
+          <div class="ui-158">
+            <h1 class="ui-159">{{gName}}</h1>
+            <sc-if value="{{gIsOwner}}" hint-placeholder-val="{{false}}"><span class="ui-160">OWNER</span></sc-if>
+            <sc-if value="{{gCanChat}}" hint-placeholder-val="{{false}}"><button class="ui-161" onclick="{{toggleInvite}}" style-hover="background:var(--surface2)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Invite
+            </button></sc-if>
+          </div>
+          <div class="ui-162">{{gMembersLabel}} members · owned by {{gOwner.name}}</div>
+          <p class="ui-163">{{gDesc}}</p>
+          <div class="ui-164">
+            <sc-if value="{{gIsNone}}" hint-placeholder-val="{{false}}"><button class="ui-165" onclick="{{gRequestJoin}}" disabled="{{gMutationPending}}">Request to join</button></sc-if>
+            <sc-if value="{{gIsRequested}}" hint-placeholder-val="{{false}}"><button class="ui-166" onclick="{{gRequestJoin}}" disabled="{{gMutationPending}}">Cancel request</button></sc-if>
+            <sc-if value="{{gIsInvited}}" hint-placeholder-val="{{false}}"><button class="ui-165" onclick="{{gAcceptInvitation}}" disabled="{{gMutationPending}}">Accept invitation</button><button class="ui-166" onclick="{{gDeclineInvitation}}" disabled="{{gMutationPending}}">Decline</button></sc-if>
+            <sc-if value="{{gIsMember}}" hint-placeholder-val="{{false}}"><button class="ui-166" onclick="{{gLeave}}" disabled="{{gMutationPending}}">Leave group</button></sc-if>
+            <sc-if value="{{gCanChat}}" hint-placeholder-val="{{false}}"><button class="ui-167" onclick="{{gOpenChat}}" disabled="{{gMutationPending}}">Open chat</button></sc-if>
+          </div>
+          <sc-if value="{{gMutationHasError}}" hint-placeholder-val="{{false}}"><div class="ui-168" role="alert">{{gMutationError}}</div></sc-if>
+          <sc-if value="{{inviteOpen}}" hint-placeholder-val="{{false}}">
+            <div class="ui-169">
+              <div class="ui-170">INVITE A USER</div>
+              <div class="ui-171">
+                <sc-for list="{{inviteCandidates}}" as="iv" hint-placeholder-count="2">
+                  <button class="ui-093" onclick="{{iv.pick}}" style="border:1.5px solid {{iv.bd}};background:{{iv.bg}};color:{{iv.tc}}">
+                    <span class="ui-094" style="background:{{iv.color}}">{{iv.initials}}</span>
+                    {{iv.label}}
+                  </button>
+                </sc-for>
+              </div>
+              <div class="ui-172"><button class="ui-165" onclick="{{inviteSelectedUser}}" disabled="{{inviteSendDisabled}}">Send invitation</button><sc-if value="{{inviteHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-166" onclick="{{inviteLoadMore}}" disabled="{{inviteDirectoryLoading}}">More users</button></sc-if></div>
+            </div>
+          </sc-if>
+        </div>
+        <div class="ui-173">
+          <sc-for list="{{gTabs}}" as="gt" hint-placeholder-count="3">
+            <button class="ui-174" onclick="{{gt.pick}}" style="color:{{gt.color}};border-bottom:2.5px solid {{gt.bd}}">{{gt.label}}</button>
+          </sc-for>
+        </div>
+      </div>
+
+      <sc-if value="{{gTabPosts}}" hint-placeholder-val="{{true}}">
+		<sc-if value="{{gContentLocked}}" hint-placeholder-val="{{false}}">
+		  <div class="ui-175">
+			Join this group to read posts and take part in the conversation.
+		  </div>
+		</sc-if>
+		<sc-if value="{{gCanContent}}" hint-placeholder-val="{{true}}">
+		  <div class="ui-176">
+			<div class="ui-177">
+			  <textarea class="ui-178" rows="3" maxlength="5000" placeholder="Share something with the group…" value="{{groupPostComposerText}}" onchange="{{onGroupPostComposerText}}"></textarea>
+			  <input class="ui-017" id="group-post-media" type="file" accept="image/jpeg,image/png,image/gif,image/webp" onchange="{{onGroupPostMedia}}">
+			  <sc-if value="{{groupPostComposerHasFile}}" hint-placeholder-val="{{false}}"><div class="ui-179"><span class="ui-180">{{groupPostComposerFileName}}</span><button class="ui-181" type="button" onclick="{{removeGroupPostMedia}}">Remove</button></div></sc-if>
+			  <sc-if value="{{groupPostComposerHasError}}" hint-placeholder-val="{{false}}"><div class="ui-182" role="alert">{{groupPostComposerError}}</div></sc-if>
+			  <div class="ui-183">
+				<button class="ui-184" type="button" onclick="{{pickGroupPostMedia}}" disabled="{{groupPostComposerPending}}">Add image</button>
+				<button class="ui-185" type="button" onclick="{{sendGroupPost}}" disabled="{{groupPostComposerDisabled}}">{{groupPostComposerButtonLabel}}</button>
+			  </div>
+			</div>
+
+			<sc-if value="{{groupPostsLoading}}" hint-placeholder-val="{{false}}"><div class="ui-186">Loading group posts…</div></sc-if>
+			<sc-if value="{{groupPostsHasError}}" hint-placeholder-val="{{false}}"><div class="ui-187" role="alert">{{groupPostsError}} <button class="ui-034" onclick="{{retryGroupPosts}}">Retry</button></div></sc-if>
+			<sc-if value="{{groupPostsEmpty}}" hint-placeholder-val="{{false}}"><div class="ui-188">No group posts yet.</div></sc-if>
+			<sc-for list="{{gPosts}}" as="p" hint-placeholder-count="2">
+			  <article class="ui-189" style="animation-delay:{{p.delay}}">
+				<div class="ui-110">
+				  <div class="ui-190" onclick="{{p.goProfile}}" style="background:{{p.user.color}}">
+					<sc-if value="{{p.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{p.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if>
+					<sc-if value="{{p.user.noAvatar}}" hint-placeholder-val="{{true}}">{{p.user.initials}}</sc-if>
+				  </div>
+				  <div class="ui-102"><button class="ui-191" onclick="{{p.goProfile}}">{{p.user.name}}</button><div class="ui-092">{{p.time}}</div></div>
+				</div>
+				<p class="ui-192">{{p.text}}</p>
+				<sc-if value="{{p.hasImage}}" hint-placeholder-val="{{false}}"><img class="ui-127" src="{{p.mediaUrl}}" alt="Group post media"></sc-if>
+				<div class="ui-193"><button class="ui-129" onclick="{{p.onToggleComments}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>{{p.commentCount}}</button></div>
+				<sc-if value="{{p.showComments}}" hint-placeholder-val="{{false}}">
+				  <div class="ui-194">
+					<sc-if value="{{p.commentsLoading}}" hint-placeholder-val="{{false}}"><div class="ui-195">Loading comments…</div></sc-if>
+					<sc-if value="{{p.commentsHasError}}" hint-placeholder-val="{{false}}"><div class="ui-196" role="alert">{{p.commentsError}} <button class="ui-034" onclick="{{p.retryComments}}">Retry</button></div></sc-if>
+					<sc-for list="{{p.comments}}" as="c" hint-placeholder-count="1"><div class="ui-197"><div class="ui-134" style="background:{{c.user.color}}"><sc-if value="{{c.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{c.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if><sc-if value="{{c.user.noAvatar}}" hint-placeholder-val="{{true}}">{{c.user.initials}}</sc-if></div><div class="ui-198"><div class="ui-199">{{c.user.name}} <span class="ui-200">· {{c.time}}</span></div><div class="ui-201">{{c.text}}</div><sc-if value="{{c.hasMedia}}" hint-placeholder-val="{{false}}"><img class="ui-139" src="{{c.mediaUrl}}" alt="Comment attachment"></sc-if></div></div></sc-for>
+					<sc-if value="{{p.commentsHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-202" onclick="{{p.loadMoreComments}}" disabled="{{p.commentsPending}}">Load more comments</button></sc-if>
+					<input class="ui-017" id="{{p.commentMediaInputID}}" type="file" accept="image/jpeg,image/png,image/gif,image/webp" onchange="{{p.onCommentMedia}}" disabled="{{p.commentMediaControlsDisabled}}">
+					<sc-if value="{{p.commentHasMedia}}" hint-placeholder-val="{{false}}"><div class="ui-142"><img class="ui-143" src="{{p.commentMediaPreviewURL}}" alt="Selected comment attachment"><span class="ui-144">{{p.commentMediaFileName}}</span><button class="ui-145" onclick="{{p.onRemoveCommentMedia}}" disabled="{{p.commentMediaControlsDisabled}}">Remove</button></div></sc-if>
+					<div class="ui-203"><input class="ui-204" value="{{p.draft}}" onchange="{{p.onDraft}}" onkeydown="{{p.onKey}}" disabled="{{p.commentCreatePending}}" placeholder="Write a comment…"><button class="ui-205" onclick="{{p.onChooseCommentMedia}}" disabled="{{p.commentMediaControlsDisabled}}" title="Attach image or GIF">Media</button><button class="ui-206" onclick="{{p.onSendComment}}" disabled="{{p.commentSendDisabled}}">{{p.commentSendLabel}}</button></div>
+					<sc-if value="{{p.commentCreateHasError}}" hint-placeholder-val="{{false}}"><div class="ui-207" role="alert">{{p.commentCreateError}}</div></sc-if>
+				  </div>
+				</sc-if>
+			  </article>
+			</sc-for>
+			<sc-if value="{{groupPostsHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-208" onclick="{{loadMoreGroupPosts}}" disabled="{{groupPostsLoadMoreDisabled}}">Load more posts</button></sc-if>
+		  </div>
+		</sc-if>
+      </sc-if>
+
+      <sc-if value="{{gTabEvents}}" hint-placeholder-val="{{false}}">
+		<sc-if value="{{gContentLocked}}" hint-placeholder-val="{{false}}">
+		  <div class="ui-175">
+			Join this group to view and respond to events.
+		  </div>
+		</sc-if>
+		<sc-if value="{{gCanContent}}" hint-placeholder-val="{{true}}">
+		  <div class="ui-209">
+			<div class="ui-210"><button class="ui-211" onclick="{{toggleGroupEventComposer}}" disabled="{{groupEventCreatePending}}">Create event</button></div>
+			<sc-if value="{{groupEventComposerOpen}}" hint-placeholder-val="{{false}}">
+			  <div class="ui-212">
+				<div class="ui-213">New group event</div>
+				<label class="ui-214">TITLE<input class="ui-215" maxlength="100" value="{{groupEventTitle}}" onchange="{{onGroupEventTitle}}" placeholder="Event title"></label>
+				<label class="ui-214">DESCRIPTION<textarea class="ui-216" rows="3" maxlength="2000" value="{{groupEventDescription}}" onchange="{{onGroupEventDescription}}" placeholder="What is this event about?"></textarea></label>
+				<label class="ui-214">DATE AND TIME<input class="ui-217" type="text" inputmode="numeric" autocomplete="off" maxlength="16" pattern="[0-9]{2}-[0-9]{2}-[0-9]{4} [0-9]{2}:[0-9]{2}" placeholder="DD-MM-YYYY HH:MM" title="Use DD-MM-YYYY HH:MM format" aria-describedby="event-start-help" value="{{groupEventStartsAt}}" onchange="{{onGroupEventStartsAt}}"><span id="event-start-help" class="date-input-help">DD-MM-YYYY HH:MM in your local time</span></label>
+				<sc-if value="{{groupEventCreateHasError}}" hint-placeholder-val="{{false}}"><div class="ui-218" role="alert">{{groupEventCreateError}}</div></sc-if>
+				<div class="ui-210"><button class="ui-219" onclick="{{createGroupEvent}}" disabled="{{groupEventCreateDisabled}}">{{groupEventCreateButtonLabel}}</button></div>
+			  </div>
+			</sc-if>
+
+			<sc-if value="{{groupEventsLoading}}" hint-placeholder-val="{{false}}"><div class="ui-188">Loading events…</div></sc-if>
+			<sc-if value="{{groupEventsHasError}}" hint-placeholder-val="{{false}}"><div class="ui-187" role="alert">{{groupEventsError}} <button class="ui-034" onclick="{{retryGroupEvents}}">Retry</button></div></sc-if>
+			<sc-if value="{{groupEventsEmpty}}" hint-placeholder-val="{{false}}"><div class="ui-188">No group events yet.</div></sc-if>
+			<sc-for list="{{gEvents}}" as="ev" hint-placeholder-count="2">
+			  <article class="ui-189" style="animation-delay:{{ev.delay}}">
+				<div class="ui-110">
+				  <div class="ui-220" onclick="{{ev.goProfile}}" style="background:{{ev.creator.color}}"><sc-if value="{{ev.creator.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{ev.creator.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if><sc-if value="{{ev.creator.noAvatar}}" hint-placeholder-val="{{true}}">{{ev.creator.initials}}</sc-if></div>
+				  <div class="ui-221"><div class="ui-222">{{ev.title}}</div><div class="ui-223">{{ev.startsAt}} · by {{ev.creator.name}}</div></div>
+				</div>
+				<p class="ui-224">{{ev.description}}</p>
+				<div class="ui-225">
+				  <button class="ui-226" onclick="{{ev.going}}" disabled="{{ev.pending}}" style="background:{{ev.goingBg}};color:{{ev.goingColor}}">Going · {{ev.goingCount}}</button>
+				  <button class="ui-226" onclick="{{ev.notGoing}}" disabled="{{ev.pending}}" style="background:{{ev.notGoingBg}};color:{{ev.notGoingColor}}">Not going · {{ev.notGoingCount}}</button>
+				</div>
+				<sc-if value="{{ev.hasError}}" hint-placeholder-val="{{false}}"><div class="ui-227" role="alert">{{ev.error}}</div></sc-if>
+			  </article>
+			</sc-for>
+			<sc-if value="{{groupEventsHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-208" onclick="{{loadMoreGroupEvents}}" disabled="{{groupEventsLoadMoreDisabled}}">Load more events</button></sc-if>
+		  </div>
+		</sc-if>
+      </sc-if>
+
+      <sc-if value="{{gTabMembers}}" hint-placeholder-val="{{false}}">
+        <div class="ui-228">
+          <sc-if value="{{groupMembersHasError}}" hint-placeholder-val="{{false}}"><div class="ui-141" role="alert">{{groupMembersError}}</div></sc-if>
+          <sc-if value="{{groupRequestsHasError}}" hint-placeholder-val="{{false}}"><div class="ui-141" role="alert">{{groupRequestsError}}</div></sc-if>
+          <sc-if value="{{groupInvitationsHasError}}" hint-placeholder-val="{{false}}"><div class="ui-141" role="alert">{{groupInvitationsError}}</div></sc-if>
+          <sc-if value="{{gHasRequests}}" hint-placeholder-val="{{false}}">
+            <div class="ui-229">
+              <div class="ui-230">PENDING JOIN REQUESTS</div>
+              <sc-for list="{{gRequests}}" as="rq" hint-placeholder-count="1">
+                <div class="ui-231">
+                  <div class="ui-051" style="background:{{rq.user.color}}">
+                    <sc-if value="{{rq.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{rq.user.avatarUrl}}" alt=""></sc-if>
+                    <sc-if value="{{rq.user.noAvatar}}" hint-placeholder-val="{{true}}">{{rq.user.initials}}</sc-if>
+                  </div>
+                  <div class="ui-040">
+                    <div class="ui-232">{{rq.user.name}}</div>
+                    <div class="ui-053">{{rq.user.handle}}</div>
+                  </div>
+                  <sc-if value="{{rq.pending}}" hint-placeholder-val="{{true}}">
+                    <button class="ui-233" onclick="{{rq.accept}}">Accept</button>
+                    <button class="ui-234" onclick="{{rq.decline}}">Decline</button>
+                  </sc-if>
+                  <sc-if value="{{rq.done}}" hint-placeholder-val="{{false}}">
+                    <span class="ui-235">{{rq.doneLabel}}</span>
+                  </sc-if>
+                </div>
+              </sc-for>
+              <sc-if value="{{groupRequestsHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-236" onclick="{{loadMoreGroupRequests}}" disabled="{{groupRequestsLoading}}">Load more requests</button></sc-if>
+            </div>
+          </sc-if>
+          <sc-if value="{{gHasInvitations}}" hint-placeholder-val="{{false}}">
+            <div class="ui-229">
+              <div class="ui-230">SENT INVITATIONS</div>
+              <sc-for list="{{gInvitations}}" as="gi" hint-placeholder-count="1"><div class="ui-237"><div class="ui-238" style="background:{{gi.user.color}}">{{gi.user.initials}}</div><div class="ui-239">{{gi.user.name}}</div><span class="ui-240">Pending</span></div></sc-for>
+              <sc-if value="{{groupInvitationsHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-236" onclick="{{loadMoreGroupInvitations}}" disabled="{{groupInvitationsLoading}}">Load more invitations</button></sc-if>
+            </div>
+          </sc-if>
+          <sc-for list="{{gMembers}}" as="m" hint-placeholder-count="4">
+            <div class="ui-241">
+              <div class="ui-242" onclick="{{m.goProfile}}" style="background:{{m.user.color}}">
+                <sc-if value="{{m.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{m.user.avatarUrl}}" alt=""></sc-if>
+                <sc-if value="{{m.user.noAvatar}}" hint-placeholder-val="{{true}}">{{m.user.initials}}</sc-if>
+              </div>
+              <div class="ui-243" onclick="{{m.goProfile}}">
+                <div class="ui-244">{{m.user.name}}</div>
+                <div class="ui-092">{{m.user.handle}}</div>
+              </div>
+              <sc-if value="{{m.isOwner}}" hint-placeholder-val="{{false}}"><span class="ui-245">OWNER</span></sc-if>
+            </div>
+          </sc-for>
+          <sc-if value="{{groupMembersHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-246" onclick="{{loadMoreGroupMembers}}">Load more members</button></sc-if>
+        </div>
+      </sc-if>
+    </div>
+    </sc-if>

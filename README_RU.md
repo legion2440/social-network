@@ -100,7 +100,10 @@ Backend намеренно остаётся приватным внутри Dock
   - `selected`;
 - выбор конкретных accepted followers для `selected`-поста;
 - вложения JPEG, PNG, GIF и WebP до 20 MB;
-- пагинация ленты и постов профиля;
+- создание personal posts, group posts и comments по правилу text или media;
+- пагинация personal Home feed и profile activity с учётом viewer;
+- public posts остаются в Home даже у автора с private profile;
+- group posts видны только active members и отмечаются группой в profile;
 - комментарии с необязательным JPEG, PNG, GIF или WebP;
 - повторная проверка текущего доступа при каждом запросе защищённого медиа поста или комментария.
 
@@ -135,6 +138,7 @@ Backend намеренно остаётся приватным внутри Dock
 - приглашение в группу;
 - запрос на вступление в группу;
 - создание события в группе.
+- принятая подписка (`follow_started`, реализованный bonus).
 
 Поддерживаются:
 
@@ -214,7 +218,7 @@ Caddy проксирует точные и вложенные маршруты:
 | Static server / reverse proxy | Caddy                                  |
 | Контейнеры                    | Docker и Docker Compose                |
 
-Browser-приложение не организовано как обычное React component tree. Собственный framework в `frontend/js/runtime.js` обрабатывает шаблон `<x-dc>` из `frontend/index.html`, а React и ReactDOM используются как rendering layer.
+Browser-приложение не организовано как обычное React component tree. Application framework `dc-runtime` обрабатывает собранный build-time шаблон `<x-dc>`, а React и ReactDOM используются только как rendering layer. Production source находится в `frontend/src` и генерируется в ignored-каталог `frontend/dist`.
 
 ## 🔐 Безопасность и контроль доступа
 
@@ -255,8 +259,13 @@ social-network-frontend:local
 Из корня репозитория:
 
 ```bash
-docker image build -f backend/Dockerfile -t social-network-backend:local .
-docker image build -f frontend/Dockerfile -t social-network-frontend:local .
+./scripts/build-images.sh
+```
+
+PowerShell:
+
+```powershell
+.\scripts\build-images.ps1
 ```
 
 ### Standalone-запуск
@@ -324,9 +333,11 @@ docker network rm social-network
 
 ## 💾 Хранение данных и миграции
 
-Сейчас приложение использует `15` версионированных SQLite migrations.
+Сейчас приложение использует `16` версионированных SQLite schema migrations.
 
 Pending migrations применяются автоматически до начала прослушивания HTTP. Текущая версия и dirty state хранятся в `schema_migrations`.
+
+Schema SQL встраивается в backend binary через `go:embed`; после изменения SQL backend image нужно пересобрать. Для выпущенного schema change нельзя редактировать уже применённую migration — добавляется новая версия.
 
 Compose и standalone используют одни и те же явно заданные volumes:
 
@@ -367,8 +378,43 @@ sqlite3 var/social-network.db \
 Ожидаемая текущая версия:
 
 ```text
-15 | 0
+16 | 0
 ```
+
+Opt-in demo dataset использует отдельный embedded-набор и отдельную таблицу `seed_migrations`. При обычном startup он не применяется:
+
+```bash
+docker compose exec backend /app/seed
+```
+
+Команду можно запускать повторно. Она создаёт три demo accounts с паролем `LoopDemo123!`:
+
+```text
+alice.demo@example.com
+bob.demo@example.com
+carol.demo@example.com
+```
+
+Backend runtime image содержит SQLite CLI:
+
+```bash
+docker compose exec backend sqlite3 /data/db/social-network.db
+```
+
+Примеры audit-команд:
+
+```sql
+.tables
+SELECT version, dirty FROM schema_migrations;
+SELECT id, email, first_name, last_name, is_private FROM users ORDER BY id;
+SELECT user_id, created_at, expires_at FROM sessions ORDER BY created_at DESC;
+SELECT id, author_user_id, group_id, privacy,
+       media_id, length(text) AS text_length
+FROM posts ORDER BY id;
+SELECT post_id, user_id FROM post_selected_users ORDER BY post_id, user_id;
+```
+
+Raw session tokens намеренно не входят в документированные audit-запросы.
 
 ## ⚙️ Конфигурация
 
@@ -379,7 +425,7 @@ Backend environment variables:
 | `SOCIAL_NETWORK_HTTP_ADDR`     | `127.0.0.1:8080`        | адрес backend                 |
 | `SOCIAL_NETWORK_DB_PATH`       | `var/social-network.db` | путь к SQLite                 |
 | `SOCIAL_NETWORK_UPLOAD_DIR`    | `var/uploads`           | каталог uploaded files        |
-| `SOCIAL_NETWORK_FRONTEND_DIR`  | `../frontend`           | локальный static frontend     |
+| `SOCIAL_NETWORK_FRONTEND_DIR`  | `../frontend/dist`      | generated local static frontend |
 | `SOCIAL_NETWORK_COOKIE_SECURE` | `false`                 | Secure-атрибут session cookie |
 
 Настройка host-порта Compose:
@@ -397,12 +443,13 @@ Docker заменяет backend paths на постоянные `/data` mounts �
 SQLite driver требует CGO и рабочий C compiler.
 
 ```bash
-cd backend
-
+cd frontend
+npm run build
+cd ../backend
 go run ./cmd/server
 ```
 
-При локальном запуске Go server по умолчанию выдаёт `../frontend`, поэтому browser requests и session cookie остаются same-origin.
+При локальном запуске Go server по умолчанию выдаёт `../frontend/dist`, поэтому browser requests и session cookie остаются same-origin.
 
 Backend checks:
 
@@ -419,6 +466,7 @@ Frontend tests используют встроенный Node test runner и н�
 ```bash
 cd frontend
 npm test
+npm run build
 ```
 
 Итоговая локальная проверка:
@@ -427,7 +475,8 @@ npm test
 Go tests:              passed
 Go race tests:         passed
 go vet:                passed
-Frontend tests:        121/121
+Frontend tests:        passed
+Frontend build:        passed
 docker compose config: passed
 ```
 
@@ -438,6 +487,7 @@ social-network/
 ├── backend/
 │   ├── cmd/
 │   │   ├── healthcheck/
+│   │   ├── seed/
 │   │   └── server/
 │   ├── internal/
 │   │   ├── app/
@@ -448,18 +498,25 @@ social-network/
 │   │   ├── realtime/
 │   │   ├── repo/
 │   │   │   └── sqlite/
-│   │   │       └── migrations/
+│   │   │       ├── migrations/
+│   │   │       └── seedmigrations/
 │   │   └── service/
 │   ├── Dockerfile
 │   └── README.md
 ├── frontend/
-│   ├── assets/
-│   ├── css/
-│   ├── js/
+│   ├── scripts/
+│   ├── src/
+│   │   ├── assets/
+│   │   ├── css/
+│   │   ├── js/
+│   │   └── templates/
+│   ├── test/
 │   ├── Caddyfile
 │   ├── Dockerfile
-│   ├── index.html
 │   └── package.json
+├── scripts/
+│   ├── build-images.ps1
+│   └── build-images.sh
 ├── compose.yaml
 ├── README.md
 └── README_RU.md

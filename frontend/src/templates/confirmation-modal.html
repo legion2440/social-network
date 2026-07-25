@@ -1,0 +1,29 @@
+<sc-if value="{{confirmationOpen}}" hint-placeholder-val="{{false}}">
+  <div class="confirmation-backdrop" role="presentation">
+    <div
+      class="confirmation-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirmation-title"
+      aria-describedby="confirmation-description"
+      tabindex="-1"
+      ref="{{confirmationDialogRef}}"
+      onkeydown="{{confirmationKeyDown}}">
+      <h2 id="confirmation-title">{{confirmationTitle}}</h2>
+      <p id="confirmation-description">{{confirmationMessage}}</p>
+      <div class="confirmation-actions">
+        <button
+          class="confirmation-cancel"
+          type="button"
+          ref="{{confirmationCancelRef}}"
+          onclick="{{cancelConfirmation}}"
+          disabled="{{confirmationPending}}">Cancel</button>
+        <button
+          class="confirmation-confirm"
+          type="button"
+          onclick="{{confirmConfirmation}}"
+          disabled="{{confirmationPending}}">{{confirmationConfirmLabel}}</button>
+      </div>
+    </div>
+  </div>
+</sc-if>

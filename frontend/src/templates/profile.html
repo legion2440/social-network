@@ -1,0 +1,257 @@
+<sc-if value="{{isProfileLoading}}" hint-placeholder-val="{{false}}">
+    <div class="ui-082" data-screen-label="Profile loading">
+      <div class="ui-293">Loading profile…</div>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{isProfileError}}" hint-placeholder-val="{{false}}">
+    <div class="ui-082" data-screen-label="Profile error">
+      <div class="ui-294" role="alert">
+        {{profileError}}
+        <button class="ui-295" onclick="{{retryProfile}}">Retry</button>
+      </div>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{isProfile}}" hint-placeholder-val="{{false}}">
+    <div class="ui-082" data-screen-label="Profile">
+      <div class="ui-296">
+        <div class="ui-297" style="background:{{pCover}}"></div>
+        <div class="ui-298">
+          <div class="ui-299">
+            <div class="ui-300" style="background:{{pUser.color}}">
+              <sc-if value="{{pUser.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{pUser.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if>
+              <sc-if value="{{pUser.noAvatar}}" hint-placeholder-val="{{true}}">{{pUser.initials}}</sc-if>
+            </div>
+            <div class="ui-301">
+              <sc-if value="{{pIsMe}}" hint-placeholder-val="{{false}}">
+                <button class="ui-302" onclick="{{openProfileEdit}}" style-hover="background:var(--surface2);color:var(--text)">Edit profile</button>
+                <span class="ui-303">Profile:</span>
+                <div class="ui-304">
+                  <sc-for list="{{privacySeg}}" as="sg" hint-placeholder-count="2">
+                    <button class="ui-305" onclick="{{sg.pick}}" disabled="{{sg.disabled}}" style="cursor:{{sg.cursor}};opacity:{{sg.opacity}};background:{{sg.bg}};color:{{sg.color}}">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="{{sg.icon}}"></path></svg>
+                      {{sg.label}}
+                    </button>
+                  </sc-for>
+                </div>
+              </sc-if>
+              <sc-if value="{{pOther}}" hint-placeholder-val="{{false}}">
+                <button class="ui-306" onclick="{{onFollow}}" disabled="{{followDisabled}}" style="border:1.5px solid {{followBd}};background:{{followBg}};color:{{followColor}}" style-active="transform:scale(.97)">{{followLabel}}</button>
+                <button class="ui-307" onclick="{{msgProfile}}" title="Message" style-hover="background:var(--surface2)">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-3-.4-4.2-1.1L3 21l2.1-5.3A8.5 8.5 0 1 1 21 11.5Z"></path></svg>
+                </button>
+              </sc-if>
+            </div>
+          </div>
+          <sc-if value="{{profilePrivacyHasError}}" hint-placeholder-val="{{false}}">
+            <div class="ui-308" role="alert">{{profilePrivacyError}}</div>
+          </sc-if>
+          <sc-if value="{{followHasError}}" hint-placeholder-val="{{false}}">
+            <div class="ui-308" role="alert">{{followError}}</div>
+          </sc-if>
+          <div class="ui-309">
+            <h1 class="ui-310">{{pUser.name}}</h1>
+            <sc-if value="{{pShowLock}}" hint-placeholder-val="{{false}}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10.5V7a5 5 0 0 1 10 0v3.5M6 10.5h12a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1Z"></path></svg></sc-if>
+          </div>
+          <div class="ui-311">{{pUser.handle}}</div>
+          <p class="ui-312">{{pUser.bio}}</p>
+          <sc-if value="{{pCanView}}" hint-placeholder-val="{{true}}">
+            <div class="ui-313">
+              <span><b class="ui-314">{{pStatPosts}}</b> posts</span>
+              <span><b class="ui-314">{{pStatFollowers}}</b> followers</span>
+              <span><b class="ui-314">{{pStatFollowing}}</b> following</span>
+            </div>
+            <div class="ui-315">
+              <sc-if value="{{pShowEmail}}" hint-placeholder-val="{{false}}"><span class="ui-316"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6.5h17v12h-17zM3.5 7l8.5 6 8.5-6"></path></svg>{{pUser.email}}</span></sc-if>
+              <span class="ui-316"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v3m8-3v3M3.5 9h17m-15-3.5h13a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z"></path></svg>Born {{pUser.dob}}</span>
+              <sc-if value="{{pShowGender}}" hint-placeholder-val="{{false}}"><span class="ui-316">Gender: {{pGenderLabel}}</span></sc-if>
+            </div>
+          </sc-if>
+        </div>
+
+        <sc-if value="{{showProfileEdit}}" hint-placeholder-val="{{false}}">
+        <div class="ui-317">
+          <div class="ui-318">
+            <div>
+              <h2 class="ui-319">Edit profile</h2>
+              <p class="ui-320">Email and password cannot be changed here yet.</p>
+            </div>
+            <button class="ui-321" type="button" onclick="{{cancelProfileEdit}}" title="Close">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M17.5 6.5l-11 11m0-11 11 11"></path></svg>
+            </button>
+          </div>
+
+          <div class="ui-322">
+            <div class="ui-323" style="background:{{me.color}}">
+              <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{me.avatarUrl}}" alt="Your avatar"></sc-if>
+              <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
+            </div>
+            <input class="ui-017" id="profile-avatar" type="file" accept="image/jpeg,image/png,image/gif,image/webp" onchange="{{onProfileAvatar}}">
+            <button class="ui-324" type="button" onclick="{{pickProfileAvatar}}" disabled="{{profileAvatarPending}}">{{profileAvatarLabel}}</button>
+            <button class="ui-325" type="button" onclick="{{replaceProfileAvatar}}" disabled="{{profileAvatarUploadDisabled}}" style="opacity:{{profileAvatarUploadOpacity}}">{{profileAvatarUploadLabel}}</button>
+            <sc-if value="{{profileHasCustomAvatar}}" hint-placeholder-val="{{false}}">
+              <button class="ui-326" type="button" onclick="{{deleteProfileAvatar}}" disabled="{{profileAvatarPending}}">Remove avatar</button>
+            </sc-if>
+            <span class="ui-327">JPEG, PNG, GIF or WebP · max 20 MB</span>
+          </div>
+
+          <form class="ui-328" onsubmit="{{saveProfile}}">
+            <div class="ui-329">
+              <input class="ui-330" autocomplete="given-name" required placeholder="First name" value="{{editFirstName}}" onchange="{{onEditFirstName}}">
+              <input class="ui-330" autocomplete="family-name" required placeholder="Last name" value="{{editLastName}}" onchange="{{onEditLastName}}">
+            </div>
+            <label class="ui-331">Date of birth</label>
+            <input class="ui-330" type="text" inputmode="numeric" autocomplete="bday" required maxlength="10" pattern="[0-9]{2}-[0-9]{2}-[0-9]{4}" placeholder="DD-MM-YYYY" title="Use DD-MM-YYYY format" value="{{editDateOfBirth}}" onchange="{{onEditDateOfBirth}}">
+            <select class="ui-330" value="{{editGender}}" onchange="{{onEditGender}}">
+              <option value="">Gender not specified</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
+            <input class="ui-330" placeholder="Nickname (optional)" value="{{editNickname}}" onchange="{{onEditNickname}}">
+            <textarea class="ui-330" placeholder="About me (optional)" rows="3" value="{{editAboutMe}}" onchange="{{onEditAboutMe}}"></textarea>
+            <sc-if value="{{profileEditHasError}}" hint-placeholder-val="{{false}}">
+              <div class="ui-332" role="alert">{{profileEditError}}</div>
+            </sc-if>
+            <div class="ui-333">
+              <button class="ui-334" type="button" onclick="{{cancelProfileEdit}}" disabled="{{profileEditPending}}">Cancel</button>
+              <button class="ui-335" type="submit" disabled="{{profileEditPending}}">{{profileSaveLabel}}</button>
+            </div>
+          </form>
+        </div>
+        </sc-if>
+      </div>
+
+      <sc-if value="{{pLocked}}" hint-placeholder-val="{{false}}">
+        <div class="ui-336">
+          <div class="ui-337">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10.5V7a5 5 0 0 1 10 0v3.5M6 10.5h12a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1Z"></path></svg>
+          </div>
+          <div class="ui-338">This account is private</div>
+          <p class="ui-339">Follow {{pUser.name}} to see their posts, followers and full profile.</p>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{pCanView}}" hint-placeholder-val="{{true}}">
+        <div class="ui-340">
+          <sc-for list="{{pTabs}}" as="pt" hint-placeholder-count="3">
+            <button class="ui-341" onclick="{{pt.pick}}" style="color:{{pt.color}};border-bottom:2.5px solid {{pt.bd}}">{{pt.label}}</button>
+          </sc-for>
+        </div>
+        <sc-if value="{{pListsLoading}}" hint-placeholder-val="{{false}}"><div class="ui-342">Loading followers…</div></sc-if>
+        <sc-if value="{{pListsHasError}}" hint-placeholder-val="{{false}}"><div class="ui-343" role="alert">{{pListsError}}</div></sc-if>
+        <sc-if value="{{pTabPosts}}" hint-placeholder-val="{{true}}">
+          <div class="ui-108">
+            <sc-if value="{{pPostsLoading}}" hint-placeholder-val="{{false}}"><div class="ui-344">Loading posts…</div></sc-if>
+            <sc-if value="{{pPostsHasError}}" hint-placeholder-val="{{false}}"><div class="ui-345" role="alert">{{pPostsError}} <button class="ui-107" onclick="{{retryProfilePosts}}">Retry</button></div></sc-if>
+            <sc-for list="{{pPosts}}" as="p" hint-placeholder-count="2">
+              <article class="ui-346">
+                <div class="ui-110">
+                  <div class="ui-086" style="background:{{p.user.color}}">
+                    <sc-if value="{{p.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{p.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if>
+                    <sc-if value="{{p.user.noAvatar}}" hint-placeholder-val="{{true}}">{{p.user.initials}}</sc-if>
+                  </div>
+                  <div class="ui-102">
+                    <span class="ui-347">{{p.user.name}}</span>
+                    <div class="ui-124">
+                      <sc-if value="{{p.hasGroup}}" hint-placeholder-val="{{false}}"><button class="post-group-link" type="button" onclick="{{p.goGroup}}">{{p.groupTitle}}</button> · </sc-if>{{p.time}}
+                    </div>
+                  </div>
+                  <span class="ui-125">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{p.privacyIcon}}"></path></svg>
+                    {{p.privacyLabel}}
+                  </span>
+                </div>
+                <p class="ui-126">{{p.text}}</p>
+                <sc-if value="{{p.hasImage}}" hint-placeholder-val="{{false}}">
+                  <img class="ui-127" src="{{p.mediaUrl}}" alt="Post media">
+                </sc-if>
+                <div class="ui-128">
+                  <button class="ui-129" onclick="{{p.onToggleComments}}" style-hover="background:var(--surface2)">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>
+                    {{p.commentCount}}
+                  </button>
+                </div>
+                <sc-if value="{{p.showComments}}" hint-placeholder-val="{{false}}">
+                  <div class="ui-130">
+                    <sc-if value="{{p.commentsLoading}}" hint-placeholder-val="{{false}}"><div class="ui-131">Loading comments…</div></sc-if>
+                    <sc-if value="{{p.commentsHasError}}" hint-placeholder-val="{{false}}"><div class="ui-132" role="alert">{{p.commentsError}} <button class="ui-034" onclick="{{p.retryComments}}">Retry</button></div></sc-if>
+                    <sc-for list="{{p.comments}}" as="c" hint-placeholder-count="1">
+                      <div class="ui-133">
+                        <div class="ui-134" style="background:{{c.user.color}}">
+                          <sc-if value="{{c.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{c.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if>
+                          <sc-if value="{{c.user.noAvatar}}" hint-placeholder-val="{{true}}">{{c.user.initials}}</sc-if>
+                        </div>
+                        <div class="ui-135">
+                          <span class="ui-136">{{c.user.name}}</span><span class="ui-137"> · {{c.time}}</span>
+                          <p class="ui-138">{{c.text}}</p>
+                          <sc-if value="{{c.hasMedia}}" hint-placeholder-val="{{false}}"><img class="ui-139" src="{{c.mediaUrl}}" alt="Comment attachment"></sc-if>
+                        </div>
+                      </div>
+                    </sc-for>
+                    <sc-if value="{{p.commentsHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-140" onclick="{{p.loadMoreComments}}" disabled="{{p.commentsPending}}">Load more</button></sc-if>
+                    <sc-if value="{{p.commentCreateHasError}}" hint-placeholder-val="{{false}}"><div class="ui-141" role="alert">{{p.commentCreateError}}</div></sc-if>
+                    <input class="ui-017" id="{{p.commentMediaInputID}}" type="file" accept="image/jpeg,image/png,image/gif,image/webp" onchange="{{p.onCommentMedia}}" disabled="{{p.commentMediaControlsDisabled}}">
+                    <sc-if value="{{p.commentHasMedia}}" hint-placeholder-val="{{false}}"><div class="ui-142"><img class="ui-143" src="{{p.commentMediaPreviewURL}}" alt="Selected comment attachment"><span class="ui-144">{{p.commentMediaFileName}}</span><button class="ui-145" onclick="{{p.onRemoveCommentMedia}}" disabled="{{p.commentMediaControlsDisabled}}">Remove</button></div></sc-if>
+                    <div class="ui-146">
+                      <div class="ui-134" style="background:{{me.color}}">
+                        <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{me.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if>
+                        <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
+                      </div>
+                      <input class="ui-147" placeholder="Write a comment…" value="{{p.draft}}" onchange="{{p.onDraft}}" onkeydown="{{p.onKey}}" disabled="{{p.commentCreatePending}}">
+                      <button class="ui-148" onclick="{{p.onChooseCommentMedia}}" disabled="{{p.commentMediaControlsDisabled}}" title="Attach image or GIF">Media</button>
+                      <button class="ui-149" onclick="{{p.onSendComment}}" disabled="{{p.commentSendDisabled}}">{{p.commentSendLabel}}</button>
+                    </div>
+                  </div>
+                </sc-if>
+              </article>
+            </sc-for>
+            <sc-if value="{{pNoPosts}}" hint-placeholder-val="{{false}}">
+              <div class="ui-348">No posts yet.</div>
+            </sc-if>
+            <sc-if value="{{pPostsHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-150" onclick="{{loadMoreProfilePosts}}" disabled="{{profileLoadMoreDisabled}}">{{profileLoadMoreLabel}}</button></sc-if>
+          </div>
+        </sc-if>
+        <sc-if value="{{pTabFollowers}}" hint-placeholder-val="{{false}}">
+          <div class="ui-228">
+            <sc-for list="{{pFollowers}}" as="f" hint-placeholder-count="3">
+              <div class="ui-241">
+                <div class="ui-242" onclick="{{f.goProfile}}" style="background:{{f.user.color}}">
+                  <sc-if value="{{f.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{f.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if>
+                  <sc-if value="{{f.user.noAvatar}}" hint-placeholder-val="{{true}}">{{f.user.initials}}</sc-if>
+                </div>
+                <div class="ui-243" onclick="{{f.goProfile}}">
+                  <div class="ui-244">{{f.user.name}}</div>
+                  <div class="ui-092">{{f.user.handle}}</div>
+                </div>
+                <sc-if value="{{f.showBtn}}" hint-placeholder-val="{{false}}">
+                  <button class="ui-349" onclick="{{f.message}}" title="Message"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-3-.4-4.2-1.1L3 21l2.1-5.3A8.5 8.5 0 1 1 21 11.5Z"></path></svg></button>
+                  <button class="ui-350" onclick="{{f.onBtn}}" disabled="{{f.btnDisabled}}" style="border:1.5px solid {{f.btnBd}};background:{{f.btnBg}};color:{{f.btnColor}}">{{f.btnLabel}}</button>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{pTabFollowing}}" hint-placeholder-val="{{false}}">
+          <div class="ui-228">
+            <sc-for list="{{pFollowing}}" as="f" hint-placeholder-count="3">
+              <div class="ui-241">
+                <div class="ui-242" onclick="{{f.goProfile}}" style="background:{{f.user.color}}">
+                  <sc-if value="{{f.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{f.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if>
+                  <sc-if value="{{f.user.noAvatar}}" hint-placeholder-val="{{true}}">{{f.user.initials}}</sc-if>
+                </div>
+                <div class="ui-243" onclick="{{f.goProfile}}">
+                  <div class="ui-244">{{f.user.name}}</div>
+                  <div class="ui-092">{{f.user.handle}}</div>
+                </div>
+                <sc-if value="{{f.showBtn}}" hint-placeholder-val="{{false}}">
+                  <button class="ui-349" onclick="{{f.message}}" title="Message"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-3-.4-4.2-1.1L3 21l2.1-5.3A8.5 8.5 0 1 1 21 11.5Z"></path></svg></button>
+                  <button class="ui-350" onclick="{{f.onBtn}}" disabled="{{f.btnDisabled}}" style="border:1.5px solid {{f.btnBd}};background:{{f.btnBg}};color:{{f.btnColor}}">{{f.btnLabel}}</button>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </sc-if>
+    </div>
+    </sc-if>

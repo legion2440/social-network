@@ -1,0 +1,98 @@
+<sc-if value="{{isApp}}" hint-placeholder-val="{{true}}">
+<div class="app-shell ui-351">
+
+  <nav class="app-sidebar ui-352">
+    <div class="desktop-only ui-353" onclick="{{goHome}}">
+      <svg width="30" height="30" viewBox="0 0 28 28"><circle cx="11" cy="14" r="8.5" fill="var(--accent)" opacity="0.9"></circle><circle cx="17.5" cy="14" r="8.5" fill="var(--accent)" opacity="0.4"></circle></svg>
+      <span class="ui-354">loop</span>
+    </div>
+    <sc-for list="{{navItems}}" as="n" hint-placeholder-count="5">
+      <button class="ui-355" onclick="{{n.go}}" aria-label="{{n.label}}" style="background:{{n.bg}};color:{{n.color}};font-weight:{{n.w}}">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{n.icon}}"></path></svg>
+        <span class="nav-label ui-102">{{n.label}}</span>
+        <sc-if value="{{n.hasBadge}}" hint-placeholder-val="{{false}}"><span class="ui-356">{{n.badge}}</span></sc-if>
+      </button>
+    </sc-for>
+    <div class="desktop-only ui-357">
+      <sc-if value="{{appHasError}}" hint-placeholder-val="{{false}}">
+        <div class="ui-358" role="alert">{{appError}}</div>
+      </sc-if>
+      <button class="ui-359" onclick="{{toggleTheme}}" style-hover="background:var(--surface2)">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{themeIcon}}"></path></svg>
+        <span>{{themeLabel}}</span>
+      </button>
+      <div class="ui-360">
+        <div class="ui-361" onclick="{{goMyProfile}}" style="background:{{me.color}}">
+          <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{me.avatarUrl}}" alt=""></sc-if>
+          <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
+        </div>
+        <div class="ui-243" onclick="{{goMyProfile}}">
+          <div class="ui-042">{{me.name}}</div>
+          <div class="ui-092">{{me.handle}}</div>
+        </div>
+        <button class="ui-362" onclick="{{goLogout}}" disabled="{{logoutDisabled}}" title="Log out" style-hover="background:var(--surface2);color:var(--text)">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9"></path></svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="app-main ui-363">
+
+    <!-- @include feed.html -->
+    <!-- @include profile.html -->
+    <!-- @include groups.html -->
+    <!-- @include group.html -->
+    <!-- @include chat.html -->
+    <!-- @include notifications.html -->
+    
+  </main>
+
+  <sc-if value="{{rightRail}}" hint-placeholder-val="{{true}}">
+  <aside class="app-right-rail ui-364">
+    <sc-if value="{{railHeaderSpacer}}" hint-placeholder-val="{{true}}"><div class="page-header-row page-header-row--spacer" aria-hidden="true"><span class="ui-365">·</span></div></sc-if>
+    <div class="ui-176">
+    <div class="ui-366">
+      <div class="ui-367">Suggested for you</div>
+      <sc-if value="{{suggestionsHasError}}" hint-placeholder-val="{{false}}"><div class="ui-368" role="alert">{{suggestionsError}}</div></sc-if>
+      <sc-for list="{{suggestions}}" as="sg" hint-placeholder-count="2">
+        <div class="ui-369">
+          <div class="ui-122" onclick="{{sg.goProfile}}" style="background:{{sg.user.color}}">
+            <sc-if value="{{sg.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{sg.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if>
+            <sc-if value="{{sg.user.noAvatar}}" hint-placeholder-val="{{true}}">{{sg.user.initials}}</sc-if>
+          </div>
+          <div class="ui-243" onclick="{{sg.goProfile}}">
+            <div class="ui-370"><span class="ui-042">{{sg.user.name}}</span>
+              <sc-if value="{{sg.isPrivate}}" hint-placeholder-val="{{false}}"><svg class="ui-371" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10.5V7a5 5 0 0 1 10 0v3.5M6 10.5h12a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1Z"></path></svg></sc-if>
+            </div>
+            <div class="ui-372">{{sg.user.bio}}</div>
+          </div>
+          <sc-if value="{{sg.canMessage}}" hint-placeholder-val="{{false}}"><button class="ui-373" onclick="{{sg.message}}" title="Message"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-3-.4-4.2-1.1L3 21l2.1-5.3A8.5 8.5 0 1 1 21 11.5Z"></path></svg></button></sc-if>
+          <button class="ui-374" onclick="{{sg.onBtn}}" disabled="{{sg.btnDisabled}}" style="border:1.5px solid {{sg.btnBd}};background:{{sg.btnBg}};color:{{sg.btnColor}}" style-active="transform:scale(.96)">{{sg.btnLabel}}</button>
+        </div>
+      </sc-for>
+    </div>
+    <div class="ui-109">
+      <div class="ui-367">Upcoming events</div>
+      <div class="ui-375">
+        <sc-for list="{{railEvents}}" as="re" hint-placeholder-count="2">
+          <div class="ui-376" onclick="{{re.open}}">
+            <div class="ui-377">
+              <span class="ui-222">{{re.day}}</span>
+              <span class="ui-378">{{re.mon}}</span>
+            </div>
+            <div class="ui-221">
+              <div class="ui-379">{{re.title}}</div>
+              <div class="ui-372">{{re.group}}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+    <div class="ui-380">loop · a quiet corner of the internet</div>
+    </div>
+  </aside>
+  </sc-if>
+
+</div>
+</sc-if>

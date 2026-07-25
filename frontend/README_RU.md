@@ -12,6 +12,7 @@ Browser-приложение использует собственный дек�
 
 - [🚀 Запуск и тесты](#-запуск-и-тесты)
 - [🧩 Модель выполнения](#-модель-выполнения)
+- [🧭 Модель frontend framework](#-модель-frontend-framework)
 - [⚙️ dc-runtime](#️-dc-runtime)
 - [📄 Синтаксис template](#-синтаксис-template)
 - [📁 Ответственность файлов](#-ответственность-файлов)
@@ -20,6 +21,7 @@ Browser-приложение использует собственный дек�
 - [🔄 Нормализация и authoritative state](#-нормализация-и-authoritative-state)
 - [🛡️ Request generations](#️-request-generations)
 - [🔑 Authentication lifecycle](#-authentication-lifecycle)
+- [🛣️ Client router](#️-client-router)
 - [📝 Posts, comments и media](#-posts-comments-и-media)
 - [👥 Groups и events](#-groups-и-events)
 - [🔔 Notifications](#-notifications)
@@ -36,9 +38,11 @@ Frontend статический. Его обслуживает:
 - Go backend при local development;
 - Caddy в production Docker topology.
 
-Локальный full-stack запуск из `backend/`:
+Собрать generated frontend и запустить local full-stack:
 
 ```bash
+cd frontend
+npm run build
 cd ../backend
 go run ./cmd/server
 ```
@@ -53,32 +57,48 @@ Frontend tests из `frontend/`:
 
 ```bash
 npm test
+npm run build
 ```
 
-Используется встроенный Node test runner. В `package.json` нет production dependencies и frontend build step.
+Tests используют встроенный Node test runner. Dependency-free `scripts/build.mjs` всегда очищает и заново создаёт `dist/`.
 
 ## 🧩 Модель выполнения
 
-Browser загружает приложение из `index.html`.
+Browser загружает generated application из `dist/index.html`.
 
 ```text
-index.html
+src/index.html + src/templates/
   |
-  +--> resources and model scripts
+  +--> build-time composition
   +--> bundled React
   +--> bundled ReactDOM
   +--> AuthAPI
   +--> dc-runtime
-  +--> application logic
+  +--> models, controllers and application source
 ```
 
 `<x-dc>` содержит application template. `dc-runtime` парсит его, заменяет `<x-dc>` на `#dc-root`, компилирует directives и interpolations, создаёт React elements и монтирует их через ReactDOM.
 
-UI не разбит на обычные `.jsx` React components. Основное поведение находится в одном `Component extends DCLogic`, state, methods и computed values которого доступны декларативному template.
+UI не разбит на обычные `.jsx` React components. Root `Component extends DCLogic` владеет shared state и lifecycle, а feature controller factories через явные dependencies предоставляют actions, derived values и lifecycle hooks.
+
+## 🧭 Модель frontend framework
+
+`dc-runtime` является application framework проекта. React используется как rendering library; он не определяет архитектуру приложения и не является самостоятельным SPA framework.
+
+`dc-runtime` отвечает за:
+
+- interpretation component templates;
+- state binding;
+- lifecycle;
+- mounting;
+- event/action resolution;
+- composition.
+
+Feature controllers не являются отдельными framework instances и не создают скрытый второй global state. Root component владеет shared state, startup/shutdown, session generations и cross-feature coordination. При build отдельные source templates собираются в единый production `<x-dc>`.
 
 ## ⚙️ dc-runtime
 
-`frontend/js/runtime.js` является generated runtime bundle. Его не следует редактировать вручную без rebuild source.
+`frontend/src/js/runtime.js` является generated runtime bundle. Его не следует редактировать вручную без rebuild source.
 
 Runtime предоставляет:
 
@@ -176,22 +196,20 @@ Values разрешаются из component scope.
 
 | File | Назначение |
 |---|---|
-| `index.html` | declarative SPA template и script loading |
-| `js/runtime.js` | generated bundle `dc-runtime` |
-| `js/app.js` | main application state и orchestration screens |
-| `js/auth-api.js` | same-origin HTTP client и `APIError` |
-| `js/resources.js` | resource/bootstrap integration |
-| `js/user-model.js` | user normalization, privacy cleanup, relationship state, request gates |
-| `js/post-model.js` | post normalization и state helpers |
-| `js/comment-model.js` | comment normalization и pagination merge |
-| `js/group-event-model.js` | event normalization и RSVP state |
-| `js/notification-model.js` | notification normalization и revision merges |
-| `js/chat-model.js` | chat keys, history merge, optimistic/realtime reconciliation |
-| `js/avatar-url.js` | classification controlled avatar URLs |
-| `css/styles.css` | bundled font declarations |
-| `css/styles-2.css` | theme tokens, global styles, animations |
+| `src/index.html` | source document, include points и ordered script loading |
+| `src/templates/*.html` | screen fragments и shared modal для build-time composition |
+| `src/js/runtime.js` | generated bundle `dc-runtime` |
+| `src/js/app.js` | root state, lifecycle и cross-feature coordination |
+| `src/js/controllers/*.js` | explicit controller factories, actions, derived values и hooks |
+| `src/js/auth-api.js` | same-origin HTTP client и `APIError` |
+| `src/js/*-model.js` | normalization, merge, privacy cleanup и request gates |
+| `src/css/base.css` | bundled font declarations |
+| `src/css/layout.css` | theme tokens, global layout и animations |
+| `src/css/components.css` | static template/component styles |
+| `src/css/responsive.css` | tablet/mobile layout rules |
+| `scripts/build.mjs` | clean source-to-`dist` production build |
 | `Caddyfile` | static delivery, backend proxy, SPA boundary |
-| `Dockerfile` | non-root static Caddy image |
+| `Dockerfile` | Node build stage и non-root Caddy runtime stage |
 
 Production identities, posts, comments, groups, events, notifications и chats загружаются из backend. `USERS.me` остаётся только current-user holder.
 
@@ -220,6 +238,7 @@ Feature-specific constructors задают единый reset:
 ```text
 emptyRegistrationForm
 emptyProfileEditor
+emptyConfirmationState
 emptyCommentState
 emptyGroupPostState
 emptyGroupEventState
@@ -409,6 +428,25 @@ Logout:
 
 Failed logout не маскируется как удалённая server session.
 
+## 🛣️ Client router
+
+Router отвечает за parsing URL и синхронизацию History API:
+
+```text
+/                         Home feed
+/users/:id                profile
+/groups                   groups
+/groups/:id               group
+/notifications            notifications
+/messages                 chat list
+/messages/user/:id        direct chat
+/messages/group/:id       group chat
+```
+
+Он использует `pushState`, `replaceState` и `popstate`, восстанавливает deep links после refresh и login, поддерживает Back/Forward и заменяет malformed routes на `/`. Закрытые resources приводят к контролируемому profile/group/chat error state.
+
+Unfollow и изменение profile privacy используют один shared confirmation dialog. Mutation не отправляется до confirmation; Cancel и Escape закрывают modal, focus удерживается и возвращается, pending confirmation блокирует повторный submit.
+
 ## 📝 Posts, comments и media
 
 ### Post composers
@@ -425,7 +463,9 @@ pending/error
 
 Group post composer имеет отдельный state и gates.
 
-Posts и comments создаются через `FormData`.
+Posts и comments создаются через `FormData`. Personal posts, group posts и comments требуют trimmed text или один media file. Media-only content отправляет и отображает пустую строку text. Полностью пустые composers остаются disabled.
+
+Home содержит только personal posts. Public post не зависит от profile privacy автора; followers и selected зависят от текущего accepted follow, а selected дополнительно требует audience row. Profile activity также может показывать member-visible group posts, используя `group_id` и полученный от backend `group_title` для group link.
 
 ### Per-post comments
 
@@ -455,8 +495,8 @@ comment-media-{postID}
 
 Create behavior:
 
-- send требует non-empty text;
-- media optional;
+- send требует non-empty text или media;
+- media optional при наличии text;
 - file controls disabled при pending create;
 - validation, network и server errors сохраняют text, `File`, preview;
 - `403` или `404` считаются access revoke и очищают attachment;
@@ -523,6 +563,16 @@ Leave или realtime `chat:remove`:
 - удаляет group chat;
 - блокирует stale responses.
 
+Date inputs намеренно остаются text fields вместо `date` и `datetime-local`, чтобы required display и typing contract не зависели от browser:
+
+```text
+date of birth UI:  DD-MM-YYYY
+event UI:          DD-MM-YYYY HH:MM in local time
+event API:         RFC3339 UTC
+```
+
+Digit-only input форматируется автоматически. Frontend проверяет реальную calendar date и local hours/minutes, затем переводит event time через `toISOString()`; backend независимо парсит RFC3339 и требует future instant. Оба input имеют numeric hint, pattern, maxlength, понятный label и `aria-describedby` с примером.
+
 ## 🔔 Notifications
 
 Notification state:
@@ -547,6 +597,8 @@ Frontend:
 - race-gates source transitions отдельно;
 - поддерживает mark-one, mark-all, accept и decline;
 - обновляет navigation badge из persisted unread.
+
+Реализованное bonus-уведомление `follow_started` нормализуется, отображается и покрыто tests.
 
 ## 💬 Chat и realtime
 
@@ -653,6 +705,8 @@ Logout и access revoke дополнительно очищают:
 
 ## 📦 Production delivery
 
+`npm run build` удаляет `dist/`, в фиксированном порядке собирает source templates, встраивает application source в marker `text/x-dc`, копирует runtime/vendor/CSS/assets и завершается ошибкой при оставшемся include placeholder. `dist/` является generated и ignored Git.
+
 Production image содержит только:
 
 ```text
@@ -664,6 +718,8 @@ Caddyfile
 ```
 
 Node, tests и frontend build tooling не входят.
+
+Dockerfile multi-stage: Node выполняет clean build, после чего Caddy получает только `dist/`. Production HTML и CSS используют root-absolute asset references (`/js/...`, `/css/...`, `/assets/...`), поэтому deep links не разрешают assets относительно `/users/...` или `/groups/...`.
 
 Caddy proxies exact и wildcard paths:
 
@@ -685,6 +741,8 @@ Legacy paths получают `404` до SPA fallback:
 
 Остальные paths обслуживаются статически с `index.html` fallback.
 
+Responsive rules сохраняют three-column desktop layout, скрывают right rail на tablet, заменяют sidebar нижней navigation на mobile, складывают narrow forms/actions и последовательно показывают chat list/conversation. Layout 360 px не создаёт page-level horizontal overflow.
+
 Caddy работает numeric non-root user. Writable config/data используют `/tmp`, root filesystem read-only.
 
 Build и launch commands находятся в [корневом README](../README_RU.md).
@@ -698,15 +756,18 @@ npm test
 Файлы:
 
 ```text
-js/app-race.test.js
-js/auth-api.test.js
-js/avatar-url.test.js
-js/chat-model.test.js
-js/comment-model.test.js
-js/group-event-model.test.js
-js/notification-model.test.js
-js/post-model.test.js
-js/user-model.test.js
+test/accessibility.test.js
+test/app-race.test.js
+test/auth-api.test.js
+test/avatar-url.test.js
+test/build.test.js
+test/chat-model.test.js
+test/comment-model.test.js
+test/controllers.test.js
+test/group-event-model.test.js
+test/notification-model.test.js
+test/post-model.test.js
+test/user-model.test.js
 ```
 
 Покрываются:
@@ -726,38 +787,37 @@ js/user-model.test.js
 - reconnect/history merge;
 - unread/read-marker monotonicity;
 - logout/access-revoke stale-response protection.
+- build reproducibility и root-absolute assets;
+- router push/replace/popstate;
+- confirmation behavior и date input contracts.
 
 Accepted result:
 
 ```text
-121/121 tests passed
+all tests passed
 ```
 
 ## 📁 Структура
 
 ```text
 frontend/
-├── assets/
-│   ├── fonts/
-│   └── ...
-├── css/
-│   ├── styles.css
-│   └── styles-2.css
-├── js/
-│   ├── app.js
-│   ├── app-race.test.js
-│   ├── auth-api.js
-│   ├── auth-api.test.js
-│   ├── avatar-url.js
-│   ├── chat-model.js
-│   ├── comment-model.js
-│   ├── group-event-model.js
-│   ├── notification-model.js
-│   ├── post-model.js
-│   ├── resources.js
-│   ├── runtime.js
-│   ├── user-model.js
-│   └── vendor/
+├── scripts/
+│   └── build.mjs
+├── src/
+│   ├── assets/
+│   ├── css/
+│   │   ├── base.css
+│   │   ├── components.css
+│   │   ├── layout.css
+│   │   └── responsive.css
+│   ├── js/
+│   │   ├── controllers/
+│   │   ├── vendor/
+│   │   └── ...
+│   ├── templates/
+│   └── index.html
+├── test/
+├── dist/ (generated, ignored)
 ├── Caddyfile
 ├── Dockerfile
 ├── index.html

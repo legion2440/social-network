@@ -25,7 +25,7 @@ func Load() (Config, error) {
 		HTTPAddr:        getenvOrDefault("SOCIAL_NETWORK_HTTP_ADDR", "127.0.0.1:8080"),
 		DBPath:          getenvOrDefault("SOCIAL_NETWORK_DB_PATH", "var/social-network.db"),
 		UploadDir:       getenvOrDefault("SOCIAL_NETWORK_UPLOAD_DIR", "var/uploads"),
-		FrontendDir:     getenvOrDefault("SOCIAL_NETWORK_FRONTEND_DIR", "../frontend"),
+		FrontendDir:     getenvOrDefault("SOCIAL_NETWORK_FRONTEND_DIR", "../frontend/dist"),
 		SessionTTL:      24 * time.Hour,
 		ShutdownTimeout: 10 * time.Second,
 	}

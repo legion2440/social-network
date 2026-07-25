@@ -22,6 +22,7 @@ type Post struct {
 	AuthorUserID  int64
 	Author        *User
 	GroupID       *int64
+	GroupTitle    *string
 	Text          string
 	Privacy       *PostPrivacy
 	MediaID       *int64

@@ -14,7 +14,7 @@ type CommentRepo struct {
 }
 
 func (r *CommentRepo) Create(ctx context.Context, comment *domain.Comment) (int64, error) {
-	if r == nil || r.db == nil || comment == nil || comment.PostID <= 0 || comment.AuthorUserID <= 0 || comment.Text == "" || comment.CreatedAt.IsZero() {
+	if r == nil || r.db == nil || comment == nil || comment.PostID <= 0 || comment.AuthorUserID <= 0 || (comment.Text == "" && comment.MediaID == nil) || comment.CreatedAt.IsZero() {
 		return 0, fmt.Errorf("invalid comment")
 	}
 	result, err := r.db.ExecContext(ctx, `

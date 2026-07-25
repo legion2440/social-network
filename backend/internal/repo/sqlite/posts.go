@@ -21,6 +21,7 @@ const rawPostSelectColumns = `
 	p.id, p.author_user_id, p.group_id, p.text, p.privacy, p.media_id,
 	(SELECT COUNT(*) FROM post_comments comment_count WHERE comment_count.post_id = p.id),
 	p.created_at,
+	post_group.title,
 	u.id, u.first_name, u.last_name, u.gender, u.nickname,
 	u.avatar_media_id, u.is_private
 `
@@ -29,6 +30,7 @@ const viewerPostSelectColumns = `
 	p.id, p.author_user_id, p.group_id, p.text, p.privacy, p.media_id,
 	(SELECT COUNT(*) FROM post_comments comment_count WHERE comment_count.post_id = p.id),
 	p.created_at,
+	post_group.title,
 	u.id, u.first_name, u.last_name, u.gender, u.nickname,
 	u.avatar_media_id, u.is_private
 `
@@ -38,20 +40,15 @@ const viewerPostSelectColumns = `
 const personalPostAccessPredicate = `
 	(
 		p.author_user_id = ?
+		OR p.privacy = 'public'
+		OR (p.privacy = 'followers' AND viewer_follow.id IS NOT NULL)
 		OR (
-			(u.is_private = 0 OR viewer_follow.id IS NOT NULL)
-			AND (
-				p.privacy = 'public'
-				OR (p.privacy = 'followers' AND viewer_follow.id IS NOT NULL)
-				OR (
-					p.privacy = 'selected'
-					AND viewer_follow.id IS NOT NULL
-					AND EXISTS (
-						SELECT 1
-						FROM post_selected_users audience
-						WHERE audience.post_id = p.id AND audience.user_id = ?
-					)
-				)
+			p.privacy = 'selected'
+			AND viewer_follow.id IS NOT NULL
+			AND EXISTS (
+				SELECT 1
+				FROM post_selected_users audience
+				WHERE audience.post_id = p.id AND audience.user_id = ?
 			)
 		)
 	)
@@ -60,6 +57,7 @@ const personalPostAccessPredicate = `
 const postFromAndViewerJoin = `
 	FROM posts p
 	JOIN users u ON u.id = p.author_user_id
+	LEFT JOIN groups post_group ON post_group.id = p.group_id
 	LEFT JOIN follows viewer_follow
 		ON viewer_follow.follower_user_id = ?
 		AND viewer_follow.followed_user_id = p.author_user_id
@@ -81,7 +79,7 @@ func (r *PostRepo) Create(ctx context.Context, post *domain.Post) (int64, error)
 }
 
 func validPostForCreate(post *domain.Post) bool {
-	if post == nil || post.AuthorUserID <= 0 || post.Text == "" || post.CreatedAt.IsZero() {
+	if post == nil || post.AuthorUserID <= 0 || (post.Text == "" && post.MediaID == nil) || post.CreatedAt.IsZero() {
 		return false
 	}
 	if post.GroupID == nil {
@@ -125,6 +123,7 @@ func (r *PostRepo) GetByID(ctx context.Context, postID int64) (*domain.Post, err
 	query := `SELECT ` + rawPostSelectColumns + `
 		FROM posts p
 		JOIN users u ON u.id = p.author_user_id
+		LEFT JOIN groups post_group ON post_group.id = p.group_id
 		WHERE p.id = ?`
 	return scanPost(r.db.QueryRowContext(ctx, query, postID))
 }
@@ -166,10 +165,8 @@ func (r *PostRepo) ListFeed(
 	}
 	query := `SELECT ` + viewerPostSelectColumns + postFromAndViewerJoin + `
 		WHERE p.group_id IS NULL
-		AND (p.author_user_id = ? OR viewer_follow.id IS NOT NULL)
 		AND ` + personalPostAccessPredicate
 	args := []any{
-		viewerUserID,
 		viewerUserID,
 		viewerUserID, viewerUserID,
 	}
@@ -189,11 +186,23 @@ func (r *PostRepo) ListByAuthor(
 		return []*domain.Post{}, nil
 	}
 	query := `SELECT ` + viewerPostSelectColumns + postFromAndViewerJoin + `
-		WHERE p.group_id IS NULL AND p.author_user_id = ? AND ` + personalPostAccessPredicate
+		WHERE p.author_user_id = ? AND (
+			(p.group_id IS NULL AND ` + personalPostAccessPredicate + `)
+			OR (
+				p.group_id IS NOT NULL
+				AND EXISTS (
+					SELECT 1 FROM group_memberships content_member
+					WHERE content_member.group_id = p.group_id
+						AND content_member.user_id = ?
+						AND content_member.status IN ('owner', 'member')
+				)
+			)
+		)`
 	args := []any{
 		viewerUserID,
 		authorUserID,
 		viewerUserID, viewerUserID,
+		viewerUserID,
 	}
 	query, args = appendPostCursor(query, args, cursor)
 	query += ` ORDER BY p.created_at DESC, p.id DESC LIMIT ?`
@@ -213,6 +222,7 @@ func (r *PostRepo) ListByGroup(
 	query := `SELECT ` + viewerPostSelectColumns + `
 		FROM posts p
 		JOIN users u ON u.id = p.author_user_id
+		JOIN groups post_group ON post_group.id = p.group_id
 		WHERE p.group_id = ?
 		AND EXISTS (
 			SELECT 1 FROM group_memberships content_member
@@ -285,6 +295,7 @@ func scanPost(row rowScanner) (*domain.Post, error) {
 		privacy       sql.NullString
 		mediaID       sql.NullInt64
 		createdAt     int64
+		groupTitle    sql.NullString
 		gender        sql.NullString
 		nickname      sql.NullString
 		avatarMediaID sql.NullInt64
@@ -299,6 +310,7 @@ func scanPost(row rowScanner) (*domain.Post, error) {
 		&mediaID,
 		&post.CommentsCount,
 		&createdAt,
+		&groupTitle,
 		&author.ID,
 		&author.FirstName,
 		&author.LastName,
@@ -316,6 +328,13 @@ func scanPost(row rowScanner) (*domain.Post, error) {
 	if groupID.Valid {
 		value := groupID.Int64
 		post.GroupID = &value
+		if !groupTitle.Valid || groupTitle.String == "" {
+			return nil, fmt.Errorf("group post is missing its group title")
+		}
+		title := groupTitle.String
+		post.GroupTitle = &title
+	} else if groupTitle.Valid {
+		return nil, fmt.Errorf("personal post has a group title")
 	}
 	if privacy.Valid {
 		value := domain.PostPrivacy(privacy.String)

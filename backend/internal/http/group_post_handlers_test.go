@@ -91,6 +91,13 @@ func TestGroupPostsAccessStrictMultipartCommentsMediaAndRejoin(t *testing.T) {
 	if memberPost.MediaURL == nil {
 		t.Fatal("group media URL is missing")
 	}
+	mediaOnlyPost := createGroupPostThroughHTTP(t, env, ownerToken, group.ID, " \n ", &postMultipartFile{
+		fieldName: "media", filename: "group-media-only.png", contents: png,
+	}, http.StatusCreated)
+	if mediaOnlyPost.Text != "" || mediaOnlyPost.MediaURL == nil ||
+		mediaOnlyPost.GroupTitle == nil || *mediaOnlyPost.GroupTitle != group.Title {
+		t.Fatalf("unexpected media-only group post: %+v", mediaOnlyPost)
+	}
 
 	for name, token := range map[string]string{
 		"invited": invitedToken, "requested": requestedToken, "outsider": outsiderToken,
@@ -106,11 +113,11 @@ func TestGroupPostsAccessStrictMultipartCommentsMediaAndRejoin(t *testing.T) {
 	}
 
 	firstPage := getPostPage(t, env, ownerToken, base+"/posts?limit=1", http.StatusOK)
-	if len(firstPage.Posts) != 1 || firstPage.Posts[0].ID != memberPost.ID || firstPage.NextCursor == nil {
+	if len(firstPage.Posts) != 1 || firstPage.Posts[0].ID != mediaOnlyPost.ID || firstPage.NextCursor == nil {
 		t.Fatalf("unexpected first group post page: %+v", firstPage)
 	}
 	secondPage := getPostPage(t, env, ownerToken, base+"/posts?limit=1&cursor="+*firstPage.NextCursor, http.StatusOK)
-	if len(secondPage.Posts) != 1 || secondPage.Posts[0].ID != ownerPost.ID || secondPage.NextCursor != nil {
+	if len(secondPage.Posts) != 1 || secondPage.Posts[0].ID != memberPost.ID || secondPage.NextCursor == nil {
 		t.Fatalf("unexpected second group post page: %+v", secondPage)
 	}
 
@@ -194,6 +201,9 @@ func TestGroupPostsAccessStrictMultipartCommentsMediaAndRejoin(t *testing.T) {
 
 	groupMutation(t, env, http.MethodDelete, base+"/membership", memberToken, http.StatusOK)
 	getPostPage(t, env, memberToken, base+"/posts", http.StatusForbidden)
+	if profile := getPostPage(t, env, memberToken, "/api/users/"+strconv.FormatInt(memberID, 10)+"/posts", http.StatusOK); len(profile.Posts) != 0 {
+		t.Fatalf("own group post remained in profile after leaving: %+v", profile.Posts)
+	}
 	getCommentPage(t, env, memberToken, "/api/posts/"+strconv.FormatInt(ownerPost.ID, 10)+"/comments", http.StatusForbidden)
 	createCommentThroughHTTP(t, env, memberToken, ownerPost.ID, "after leave", http.StatusForbidden)
 	mediaRecorder = httptest.NewRecorder()
@@ -208,8 +218,12 @@ func TestGroupPostsAccessStrictMultipartCommentsMediaAndRejoin(t *testing.T) {
 	}
 
 	addGroupMemberForPostTest(t, env, group.ID, memberID, ownerToken, memberToken)
-	if restored := getPostPage(t, env, memberToken, base+"/posts", http.StatusOK); len(restored.Posts) != 2 {
+	if restored := getPostPage(t, env, memberToken, base+"/posts", http.StatusOK); len(restored.Posts) != 3 {
 		t.Fatalf("group history not restored after rejoin: %+v", restored.Posts)
+	}
+	if profile := getPostPage(t, env, memberToken, "/api/users/"+strconv.FormatInt(memberID, 10)+"/posts", http.StatusOK); len(profile.Posts) != 1 ||
+		profile.Posts[0].ID != memberPost.ID {
+		t.Fatalf("own group post was not restored in profile after rejoin: %+v", profile.Posts)
 	}
 	comments := getCommentPage(t, env, memberToken, "/api/posts/"+strconv.FormatInt(ownerPost.ID, 10)+"/comments", http.StatusOK)
 	if len(comments.Comments) != 1 || comments.Comments[0].ID != comment.ID {
@@ -272,8 +286,10 @@ func TestGroupPostsStayOutOfPersonalSurfacesAndUseViewerAwareAvatars(t *testing.
 	if feed := getPostPage(t, env, memberToken, "/api/posts/feed?limit=10", http.StatusOK); len(feed.Posts) != 0 {
 		t.Fatalf("group post leaked into personal feed: %+v", feed.Posts)
 	}
-	if profile := getPostPage(t, env, memberToken, "/api/users/"+strconv.FormatInt(memberID, 10)+"/posts?limit=10", http.StatusOK); len(profile.Posts) != 0 {
-		t.Fatalf("group post leaked into personal profile: %+v", profile.Posts)
+	if profile := getPostPage(t, env, memberToken, "/api/users/"+strconv.FormatInt(memberID, 10)+"/posts?limit=10", http.StatusOK); len(profile.Posts) != 1 ||
+		profile.Posts[0].ID != groupPost.ID || profile.Posts[0].GroupID == nil || *profile.Posts[0].GroupID != group.ID ||
+		profile.Posts[0].GroupTitle == nil || *profile.Posts[0].GroupTitle != group.Title {
+		t.Fatalf("accessible group post is missing from profile: %+v", profile.Posts)
 	}
 	profileRecorder := httptest.NewRecorder()
 	env.handler.ServeHTTP(profileRecorder, authenticatedRequest(http.MethodGet, "/api/users/"+strconv.FormatInt(memberID, 10), memberToken, nil))

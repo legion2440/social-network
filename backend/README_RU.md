@@ -130,6 +130,7 @@ internal/repo/sqlite/migrations
 000013_create_notifications
 000014_create_chat_read_states
 000015_add_comment_media
+000016_allow_media_only_content
 ```
 
 Проверка migration state:
@@ -142,12 +143,64 @@ sqlite3 var/social-network.db \
 Ожидаемое состояние:
 
 ```text
-15 | 0
+16 | 0
 ```
 
 Migration `000011` при перестройке `posts` сохраняет post/comment IDs, timestamps, selected audiences, media links и реальные high-water values в `sqlite_sequence`. Down migration запрещена, пока существуют group posts.
 
 Migration `000015` добавляет optional comment media без перестройки `post_comments`. Down migration запрещена, пока есть comment attachments. Оба guard выполняются до schema changes, поэтому база не остаётся dirty.
+
+Migration `000016` перестраивает `posts` и `post_comments`: пустая строка допустима только при наличии `media_id`. Сохраняются IDs, связи, indexes, timestamps и реальные значения `sqlite_sequence`. Down guard выполняется до migrator и запрещает rollback, пока существуют media-only posts или comments.
+
+Migration SQL встраивается в backend binary через `go:embed`. После изменения SQL нужно пересобрать backend binary или image. Редактирование уже применённой migration не запускает её повторно; каждое выпущенное изменение schema оформляется новой migration.
+
+Demo data использует отдельный embedded-набор `internal/repo/sqlite/seedmigrations` и отдельную таблицу `seed_migrations`. Он не изменяет `schema_migrations` и не запускается при обычном старте backend. В работающем Compose stack seed применяется явно:
+
+```bash
+docker compose exec backend /app/seed
+```
+
+Команда versioned и безопасна при повторном запуске. Она создаёт трёх demo users, примеры privacy/audience, group post и event с RSVP. У всех трёх accounts пароль `LoopDemo123!`:
+
+```text
+alice.demo@example.com
+bob.demo@example.com
+carol.demo@example.com
+```
+
+Пароли хешируются bcrypt через тот же Go flow, что и registration; plaintext passwords в seed SQL не хранятся.
+
+Runtime image содержит `sqlite3`. Открыть Compose database:
+
+```bash
+docker compose exec backend sqlite3 /data/db/social-network.db
+```
+
+Полезные audit-команды внутри SQLite prompt:
+
+```sql
+.tables
+SELECT version, dirty
+FROM schema_migrations;
+SELECT version, applied_at
+FROM seed_migrations
+ORDER BY version;
+SELECT id, email, first_name, last_name, is_private
+FROM users
+ORDER BY id;
+SELECT user_id, created_at, expires_at
+FROM sessions
+ORDER BY created_at DESC;
+SELECT id, author_user_id, group_id, privacy,
+       media_id, length(text) AS text_length
+FROM posts
+ORDER BY id;
+SELECT post_id, user_id
+FROM post_selected_users
+ORDER BY post_id, user_id;
+```
+
+Audit sessions намеренно не выводит raw primary key `sessions.token`.
 
 ## 🔑 Authentication и sessions
 
@@ -265,6 +318,8 @@ DELETE /api/follow-requests/{id}
 |---|---|
 | public profile | любой authenticated user |
 | private profile | owner или accepted follower |
+| custom avatar | каждый authenticated user |
+| public personal post | каждый authenticated user независимо от profile privacy |
 | followers post | текущий accepted follower |
 | selected post | accepted follower и selected audience row |
 | group content | текущий `owner` или `member` |
@@ -280,6 +335,7 @@ DELETE /api/follow-requests/{id}
 
 - leave немедленно закрывает group content/chat;
 - selected audience rows переживают unfollow, но access не сохраняется;
+- public post private-профиля не открывает сам профиль или его activity;
 - membership в группе не раскрывает private profile;
 - protected media авторизуется при каждом read;
 - stale frontend state не даёт backend access.
@@ -334,11 +390,12 @@ POST /api/posts
 Content-Type: multipart/form-data
 ```
 
-Required:
+Fields:
 
 ```text
 text
 privacy
+media (optional)
 ```
 
 Privacy:
@@ -349,7 +406,7 @@ followers
 selected
 ```
 
-Text trim, valid UTF-8, от 1 до 5000 Unicode code points. `selected` требует от 1 до 100 current accepted followers.
+Content требует непустой text после trim или один успешно проверенный media attachment. Text должен быть valid UTF-8 и не длиннее 5000 Unicode code points; media-only сохраняется с `text = ''`. `selected` требует от 1 до 100 current accepted followers.
 
 Reads:
 
@@ -360,6 +417,10 @@ GET /api/posts/{id}/media
 ```
 
 Opaque cursor, default 20, maximum 50.
+
+Home содержит только доступные personal posts: собственные, все public, followers при текущем accepted follow и selected при одновременном наличии audience row и accepted follow. Group posts в Home не попадают.
+
+Profile activity сначала требует доступ к самому profile. Затем возвращаются доступные personal posts и group posts только из групп, где viewer сейчас owner/member. Group response содержит `group_id` и `group_title`. `posts_count` считает только personal posts, доступные текущему viewer; private-profile outsider получает `0`.
 
 Group posts:
 
@@ -376,7 +437,7 @@ GET|POST /api/posts/{id}/comments
 GET      /api/comments/{id}/media
 ```
 
-Create принимает только strict multipart с одним required `text` и максимум одним optional `media`. Media-only возвращает `400`, wrong content type `415`, oversized input `413`.
+Create принимает только strict multipart с одним полем `text` и максимум одним optional `media`. Требуется непустой text или media; media-only comment сохраняется с `text = ''`. Полностью пустой content возвращает `400`, wrong content type `415`, oversized input `413`.
 
 Comment media проверяет parent access до attachment existence. Inaccessible parent возвращает `403`; missing attachment, metadata, ownership или file возвращают `404` только после successful access.
 
@@ -436,6 +497,8 @@ group_invitation
 group_join_request
 group_event
 ```
+
+`follow_started` — реализованное bonus-уведомление о новой принятой подписке; его покрывают backend и frontend tests.
 
 Endpoints:
 
@@ -520,6 +583,9 @@ Hub хранит только `SHA-256(raw session token)`. Logout, unfollow и 
 - `415`: unsupported content type;
 - `500`: storage/unexpected failure;
 - unknown `/api/*`: JSON `404`.
+- local frontend files выдаются напрямую; отсутствующие extensionless client
+  routes получают fallback на `index.html`, а missing assets и `/uploads/*`
+  остаются `404`.
 
 ## 🧪 Проверка
 
@@ -545,6 +611,7 @@ go vet ./...                  passed
 backend/
 ├── cmd/
 │   ├── healthcheck/
+│   ├── seed/
 │   └── server/
 ├── internal/
 │   ├── app/
@@ -553,7 +620,7 @@ backend/
 │   ├── http/
 │   ├── platform/
 │   ├── realtime/ws/
-│   ├── repo/sqlite/migrations/
+│   ├── repo/sqlite/{migrations,seedmigrations}/
 │   └── service/
 ├── Dockerfile
 ├── go.mod

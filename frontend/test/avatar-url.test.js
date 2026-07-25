@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { isCustomAvatarURL } = require('./avatar-url.js');
+const { isCustomAvatarURL } = require('../src/js/avatar-url.js');
 
 test('controlled user avatar URLs are recognized as custom avatars', () => {
   assert.equal(isCustomAvatarURL('/api/users/7/avatar?v=42'), true);

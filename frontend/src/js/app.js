@@ -36,6 +36,24 @@ function formatDateOfBirthInput(value) {
   return digits.slice(0, 2) + '-' + digits.slice(2, 4) + '-' + digits.slice(4);
 }
 
+function parseDateOfBirth(value) {
+  const match = /^(\d{2})-(\d{2})-(\d{4})$/.exec(String(value || ''));
+  if (!match) return null;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const result = new Date(0);
+  result.setUTCFullYear(year, month - 1, day);
+  result.setUTCHours(0, 0, 0, 0);
+  if (
+    result.getUTCFullYear() !== year ||
+    result.getUTCMonth() !== month - 1 ||
+    result.getUTCDate() !== day
+  ) return null;
+  return result;
+}
+
 function formatDateTimeInput(value) {
   let digits = String(value || '').replace(/\D/g, '').slice(0, 12);
   if (digits.length >= 2) {
@@ -105,6 +123,18 @@ function emptyProfileEditor() {
   };
 }
 
+function emptyConfirmationState() {
+  return {
+    confirmationOpen: false,
+    confirmationKind: '',
+    confirmationTarget: null,
+    confirmationTitle: '',
+    confirmationMessage: '',
+    confirmationConfirmLabel: 'Confirm',
+    confirmationPending: false
+  };
+}
+
 function emptyCommentState() {
   return {
     comments: [], loading: false, pending: false, error: '', nextCursor: null,
@@ -151,7 +181,7 @@ function emptyChatState() {
   return {
     chatsByKey: {}, chatKeys: [], chatsNextCursor: null,
     chatsLoading: false, chatsPending: false, chatsError: '',
-    activeChatKey: null, messagesByChatKey: {}, onlineUserIDs: {}, typingByChatKey: {},
+    activeChatKey: null, mobileChatList: false, messagesByChatKey: {}, onlineUserIDs: {}, typingByChatKey: {},
     chatUnreadByKey: {}, chatUnreadCount: 0, chatUnreadRevision: 0,
     chatReadPendingByKey: {}, chatReadErrorByKey: {},
     chatReadQueuedThroughByKey: {}, chatReadThroughMessageIDByKey: {},
@@ -226,9 +256,14 @@ class Component extends DCLogic {
       authMode: 'login', authStatus: 'checking', authPending: false, logoutPending: false,
       authError: '', bootstrapError: '', appError: '',
       ...emptyRegistrationForm(),
-      ...emptyProfileEditor()
+      ...emptyProfileEditor(),
+      ...emptyConfirmationState()
     };
     this.msgEl = null;
+    this.confirmationDialog = null;
+    this.confirmationCancelButton = null;
+    this.confirmationReturnFocus = null;
+    this.confirmationNeedsFocus = false;
     this.authGate = UserModel.createRequestGate();
     this.profileGate = UserModel.createRequestGate();
     this.feedGate = UserModel.createRequestGate();
@@ -278,6 +313,20 @@ class Component extends DCLogic {
         this.enqueueChatRead(this.state.activeChatKey);
       }
     };
+    this.controllers = typeof createFeatureControllers === 'function'
+      ? createFeatureControllers({
+        root: this,
+        api: AuthAPI,
+        models: Object.freeze({
+          users: UserModel,
+          posts: PostModel,
+          comments: CommentModel,
+          chats: ChatModel,
+          events: GroupEventModel,
+          notifications: NotificationModel
+        })
+      })
+      : null;
   }
 
   componentDidMount() {
@@ -286,10 +335,16 @@ class Component extends DCLogic {
     if (document && typeof document.addEventListener === 'function') {
       document.addEventListener('visibilitychange', this.handleVisibilityChange);
     }
-    this.loadCurrentUser();
+    if (this.controllers) this.controllers.router.lifecycle.start();
+    if (this.controllers) this.controllers.auth.lifecycle.start();
+    else this.loadCurrentUser();
   }
   componentDidUpdate() {
     this.applyTokens();
+    if (this.state.confirmationOpen && this.confirmationNeedsFocus && this.confirmationCancelButton) {
+      this.confirmationNeedsFocus = false;
+      this.confirmationCancelButton.focus();
+    }
     if (this.chatScrollAnchor && this.msgEl && this.state.activeChatKey === this.chatScrollAnchor.key) {
       this.msgEl.scrollTop = this.msgEl.scrollHeight - this.chatScrollAnchor.height + this.chatScrollAnchor.top;
       this.chatScrollAnchor = null;
@@ -304,7 +359,9 @@ class Component extends DCLogic {
     }
     this.revokeRegistrationAvatarPreview(this.state && this.state.regAvatarPreviewURL);
     this.disposeAllCommentPreviews();
-    this.stopRealtime();
+    if (this.controllers) this.controllers.router.lifecycle.stop();
+    if (this.controllers) this.controllers.realtime.lifecycle.stop();
+    else this.stopRealtime();
   }
   applyTokens() {
     const el = document.documentElement;
@@ -344,7 +401,8 @@ class Component extends DCLogic {
     return {
       id: normalized.id,
       apiAuthorID: normalized.apiAuthorID,
-	  groupID: normalized.groupID,
+      groupID: normalized.groupID,
+      groupTitle: normalized.groupTitle,
       text: normalized.text,
       privacy: normalized.privacy,
       mediaUrl: normalized.mediaUrl,
@@ -569,7 +627,7 @@ class Component extends DCLogic {
     postID = Number(postID);
     const state = this.commentState(postID);
     const text = state.draft.trim();
-    if (!text || state.createPending) return;
+    if ((!text && !state.mediaFile) || state.createPending) return;
     const authGeneration = this.authGate.current();
     const accessGate = this.commentAccessGate(postID);
     const accessGeneration = accessGate.current();
@@ -1089,7 +1147,10 @@ class Component extends DCLogic {
         apiUsersByID,
         myPrivacy: user.is_private === true ? 'private' : 'public',
         profilePrivacyPending: false, profilePrivacyError: ''
-      }, () => this.startAuthenticatedRealtime(authGeneration));
+      }, () => {
+        this.startAuthenticatedRealtime(authGeneration);
+        if (this.controllers) this.controllers.router.actions.applyCurrent();
+      });
       this.loadFeed(true);
       this.loadPostFollowers();
       this.loadDirectory();
@@ -1135,8 +1196,12 @@ class Component extends DCLogic {
     if (event) event.preventDefault();
     if (this.state.authPending) return;
 
-    const authGeneration = this.authGate.begin();
     const s = this.state;
+    if (s.authMode === 'register' && !parseDateOfBirth(s.regDateOfBirth.trim())) {
+      this.setState({ authError: 'Enter a real calendar date as DD-MM-YYYY.' });
+      return;
+    }
+    const authGeneration = this.authGate.begin();
     this.setState({ authPending: true, authError: '' });
     try {
       let user;
@@ -1172,6 +1237,7 @@ class Component extends DCLogic {
       this.setState(authenticatedState, () => {
         this.revokeRegistrationAvatarPreview(registrationAvatarPreviewURL);
         this.startAuthenticatedRealtime(authGeneration);
+        if (this.controllers) this.controllers.router.actions.applyCurrent();
       });
       this.loadFeed(true);
       this.loadPostFollowers();
@@ -1265,7 +1331,7 @@ class Component extends DCLogic {
         createOpen: false, ngName: '', ngDesc: '', groupCreatePending: false, groupCreateError: '',
         composerText: '', composerFile: null, composerFileName: '', composerError: '', composerPending: false,
 		privacy: 'public', privacyOpen: false
-	  }, emptyGroupPostState(), emptyGroupEventState(), emptyNotificationState(), emptyChatState(), emptyRegistrationForm(), emptyProfileEditor()));
+	  }, emptyGroupPostState(), emptyGroupEventState(), emptyNotificationState(), emptyChatState(), emptyRegistrationForm(), emptyProfileEditor(), emptyConfirmationState()));
     } catch (error) {
       if (!this.authGate.isCurrent(authGeneration)) return;
       this.setState({
@@ -1275,9 +1341,24 @@ class Component extends DCLogic {
     }
   };
 
+  usesMobileChatLayout = () => (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(max-width: 600px)').matches
+  );
+
   go = (screen) => {
+    if (this.controllers && !this.controllers.router.actions.isApplying()) {
+      this.controllers.router.actions.screen(screen);
+      return;
+    }
     if (screen !== 'chat') this.stopTyping();
-    this.setState({ screen, privacyOpen: false, emojiOpen: false }, () => {
+    const nextState = { screen, privacyOpen: false, emojiOpen: false };
+    if (screen === 'chat') {
+      nextState.mobileChatList = this.usesMobileChatLayout();
+      if (nextState.mobileChatList) nextState.activeChatKey = null;
+    }
+    this.setState(nextState, () => {
       if (screen === 'chat') {
         if (this.state.activeChatKey) this.enqueueChatRead(this.state.activeChatKey);
         this.loadChats(true, 'user-open');
@@ -1293,6 +1374,10 @@ class Component extends DCLogic {
     if (targetUserID === 'me') targetUserID = USERS.me.apiId;
     targetUserID = Number(targetUserID);
     if (!Number.isInteger(targetUserID) || targetUserID <= 0) return;
+    if (this.controllers && !this.controllers.router.actions.isApplying()) {
+      this.controllers.router.actions.profile(targetUserID);
+      return;
+    }
     this.stopTyping();
     const authGeneration = this.authGate.current();
     const generation = this.profileGate.begin();
@@ -1349,6 +1434,10 @@ class Component extends DCLogic {
     if (this.state.profileEditPending || this.state.profileAvatarPending || this.state.profilePrivacyPending) return;
     const authGeneration = this.authGate.current();
     const s = this.state;
+    if (!parseDateOfBirth(s.editDateOfBirth.trim())) {
+      this.setState({ profileEditError: 'Enter a real calendar date as DD-MM-YYYY.' });
+      return;
+    }
     this.setState({ profileEditPending: true, profileEditError: '' });
     try {
       const user = await AuthAPI.updateProfile({
@@ -1435,13 +1524,95 @@ class Component extends DCLogic {
     }
   };
 
-  setProfilePrivacy = async (privacy) => {
+  openConfirmation = (details, triggerElement) => {
+    if (!details || this.state.confirmationPending) return;
+    this.confirmationReturnFocus = triggerElement ||
+      (typeof document !== 'undefined' ? document.activeElement : null);
+    this.confirmationNeedsFocus = true;
+    this.setState({
+      confirmationOpen: true,
+      confirmationKind: details.kind,
+      confirmationTarget: details.target,
+      confirmationTitle: details.title,
+      confirmationMessage: details.message,
+      confirmationConfirmLabel: details.confirmLabel || 'Confirm',
+      confirmationPending: false
+    });
+  };
+
+  closeConfirmation = () => {
+    const returnFocus = this.confirmationReturnFocus;
+    this.confirmationReturnFocus = null;
+    this.confirmationNeedsFocus = false;
+    this.setState(emptyConfirmationState(), () => {
+      if (returnFocus && typeof returnFocus.focus === 'function') returnFocus.focus();
+    });
+  };
+
+  cancelConfirmation = () => {
+    if (!this.state.confirmationPending) this.closeConfirmation();
+  };
+
+  confirmConfirmation = async () => {
+    if (!this.state.confirmationOpen || this.state.confirmationPending) return;
+    const kind = this.state.confirmationKind;
+    const target = this.state.confirmationTarget;
+    this.setState({ confirmationPending: true });
+    const succeeded = kind === 'unfollow'
+      ? await this.toggleFollow(target, true)
+      : kind === 'privacy'
+        ? await this.setProfilePrivacy(target, true)
+        : false;
+    if (succeeded) this.closeConfirmation();
+    else if (this.state.confirmationOpen) this.setState({ confirmationPending: false });
+  };
+
+  handleConfirmationKeyDown = (event) => {
+    if (!event || !this.state.confirmationOpen) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      this.cancelConfirmation();
+      return;
+    }
+    if (event.key !== 'Tab' || !this.confirmationDialog) return;
+    const focusable = Array.from(this.confirmationDialog.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    ));
+    if (focusable.length === 0) {
+      event.preventDefault();
+      this.confirmationDialog.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  setProfilePrivacy = async (privacy, confirmed, triggerElement) => {
     if (
       this.state.profilePrivacyPending ||
       this.state.profileEditPending ||
       this.state.profileAvatarPending ||
       privacy === this.state.myPrivacy
-    ) return;
+    ) return false;
+    if (!confirmed) {
+      this.openConfirmation({
+        kind: 'privacy',
+        target: privacy,
+        title: privacy === 'private' ? 'Make your profile private?' : 'Make your profile public?',
+        message: privacy === 'private'
+          ? 'Only accepted followers will be able to see your private profile details and personal posts.'
+          : 'Everyone will be able to see your profile details and public posts.',
+        confirmLabel: 'Change privacy'
+      }, triggerElement);
+      return false;
+    }
     const authGeneration = this.authGate.current();
     const isPrivate = privacy === 'private';
     this.setState({ profilePrivacyPending: true, profilePrivacyError: '' });
@@ -1455,12 +1626,14 @@ class Component extends DCLogic {
         profilePrivacyPending: false,
         profilePrivacyError: ''
       });
+      return true;
     } catch (error) {
-      if (!this.authGate.isCurrent(authGeneration)) return;
+      if (!this.authGate.isCurrent(authGeneration)) return false;
       this.setState({
         profilePrivacyPending: false,
         profilePrivacyError: requestErrorMessage(error, 'Could not update profile privacy. Please try again.')
       });
+      return false;
     }
   };
 
@@ -1483,16 +1656,28 @@ class Component extends DCLogic {
     } else apply();
   };
 
-  toggleFollow = async (targetUserID) => {
+  toggleFollow = async (targetUserID, confirmed, triggerElement) => {
     targetUserID = Number(targetUserID);
-    if (!Number.isInteger(targetUserID) || targetUserID <= 0 || targetUserID === USERS.me.apiId) return;
+    if (!Number.isInteger(targetUserID) || targetUserID <= 0 || targetUserID === USERS.me.apiId) return false;
     const key = String(targetUserID);
-    if (this.state.followPendingByID[key]) return;
+    if (this.state.followPendingByID[key]) return false;
     const authGeneration = this.authGate.current();
     const relationshipGate = this.relationshipGeneration(targetUserID);
     const relationshipGeneration = relationshipGate.current();
     const user = this.apiUser(targetUserID);
     const status = UserModel.normalizeStatus(user.relationship && user.relationship.status);
+    if (status !== 'none' && !confirmed) {
+      this.openConfirmation({
+        kind: 'unfollow',
+        target: targetUserID,
+        title: status === 'requested' ? 'Cancel follow request?' : 'Unfollow ' + user.name + '?',
+        message: status === 'requested'
+          ? 'This pending follow request will be cancelled.'
+          : 'Posts shared with followers may disappear from your feed.',
+        confirmLabel: status === 'requested' ? 'Cancel request' : 'Unfollow'
+      }, triggerElement);
+      return false;
+    }
     this.setState({
       followPendingByID: Object.assign({}, this.state.followPendingByID, { [key]: true }),
       followErrorByID: Object.assign({}, this.state.followErrorByID, { [key]: '' }),
@@ -1525,8 +1710,9 @@ class Component extends DCLogic {
       this.loadDirectory();
       this.loadFeed(true);
       if (this.state.screen === 'profile' && Number(this.state.profileId) === targetUserID) this.openProfile(targetUserID);
+      return true;
     } catch (error) {
-      if (!this.authGate.isCurrent(authGeneration) || !relationshipGate.isCurrent(relationshipGeneration)) return;
+      if (!this.authGate.isCurrent(authGeneration) || !relationshipGate.isCurrent(relationshipGeneration)) return false;
       const pending = Object.assign({}, this.state.followPendingByID);
       delete pending[key];
       const message = requestErrorMessage(error, 'Could not update follow status.');
@@ -1535,6 +1721,7 @@ class Component extends DCLogic {
         followErrorByID: Object.assign({}, this.state.followErrorByID, { [key]: message }),
         appError: message
       });
+      return false;
     }
   };
 
@@ -1556,7 +1743,7 @@ class Component extends DCLogic {
 
   sendPost = async () => {
     const s = this.state;
-    if (s.composerPending || !s.composerText.trim()) return;
+    if (s.composerPending || (!s.composerText.trim() && !s.composerFile)) return;
     const authGeneration = this.authGate.current();
     const selectedUserIDs = Object.keys(s.selectedFollowers)
       .filter(id => s.selectedFollowers[id])
@@ -1909,7 +2096,8 @@ class Component extends DCLogic {
 	if (
 	  !Number.isInteger(groupID) || groupID <= 0 || this.groupAccessIsRevoked(groupID) ||
 	  !group || (group.state !== 'owner' && group.state !== 'member') ||
-	  this.state.groupPostComposerPending || !this.state.groupPostComposerText.trim()
+	  this.state.groupPostComposerPending ||
+	  (!this.state.groupPostComposerText.trim() && !this.state.groupPostComposerFile)
 	) return;
 	const authGeneration = this.authGate.current();
 	const accessGate = this.groupGeneration(groupID);
@@ -2047,6 +2235,10 @@ class Component extends DCLogic {
   openGroup = (groupID) => {
     groupID = Number(groupID);
     if (!Number.isInteger(groupID) || groupID <= 0) return;
+    if (this.controllers && !this.controllers.router.actions.isApplying()) {
+      this.controllers.router.actions.group(groupID);
+      return;
+    }
     this.stopTyping();
     this.groupDetailGate.begin();
     this.groupMembersGate.begin();
@@ -2655,7 +2847,9 @@ class Component extends DCLogic {
             }
           });
         }
-        const activeChatKey = current.activeChatKey || ChatModel.sortedChatKeys(chatsByKey)[0] || null;
+        const activeChatKey = current.activeChatKey && chatsByKey[current.activeChatKey]
+          ? current.activeChatKey
+          : (current.mobileChatList ? null : (ChatModel.sortedChatKeys(chatsByKey)[0] || null));
         const patch = {
           apiUsersByID,
           apiGroupsByID: this.mergeGroupResponses(rawGroups, current.apiGroupsByID),
@@ -2765,7 +2959,8 @@ class Component extends DCLogic {
     this.activeChatGate.begin();
     this.scrollChatToBottom = true;
     this.setState({
-      screen: 'chat', activeChatKey: key, emojiOpen: false, chatDraft: '', chatError: ''
+      screen: 'chat', activeChatKey: key, mobileChatList: false,
+      emojiOpen: false, chatDraft: '', chatError: ''
     }, () => {
       const history = this.chatMessages(key);
       if (!history.loaded) this.loadChatHistory(key, true, 'user-open');
@@ -2776,6 +2971,10 @@ class Component extends DCLogic {
   openDirectChat = userID => {
     userID = Number(userID);
     if (!Number.isInteger(userID) || userID <= 0 || userID === Number(USERS.me.apiId)) return;
+    if (this.controllers && !this.controllers.router.actions.isApplying()) {
+      this.controllers.router.actions.directChat(userID);
+      return;
+    }
     const key = ChatModel.chatKey('direct', userID);
     const user = this.apiUser(userID);
     this.setState(current => {
@@ -2790,10 +2989,41 @@ class Component extends DCLogic {
     }, () => this.openChat(key));
   };
 
-  openGroupChat = groupID => {
+  openGroupChat = async groupID => {
     groupID = Number(groupID);
-    const group = this.state.apiGroupsByID[String(groupID)];
-    if (!group || this.groupAccessIsRevoked(groupID) || (group.state !== 'owner' && group.state !== 'member')) return;
+    if (!Number.isInteger(groupID) || groupID <= 0) return;
+    if (this.controllers && !this.controllers.router.actions.isApplying()) {
+      this.controllers.router.actions.groupChat(groupID);
+      return;
+    }
+    let group = this.state.apiGroupsByID[String(groupID)];
+    if (!group) {
+      const authGeneration = this.authGate.current();
+      this.setState({ screen: 'chat', chatError: '' });
+      try {
+        const raw = await AuthAPI.group(groupID);
+        if (!this.authGate.isCurrent(authGeneration)) return;
+        group = this.mapAPIGroup(raw);
+        const apiUsersByID = this.mergeAPIUsers([raw.owner]);
+        this.setState(current => ({
+          apiUsersByID,
+          apiGroupsByID: Object.assign({}, current.apiGroupsByID, { [String(groupID)]: group })
+        }));
+      } catch (error) {
+        if (!this.authGate.isCurrent(authGeneration)) return;
+        this.setState({
+          screen: 'chat',
+          chatError: error && error.status === 404
+            ? 'Group not found.'
+            : requestErrorMessage(error, 'Could not open this group conversation.')
+        });
+        return;
+      }
+    }
+    if (this.groupAccessIsRevoked(groupID) || (group.state !== 'owner' && group.state !== 'member')) {
+      this.setState({ screen: 'chat', chatError: 'Only group members can open this conversation.' });
+      return;
+    }
     const key = ChatModel.chatKey('group', groupID);
     this.revokedChatKeys.delete(key);
     this.setState(current => {
@@ -3283,6 +3513,8 @@ class Component extends DCLogic {
     return Object.assign({}, p, {
       user,
       privacyIcon: pm.icon, privacyLabel: pm.label,
+      hasGroup: Number.isInteger(Number(p.groupID)) && Number(p.groupID) > 0,
+      groupTitle: p.groupTitle || '',
       hasImage: !!p.mediaUrl,
       mediaUrl: p.mediaUrl || '',
       commentCount: num(p.commentsCount || 0),
@@ -3301,7 +3533,7 @@ class Component extends DCLogic {
       commentCreatePending: commentState.createPending,
       commentCreateHasError: !!commentState.createError,
       commentCreateError: commentState.createError,
-      commentSendDisabled: commentState.createPending || !commentState.draft.trim(),
+      commentSendDisabled: commentState.createPending || (!commentState.draft.trim() && !commentState.mediaFile),
       commentMediaInputID: this.commentMediaInputID(p.id),
       commentHasMedia: !!commentState.mediaFile,
       commentMediaFileName: commentState.mediaFileName,
@@ -3325,7 +3557,8 @@ class Component extends DCLogic {
       onRemoveCommentMedia: () => this.removeCommentMedia(p.id),
       loadMoreComments: () => this.loadComments(p.id, false),
       retryComments: () => this.loadComments(p.id, true),
-      goProfile: () => this.openProfile(p.apiAuthorID)
+      goProfile: () => this.openProfile(p.apiAuthorID),
+      goGroup: () => this.openGroup(p.groupID)
     });
   }
 
@@ -3398,7 +3631,7 @@ class Component extends DCLogic {
         user: u, showBtn: Number(userID) !== me.apiId,
         btnLabel: b.label, btnBg: b.bg, btnColor: b.color, btnBd: b.bd,
         btnDisabled: b.disabled,
-        onBtn: () => this.toggleFollow(userID),
+        onBtn: (event) => this.toggleFollow(userID, false, event && event.currentTarget),
         message: () => this.openDirectChat(userID),
         goProfile: () => this.openProfile(userID)
       };
@@ -3424,7 +3657,7 @@ class Component extends DCLogic {
       disabled: s.profilePrivacyPending || s.profileEditPending || s.profileAvatarPending,
       opacity: s.profilePrivacyPending || s.profileEditPending || s.profileAvatarPending ? '0.6' : '1',
       cursor: s.profilePrivacyPending ? 'wait' : (s.profileEditPending || s.profileAvatarPending ? 'not-allowed' : 'pointer'),
-      pick: () => this.setProfilePrivacy(o.k)
+      pick: (event) => this.setProfilePrivacy(o.k, false, event && event.currentTarget)
     }));
 
     // groups
@@ -3590,7 +3823,11 @@ class Component extends DCLogic {
         time: last ? this.formatPostTime(last.createdAt) : '',
         online: meta.online,
         bg: key === s.activeChatKey ? 'var(--soft)' : 'transparent',
-        open: () => this.openChat(key)
+        open: () => {
+          const target = ChatModel.parseChatKey(key);
+          if (target && target.kind === 'direct') this.openDirectChat(target.target_id);
+          else if (target && target.kind === 'group') this.openGroupChat(target.target_id);
+        }
       };
     });
     const active = s.activeChatKey ? s.chatsByKey[s.activeChatKey] : null;
@@ -3681,7 +3918,7 @@ class Component extends DCLogic {
         return {
           user, isPrivate: user.private,
           btnLabel: b.label, btnBg: b.bg, btnColor: b.color, btnBd: b.bd, btnDisabled: b.disabled,
-          onBtn: () => this.toggleFollow(user.apiId),
+          onBtn: (event) => this.toggleFollow(user.apiId, false, event && event.currentTarget),
           canMessage: user.relationship && (user.relationship.status === 'accepted' || user.relationship.follows_me),
           message: () => this.openDirectChat(user.apiId),
           goProfile: () => this.openProfile(user.apiId)
@@ -3723,6 +3960,16 @@ class Component extends DCLogic {
       goLogout: this.logout,
       logoutDisabled: s.logoutPending,
       appHasError: !!s.appError, appError: s.appError,
+      confirmationOpen: s.confirmationOpen,
+      confirmationTitle: s.confirmationTitle,
+      confirmationMessage: s.confirmationMessage,
+      confirmationConfirmLabel: s.confirmationPending ? 'Please wait…' : s.confirmationConfirmLabel,
+      confirmationPending: s.confirmationPending,
+      cancelConfirmation: this.cancelConfirmation,
+      confirmConfirmation: this.confirmConfirmation,
+      confirmationKeyDown: this.handleConfirmationKeyDown,
+      confirmationDialogRef: (element) => { this.confirmationDialog = element; },
+      confirmationCancelRef: (element) => { this.confirmationCancelButton = element; },
       // auth
       authTabs, authIsLogin: s.authMode === 'login', authIsReg: s.authMode === 'register',
       authCta: s.authPending ? 'Please wait…' : (s.authMode === 'login' ? 'Sign in' : 'Create account'),
@@ -3771,10 +4018,10 @@ class Component extends DCLogic {
       privacyIsSelected: s.privacy === 'selected',
       followerChips,
       selectedFollowersEmpty: s.postFollowers.length === 0 && !s.postFollowersLoading,
-      postBtnDisabled: s.composerPending || !s.composerText.trim() || !composerAudienceReady,
-      postBtnBg: (s.composerText.trim() && composerAudienceReady && !s.composerPending) ? 'var(--accent)' : 'var(--surface2)',
-      postBtnColor: (s.composerText.trim() && composerAudienceReady && !s.composerPending) ? '#fff' : 'var(--text3)',
-      postBtnCursor: s.composerPending ? 'wait' : ((s.composerText.trim() && composerAudienceReady) ? 'pointer' : 'not-allowed'),
+      postBtnDisabled: s.composerPending || (!s.composerText.trim() && !s.composerFile) || !composerAudienceReady,
+      postBtnBg: ((s.composerText.trim() || s.composerFile) && composerAudienceReady && !s.composerPending) ? 'var(--accent)' : 'var(--surface2)',
+      postBtnColor: ((s.composerText.trim() || s.composerFile) && composerAudienceReady && !s.composerPending) ? '#fff' : 'var(--text3)',
+      postBtnCursor: s.composerPending ? 'wait' : (((s.composerText.trim() || s.composerFile) && composerAudienceReady) ? 'pointer' : 'not-allowed'),
       postButtonLabel: s.composerPending ? 'Posting…' : 'Post',
       sendPost: this.sendPost,
       // profile
@@ -3808,7 +4055,7 @@ class Component extends DCLogic {
       followDisabled: fb.disabled,
       followHasError: !!s.followErrorByID[String(s.profileId)],
       followError: s.followErrorByID[String(s.profileId)] || '',
-      onFollow: () => this.toggleFollow(s.profileId),
+      onFollow: (event) => this.toggleFollow(s.profileId, false, event && event.currentTarget),
       msgProfile: () => this.openDirectChat(s.profileId),
       privacySeg,
       profilePrivacyHasError: pIsMe && !!s.profilePrivacyError,
@@ -3890,7 +4137,7 @@ class Component extends DCLogic {
 	  groupPostComposerPending: s.groupPostComposerPending,
 	  groupPostComposerHasError: !!s.groupPostComposerError,
 	  groupPostComposerError: s.groupPostComposerError,
-	  groupPostComposerDisabled: s.groupPostComposerPending || !s.groupPostComposerText.trim(),
+	  groupPostComposerDisabled: s.groupPostComposerPending || (!s.groupPostComposerText.trim() && !s.groupPostComposerFile),
 	  groupPostComposerButtonLabel: s.groupPostComposerPending ? 'Posting…' : 'Post',
 	  pickGroupPostMedia: this.pickGroupPostMedia,
 	  onGroupPostMedia: this.onGroupPostMedia,
@@ -3957,6 +4204,8 @@ class Component extends DCLogic {
       activeAvatarUrl: am.avatarUrl, activeHasAvatar: am.hasAvatar, activeNoAvatar: am.noAvatar,
       chatHasActive: !!active,
       chatHasNoActive: !active && !s.chatsLoading,
+      chatLayoutClass: active ? 'chat-active' : '',
+      backToChats: () => this.go('chat'),
       chatsLoading: s.chatsLoading,
       chatsHasError: !!s.chatsError, chatsError: s.chatsError,
       retryChats: () => this.loadChats(true),
@@ -4004,4 +4253,12 @@ class Component extends DCLogic {
   }
 }
 
-if (typeof module === 'object' && module.exports) module.exports = { Component };
+if (typeof module === 'object' && module.exports) {
+  module.exports = {
+    Component,
+    formatDateOfBirthInput,
+    formatDateTimeInput,
+    parseDateOfBirth,
+    parseLocalDateTime
+  };
+}

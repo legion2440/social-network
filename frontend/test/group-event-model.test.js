@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const GroupEventModel = require('./group-event-model.js');
+const GroupEventModel = require('../src/js/group-event-model.js');
 
 function rawEvent(id, startsAt, response) {
   return {

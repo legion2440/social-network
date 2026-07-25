@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const PostModel = require('./post-model.js');
+const PostModel = require('../src/js/post-model.js');
 
 class FakeFormData {
   constructor() { this.entries = []; }
@@ -48,6 +48,8 @@ test('post response mapping keeps controlled media and author fields', () => {
     },
     text: 'Mapped post',
     privacy: 'selected',
+    group_id: null,
+    group_title: null,
     media_url: '/api/posts/42/media',
     comments_count: 8,
     created_at: '2026-07-18T10:00:00Z'
@@ -58,7 +60,8 @@ test('post response mapping keeps controlled media and author fields', () => {
   assert.equal(mapped.privacy, 'selected');
   assert.equal(mapped.mediaUrl, '/api/posts/42/media');
   assert.equal(mapped.commentsCount, 8);
-	assert.equal(mapped.groupID, null);
+  assert.equal(mapped.groupID, null);
+  assert.equal(mapped.groupTitle, '');
   assert.deepEqual(mapped.author, {
     apiId: 7,
     firstName: 'Ada',
@@ -80,6 +83,7 @@ test('group post FormData and response omit personal privacy state', () => {
   const mapped = PostModel.normalizePostResponse({
     id: 51,
     group_id: 9,
+    group_title: 'Analytical Engine Club',
     author: {
       id: 7, first_name: 'Ada', last_name: 'Lovelace', nickname: null,
       avatar_url: '/static/avatars/neutral.svg', is_private: false
@@ -91,6 +95,25 @@ test('group post FormData and response omit personal privacy state', () => {
   }, 1);
 
   assert.equal(mapped.groupID, 9);
+  assert.equal(mapped.groupTitle, 'Analytical Engine Club');
   assert.equal(mapped.privacy, undefined);
   assert.equal(mapped.commentsCount, 2);
+});
+
+test('media-only post forms preserve an empty text field', () => {
+  const media = { name: 'only-image.webp' };
+  const personal = PostModel.buildCreatePostForm({
+    text: '   ', privacy: 'public', selectedUserIDs: [], media
+  }, FakeFormData);
+  assert.deepEqual(personal.entries, [
+    ['text', ''],
+    ['privacy', 'public'],
+    ['media', media, 'only-image.webp']
+  ]);
+
+  const group = PostModel.buildCreateGroupPostForm({ text: '', media }, FakeFormData);
+  assert.deepEqual(group.entries, [
+    ['text', ''],
+    ['media', media, 'only-image.webp']
+  ]);
 });

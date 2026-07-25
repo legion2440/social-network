@@ -25,7 +25,7 @@ func TestLoadDefaultsUseBackendRelativeRuntimePaths(t *testing.T) {
 	if filepath.IsAbs(cfg.UploadDir) || filepath.Clean(cfg.UploadDir) != filepath.Join("var", "uploads") {
 		t.Fatalf("unexpected upload path %q", cfg.UploadDir)
 	}
-	if filepath.IsAbs(cfg.FrontendDir) || filepath.Clean(cfg.FrontendDir) != filepath.Join("..", "frontend") {
+	if filepath.IsAbs(cfg.FrontendDir) || filepath.Clean(cfg.FrontendDir) != filepath.Join("..", "frontend", "dist") {
 		t.Fatalf("unexpected frontend path %q", cfg.FrontendDir)
 	}
 	if cfg.CookieSecure {

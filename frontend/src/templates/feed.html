@@ -1,0 +1,147 @@
+<sc-if value="{{isFeed}}" hint-placeholder-val="{{true}}">
+    <div class="ui-082" data-screen-label="Feed">
+      <div class="page-header-row"><h1 class="ui-083">Home</h1></div>
+
+      <div class="ui-084">
+        <div class="ui-085">
+          <div class="ui-086" style="background:{{me.color}}">
+            <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{me.avatarUrl}}" alt=""></sc-if>
+            <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
+          </div>
+          <textarea class="ui-087" rows="2" placeholder="What's on your mind?" value="{{composerText}}" onchange="{{onComposer}}"></textarea>
+        </div>
+        <sc-if value="{{composerHasMedia}}" hint-placeholder-val="{{false}}">
+          <div class="ui-088">
+            <span class="ui-089">{{composerMediaName}}</span>
+            <button class="ui-090" onclick="{{removeComposerMedia}}" title="Remove selected media">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M17.5 6.5l-11 11m0-11 11 11"></path></svg>
+            </button>
+          </div>
+        </sc-if>
+        <sc-if value="{{privacyIsSelected}}" hint-placeholder-val="{{false}}">
+          <div class="ui-091">
+            <span class="ui-092">Visible to:</span>
+            <sc-for list="{{followerChips}}" as="fc" hint-placeholder-count="3">
+              <button class="ui-093" onclick="{{fc.toggle}}" style="border:1.5px solid {{fc.bd}};background:{{fc.bg}};color:{{fc.tc}}">
+                <span class="ui-094" style="background:{{fc.color}}">{{fc.initials}}</span>
+                {{fc.name}}
+              </button>
+            </sc-for>
+            <sc-if value="{{selectedFollowersEmpty}}" hint-placeholder-val="{{false}}"><span class="ui-092">No accepted followers available.</span></sc-if>
+          </div>
+        </sc-if>
+        <sc-if value="{{composerHasError}}" hint-placeholder-val="{{false}}"><div class="ui-095" role="alert">{{composerError}}</div></sc-if>
+        <div class="ui-096">
+          <input class="ui-017" id="post-media" type="file" accept="image/jpeg,image/png,image/gif,image/webp" onchange="{{onComposerMedia}}">
+          <button class="ui-097" onclick="{{pickComposerMedia}}" title="Add image or GIF" style-hover="background:var(--surface2)">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm4.5 6a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM21 15.5 16 10 5 20"></path></svg>
+          </button>
+          <button class="ui-098" onclick="{{togglePrivacy}}" style-hover="background:var(--surface2)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{privacyIcon}}"></path></svg>
+            {{privacyLabel}}
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9.5l6 6 6-6"></path></svg>
+          </button>
+          <sc-if value="{{privacyOpen}}" hint-placeholder-val="{{false}}">
+            <div class="ui-099">
+              <sc-for list="{{privacyOptions}}" as="po" hint-placeholder-count="3">
+                <button class="ui-100" onclick="{{po.pick}}" style="background:{{po.bg}}" style-hover="background:var(--surface2)">
+                  <svg class="ui-101" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{po.icon}}"></path></svg>
+                  <span class="ui-102"><span class="ui-103">{{po.label}}</span><span class="ui-104">{{po.desc}}</span></span>
+                  <sc-if value="{{po.isOn}}" hint-placeholder-val="{{false}}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6.5 9.5 17 4 11.5"></path></svg></sc-if>
+                </button>
+              </sc-for>
+            </div>
+          </sc-if>
+          <button class="ui-105" onclick="{{sendPost}}" disabled="{{postBtnDisabled}}" style="background:{{postBtnBg}};color:{{postBtnColor}};cursor:{{postBtnCursor}}" style-hover="transform:translateY(-1px)" style-active="transform:scale(.97)">{{postButtonLabel}}</button>
+        </div>
+      </div>
+
+      <sc-if value="{{feedHasError}}" hint-placeholder-val="{{false}}">
+        <div class="ui-106" role="alert">
+          {{feedError}} <button class="ui-107" onclick="{{retryFeed}}">Retry</button>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{feedLoading}}" hint-placeholder-val="{{true}}">
+        <div class="ui-108">
+          <div class="ui-109">
+            <div class="ui-110"><div class="ui-111"></div><div class="ui-102"><div class="ui-112"></div><div class="ui-113"></div></div></div>
+            <div class="ui-114"></div>
+            <div class="ui-115"></div>
+            <div class="ui-116"></div>
+          </div>
+          <div class="ui-109">
+            <div class="ui-110"><div class="ui-111"></div><div class="ui-102"><div class="ui-117"></div><div class="ui-118"></div></div></div>
+            <div class="ui-119"></div>
+            <div class="ui-120"></div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{feedReady}}" hint-placeholder-val="{{false}}">
+        <div class="ui-108">
+          <sc-for list="{{posts}}" as="p" hint-placeholder-count="3">
+            <article class="ui-121" style="animation-delay:{{p.delay}}">
+              <div class="ui-110">
+                <div class="ui-122" onclick="{{p.goProfile}}" style="background:{{p.user.color}}">
+                  <sc-if value="{{p.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{p.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if>
+                  <sc-if value="{{p.user.noAvatar}}" hint-placeholder-val="{{true}}">{{p.user.initials}}</sc-if>
+                </div>
+                <div class="ui-040">
+                  <span class="ui-123" onclick="{{p.goProfile}}">{{p.user.name}}</span>
+                  <div class="ui-124">{{p.user.handle}} · {{p.time}}</div>
+                </div>
+                <span class="ui-125" title="Post visibility">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{p.privacyIcon}}"></path></svg>
+                  {{p.privacyLabel}}
+                </span>
+              </div>
+              <p class="ui-126">{{p.text}}</p>
+              <sc-if value="{{p.hasImage}}" hint-placeholder-val="{{false}}">
+                <img class="ui-127" src="{{p.mediaUrl}}" alt="Post media">
+              </sc-if>
+              <div class="ui-128">
+                <button class="ui-129" onclick="{{p.onToggleComments}}" style-hover="background:var(--surface2)">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>
+                  {{p.commentCount}}
+                </button>
+              </div>
+              <sc-if value="{{p.showComments}}" hint-placeholder-val="{{false}}">
+                <div class="ui-130">
+                  <sc-if value="{{p.commentsLoading}}" hint-placeholder-val="{{false}}"><div class="ui-131">Loading comments…</div></sc-if>
+                  <sc-if value="{{p.commentsHasError}}" hint-placeholder-val="{{false}}"><div class="ui-132" role="alert">{{p.commentsError}} <button class="ui-034" onclick="{{p.retryComments}}">Retry</button></div></sc-if>
+                  <sc-for list="{{p.comments}}" as="c" hint-placeholder-count="1">
+                    <div class="ui-133">
+                      <div class="ui-134" style="background:{{c.user.color}}">
+                        <sc-if value="{{c.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{c.user.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if>
+                        <sc-if value="{{c.user.noAvatar}}" hint-placeholder-val="{{true}}">{{c.user.initials}}</sc-if>
+                      </div>
+                      <div class="ui-135">
+                        <span class="ui-136">{{c.user.name}}</span><span class="ui-137"> · {{c.time}}</span>
+                        <p class="ui-138">{{c.text}}</p>
+                        <sc-if value="{{c.hasMedia}}" hint-placeholder-val="{{false}}"><img class="ui-139" src="{{c.mediaUrl}}" alt="Comment attachment"></sc-if>
+                      </div>
+                    </div>
+                  </sc-for>
+                  <sc-if value="{{p.commentsHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-140" onclick="{{p.loadMoreComments}}" disabled="{{p.commentsPending}}">Load more</button></sc-if>
+                  <sc-if value="{{p.commentCreateHasError}}" hint-placeholder-val="{{false}}"><div class="ui-141" role="alert">{{p.commentCreateError}}</div></sc-if>
+                  <input class="ui-017" id="{{p.commentMediaInputID}}" type="file" accept="image/jpeg,image/png,image/gif,image/webp" onchange="{{p.onCommentMedia}}" disabled="{{p.commentMediaControlsDisabled}}">
+                  <sc-if value="{{p.commentHasMedia}}" hint-placeholder-val="{{false}}"><div class="ui-142"><img class="ui-143" src="{{p.commentMediaPreviewURL}}" alt="Selected comment attachment"><span class="ui-144">{{p.commentMediaFileName}}</span><button class="ui-145" onclick="{{p.onRemoveCommentMedia}}" disabled="{{p.commentMediaControlsDisabled}}">Remove</button></div></sc-if>
+                  <div class="ui-146">
+                    <div class="ui-134" style="background:{{me.color}}">
+                      <sc-if value="{{me.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{me.avatarUrl}}" onerror="this.onerror=null;this.src='/static/avatars/neutral.svg'" alt=""></sc-if>
+                      <sc-if value="{{me.noAvatar}}" hint-placeholder-val="{{true}}">{{me.initials}}</sc-if>
+                    </div>
+                    <input class="ui-147" placeholder="Write a comment…" value="{{p.draft}}" onchange="{{p.onDraft}}" onkeydown="{{p.onKey}}" disabled="{{p.commentCreatePending}}">
+                    <button class="ui-148" onclick="{{p.onChooseCommentMedia}}" disabled="{{p.commentMediaControlsDisabled}}" title="Attach image or GIF">Media</button>
+                    <button class="ui-149" onclick="{{p.onSendComment}}" disabled="{{p.commentSendDisabled}}">{{p.commentSendLabel}}</button>
+                  </div>
+                </div>
+              </sc-if>
+            </article>
+          </sc-for>
+          <sc-if value="{{feedHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-150" onclick="{{feedLoadMore}}" disabled="{{feedLoadMoreDisabled}}">{{feedLoadMoreLabel}}</button></sc-if>
+        </div>
+      </sc-if>
+    </div>
+    </sc-if>

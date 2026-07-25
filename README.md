@@ -99,7 +99,10 @@ The project deliberately keeps the backend private inside the Docker network. On
   - `selected`;
 - selected-audience posts restricted to chosen accepted followers;
 - JPEG, PNG, GIF, and WebP attachments up to 20 MB;
-- paginated feed and profile posts;
+- text-or-media creation for personal posts, group posts, and comments;
+- paginated personal Home feed and viewer-aware profile activity;
+- public posts remain visible in Home even when their author has a private profile;
+- group posts appear only to active members and are labeled with their group in profiles;
 - comments with optional JPEG, PNG, GIF, or WebP attachments;
 - current access is rechecked whenever protected post or comment media is requested.
 
@@ -134,6 +137,7 @@ Persisted notifications are created for the required social events:
 - group invitation;
 - group join request;
 - group event creation.
+- accepted follow (`follow_started`, implemented bonus).
 
 Notifications support:
 
@@ -213,7 +217,7 @@ Every other path is served from `/srv`, with `index.html` used for client-side r
 | Static server / reverse proxy | Caddy                                 |
 | Containers                    | Docker and Docker Compose             |
 
-The browser application is not organized as a conventional React component tree. The custom framework in `frontend/js/runtime.js` processes the `<x-dc>` template from `frontend/index.html`, while React and ReactDOM provide the rendering layer.
+The browser application is not organized as a conventional React component tree. The `dc-runtime` application framework processes the build-time-composed `<x-dc>` template, while React and ReactDOM provide only the rendering layer. Production source lives under `frontend/src` and is generated into ignored `frontend/dist`.
 
 ## 🔐 Security and access control
 
@@ -253,8 +257,13 @@ Both images use pinned official base-image digests.
 Run from the repository root:
 
 ```bash
-docker image build -f backend/Dockerfile -t social-network-backend:local .
-docker image build -f frontend/Dockerfile -t social-network-frontend:local .
+./scripts/build-images.sh
+```
+
+PowerShell:
+
+```powershell
+.\scripts\build-images.ps1
 ```
 
 ### Standalone launch
@@ -322,9 +331,11 @@ docker network rm social-network
 
 ## 💾 Persistence and migrations
 
-The application currently uses `15` versioned SQLite migrations.
+The application currently uses `16` versioned SQLite schema migrations.
 
 Pending migrations are applied automatically before the backend starts listening. The current version and dirty state are stored in `schema_migrations`.
+
+Schema SQL is embedded in the backend binary with `go:embed`; changing SQL requires rebuilding the backend image. Never edit an already applied migration to release a schema change—add a new version.
 
 Compose and standalone launches use the same explicitly named volumes:
 
@@ -365,8 +376,43 @@ sqlite3 var/social-network.db \
 Expected current version:
 
 ```text
-15 | 0
+16 | 0
 ```
+
+The opt-in demo dataset uses a separate embedded migration set and a separate `seed_migrations` table. It is never applied during normal startup:
+
+```bash
+docker compose exec backend /app/seed
+```
+
+The command is repeatable and creates three demo accounts with password `LoopDemo123!`:
+
+```text
+alice.demo@example.com
+bob.demo@example.com
+carol.demo@example.com
+```
+
+The backend runtime image includes the SQLite CLI:
+
+```bash
+docker compose exec backend sqlite3 /data/db/social-network.db
+```
+
+Example audit commands:
+
+```sql
+.tables
+SELECT version, dirty FROM schema_migrations;
+SELECT id, email, first_name, last_name, is_private FROM users ORDER BY id;
+SELECT user_id, created_at, expires_at FROM sessions ORDER BY created_at DESC;
+SELECT id, author_user_id, group_id, privacy,
+       media_id, length(text) AS text_length
+FROM posts ORDER BY id;
+SELECT post_id, user_id FROM post_selected_users ORDER BY post_id, user_id;
+```
+
+Raw session tokens are deliberately excluded from documented audit queries.
 
 ## ⚙️ Configuration
 
@@ -377,7 +423,7 @@ Backend environment variables:
 | `SOCIAL_NETWORK_HTTP_ADDR`     | `127.0.0.1:8080`        | backend listen address                  |
 | `SOCIAL_NETWORK_DB_PATH`       | `var/social-network.db` | SQLite database path                    |
 | `SOCIAL_NETWORK_UPLOAD_DIR`    | `var/uploads`           | uploaded file directory                 |
-| `SOCIAL_NETWORK_FRONTEND_DIR`  | `../frontend`           | local static frontend directory         |
+| `SOCIAL_NETWORK_FRONTEND_DIR`  | `../frontend/dist`      | generated local static frontend directory |
 | `SOCIAL_NETWORK_COOKIE_SECURE` | `false`                 | Secure attribute for the session cookie |
 
 Compose-specific host setting:
@@ -395,12 +441,13 @@ Docker overrides backend paths to persistent `/data` mounts and disables backend
 The SQLite driver requires CGO and a working C compiler.
 
 ```bash
-cd backend
-
+cd frontend
+npm run build
+cd ../backend
 go run ./cmd/server
 ```
 
-The local Go server serves `../frontend` by default, keeping browser requests and the session cookie same-origin.
+The local Go server serves `../frontend/dist` by default, keeping browser requests and the session cookie same-origin.
 
 Run backend checks:
 
@@ -417,6 +464,7 @@ Frontend tests use Node's built-in test runner and do not require a production d
 ```bash
 cd frontend
 npm test
+npm run build
 ```
 
 Final local verification:
@@ -425,7 +473,8 @@ Final local verification:
 Go tests:              passed
 Go race tests:         passed
 go vet:                passed
-Frontend tests:        121/121
+Frontend tests:        passed
+Frontend build:        passed
 docker compose config: passed
 ```
 
@@ -436,6 +485,7 @@ social-network/
 ├── backend/
 │   ├── cmd/
 │   │   ├── healthcheck/
+│   │   ├── seed/
 │   │   └── server/
 │   ├── internal/
 │   │   ├── app/
@@ -446,18 +496,25 @@ social-network/
 │   │   ├── realtime/
 │   │   ├── repo/
 │   │   │   └── sqlite/
-│   │   │       └── migrations/
+│   │   │       ├── migrations/
+│   │   │       └── seedmigrations/
 │   │   └── service/
 │   ├── Dockerfile
 │   └── README.md
 ├── frontend/
-│   ├── assets/
-│   ├── css/
-│   ├── js/
+│   ├── scripts/
+│   ├── src/
+│   │   ├── assets/
+│   │   ├── css/
+│   │   ├── js/
+│   │   └── templates/
+│   ├── test/
 │   ├── Caddyfile
 │   ├── Dockerfile
-│   ├── index.html
 │   └── package.json
+├── scripts/
+│   ├── build-images.ps1
+│   └── build-images.sh
 ├── compose.yaml
 ├── README.md
 └── README_RU.md
@@ -523,4 +580,3 @@ Sultan Yersultan (@syersult)
 Teniz Serikbayev (@tteniz)
 Aiman Zhumabayeva (@azhumaba)
 Aiymgul Gabdullina (@agabdullin)
-

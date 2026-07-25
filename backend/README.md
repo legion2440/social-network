@@ -130,6 +130,7 @@ Current versions:
 000013_create_notifications
 000014_create_chat_read_states
 000015_add_comment_media
+000016_allow_media_only_content
 ```
 
 Inspect the local migration state:
@@ -142,12 +143,64 @@ sqlite3 var/social-network.db \
 Expected:
 
 ```text
-15 | 0
+16 | 0
 ```
 
 Migration `000011` preserves post/comment IDs, timestamps, selected audiences, media links, and real `sqlite_sequence` high-water values while rebuilding `posts`. Its down migration is rejected while group posts exist.
 
 Migration `000015` adds optional comment media without rebuilding `post_comments`. Its down migration is rejected while comment attachments exist. Both guards run before schema changes so the database is not left dirty.
+
+Migration `000016` rebuilds `posts` and `post_comments` so an empty string is valid only when `media_id` is present. It preserves IDs, relations, indexes, timestamps, and actual `sqlite_sequence` values. Its down guard runs before the migrator and rejects rollback while media-only posts or comments exist.
+
+Migration SQL is embedded into the backend binary through `go:embed`. Rebuild the backend binary or image after changing SQL. Editing an already applied migration does not run it again; add a new migration for every released schema change.
+
+Demo data uses a separate embedded migration set in `internal/repo/sqlite/seedmigrations` and a separate `seed_migrations` table. It never changes `schema_migrations` and is not run by normal backend startup. With the Compose stack running, apply it explicitly:
+
+```bash
+docker compose exec backend /app/seed
+```
+
+The command is versioned and safe to repeat. It creates three demo users, privacy/audience examples, a group post, and an event with RSVP. All three accounts use password `LoopDemo123!`:
+
+```text
+alice.demo@example.com
+bob.demo@example.com
+carol.demo@example.com
+```
+
+Passwords are bcrypt-hashed by the same Go password flow as registration; plaintext passwords are not stored in seed SQL.
+
+The runtime image includes `sqlite3`. Open the Compose database with:
+
+```bash
+docker compose exec backend sqlite3 /data/db/social-network.db
+```
+
+Useful audit commands inside the SQLite prompt:
+
+```sql
+.tables
+SELECT version, dirty
+FROM schema_migrations;
+SELECT version, applied_at
+FROM seed_migrations
+ORDER BY version;
+SELECT id, email, first_name, last_name, is_private
+FROM users
+ORDER BY id;
+SELECT user_id, created_at, expires_at
+FROM sessions
+ORDER BY created_at DESC;
+SELECT id, author_user_id, group_id, privacy,
+       media_id, length(text) AS text_length
+FROM posts
+ORDER BY id;
+SELECT post_id, user_id
+FROM post_selected_users
+ORDER BY post_id, user_id;
+```
+
+Session audit queries intentionally omit the raw `sessions.token` primary key.
 
 ## 🔑 Authentication and sessions
 
@@ -266,6 +319,7 @@ DELETE /api/follow-requests/{id}
 | public profile | every authenticated user |
 | private profile | owner or accepted follower |
 | custom avatar | every authenticated user |
+| public personal post | every authenticated user, independently of profile privacy |
 | followers post | current accepted follower |
 | selected post | accepted follower plus selected audience row |
 | group content | current `owner` or `member` |
@@ -281,6 +335,7 @@ Important invariants:
 
 - leaving a group immediately revokes its content and chat;
 - selected audience rows survive unfollow, but access does not;
+- a public post from a private profile does not unlock that profile or its activity;
 - group membership never reveals private profile fields or content; custom avatars are independent of profile privacy;
 - protected media is authorized on every read;
 - stale frontend state cannot grant backend access.
@@ -337,11 +392,12 @@ POST /api/posts
 Content-Type: multipart/form-data
 ```
 
-Required:
+Fields:
 
 ```text
 text
 privacy
+media (optional)
 ```
 
 Privacy:
@@ -352,7 +408,7 @@ followers
 selected
 ```
 
-Text is trimmed, valid UTF-8, and 1 to 5000 Unicode code points. `selected` requires 1 to 100 current accepted followers.
+Content requires non-empty trimmed text or one successfully validated media attachment. Text is valid UTF-8 and at most 5000 Unicode code points; media-only content is stored with `text = ''`. `selected` requires 1 to 100 current accepted followers.
 
 Reads:
 
@@ -363,6 +419,10 @@ GET /api/posts/{id}/media
 ```
 
 Pagination uses opaque cursors, default 20, maximum 50.
+
+Home contains accessible personal posts only: own posts, all public posts, current followers posts, and selected posts that still have both an audience row and an accepted follow. Group posts never enter Home.
+
+Profile activity first requires access to the profile. It then returns accessible personal posts plus group posts from groups where the viewer is currently an owner/member. Group responses include both `group_id` and `group_title`. `posts_count` counts only personal posts accessible to the current viewer; a private-profile outsider receives `0`.
 
 Group posts:
 
@@ -379,7 +439,7 @@ GET|POST /api/posts/{id}/comments
 GET      /api/comments/{id}/media
 ```
 
-Create accepts only strict multipart with one required `text` and at most one optional `media`. Media-only comments return `400`, wrong content type returns `415`, and oversized input returns `413`.
+Create accepts only strict multipart with one `text` field and at most one optional `media`. Non-empty text or media is required; media-only comments store `text = ''`. Completely empty content returns `400`, wrong content type returns `415`, and oversized input returns `413`.
 
 Comment media checks parent access before checking whether an attachment exists. An inaccessible parent returns `403`; missing attachment, metadata, ownership, or file returns `404` only after access succeeds.
 
@@ -439,6 +499,8 @@ group_invitation
 group_join_request
 group_event
 ```
+
+`follow_started` is the implemented bonus notification for a new accepted follow; backend and frontend tests cover it.
 
 Endpoints:
 
@@ -523,6 +585,8 @@ The Hub stores only `SHA-256(raw session token)`. Logout, unfollow, and group le
 - `415`: unsupported content type;
 - `500`: storage or unexpected failure;
 - unknown `/api/*`: JSON `404`.
+- local frontend files are served directly; missing extensionless client routes
+  fall back to `index.html`, while missing assets and `/uploads/*` remain `404`.
 
 ## 🧪 Verification
 
@@ -548,6 +612,7 @@ go vet ./...                  passed
 backend/
 ├── cmd/
 │   ├── healthcheck/
+│   ├── seed/
 │   └── server/
 ├── internal/
 │   ├── app/
@@ -556,7 +621,7 @@ backend/
 │   ├── http/
 │   ├── platform/
 │   ├── realtime/ws/
-│   ├── repo/sqlite/migrations/
+│   ├── repo/sqlite/{migrations,seedmigrations}/
 │   └── service/
 ├── Dockerfile
 ├── go.mod

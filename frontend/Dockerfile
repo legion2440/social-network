@@ -1,5 +1,15 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
+FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS build
+
+WORKDIR /build/frontend
+
+COPY frontend/package.json ./
+COPY frontend/scripts/ ./scripts/
+COPY frontend/src/ ./src/
+
+RUN npm run build
+
 FROM caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
 
 ARG APP_UID=10001
@@ -12,10 +22,7 @@ RUN addgroup -g "${APP_GID}" app \
     && mkdir -p /srv \
     && chown -R "${APP_UID}:${APP_GID}" /srv
 
-COPY --chown=10001:10001 frontend/index.html /srv/index.html
-COPY --chown=10001:10001 frontend/css/ /srv/css/
-COPY --chown=10001:10001 frontend/js/ /srv/js/
-COPY --chown=10001:10001 frontend/assets/ /srv/assets/
+COPY --from=build --chown=10001:10001 /build/frontend/dist/ /srv/
 COPY --chown=10001:10001 frontend/Caddyfile /etc/caddy/Caddyfile
 
 ENV XDG_CONFIG_HOME=/tmp/caddy/config \

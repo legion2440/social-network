@@ -47,7 +47,7 @@ func (s *CommentService) Create(ctx context.Context, authorUserID, postID int64,
 		return nil, ErrInvalidInput
 	}
 	text := strings.TrimSpace(input.Text)
-	if !utf8.ValidString(text) || utf8.RuneCountInString(text) < 1 || utf8.RuneCountInString(text) > MaxCommentTextRunes {
+	if !utf8.ValidString(text) || utf8.RuneCountInString(text) > MaxCommentTextRunes || (text == "" && input.Media == nil) {
 		return nil, ErrInvalidInput
 	}
 

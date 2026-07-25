@@ -60,7 +60,7 @@ func (s *PostService) Create(ctx context.Context, authorUserID int64, input Crea
 		return nil, ErrInvalidInput
 	}
 	runeCount := utf8.RuneCountInString(text)
-	if runeCount < 1 || runeCount > MaxPostTextRunes || !input.Privacy.Valid() {
+	if runeCount > MaxPostTextRunes || (runeCount == 0 && input.Media == nil) || !input.Privacy.Valid() {
 		return nil, ErrInvalidInput
 	}
 	selectedUserIDs, err := normalizeSelectedPostUsers(authorUserID, input.Privacy, input.SelectedUserIDs)
@@ -169,7 +169,7 @@ func (s *PostService) CreateGroupPost(
 		return nil, ErrInvalidInput
 	}
 	runeCount := utf8.RuneCountInString(text)
-	if runeCount < 1 || runeCount > MaxPostTextRunes {
+	if runeCount > MaxPostTextRunes || (runeCount == 0 && input.Media == nil) {
 		return nil, ErrInvalidInput
 	}
 
@@ -186,7 +186,8 @@ func (s *PostService) CreateGroupPost(
 	now := s.clock.Now()
 	var post *domain.Post
 	err = s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
-		if _, err := authorizeGroupContentAccess(ctx, repositories, authorUserID, groupID); err != nil {
+		group, err := authorizeGroupContentAccess(ctx, repositories, authorUserID, groupID)
+		if err != nil {
 			return err
 		}
 		author, err := repositories.Users().GetByID(ctx, authorUserID)
@@ -220,6 +221,7 @@ func (s *PostService) CreateGroupPost(
 			AuthorUserID: authorUserID,
 			Author:       author,
 			GroupID:      &storedGroupID,
+			GroupTitle:   &group.Title,
 			Text:         text,
 			MediaID:      mediaID,
 			CreatedAt:    now,

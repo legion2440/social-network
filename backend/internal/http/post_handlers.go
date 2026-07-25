@@ -383,6 +383,7 @@ type postResponse struct {
 	ID            int64               `json:"id"`
 	Author        userSummaryResponse `json:"author"`
 	GroupID       *int64              `json:"group_id,omitempty"`
+	GroupTitle    *string             `json:"group_title,omitempty"`
 	Text          string              `json:"text"`
 	Privacy       *domain.PostPrivacy `json:"privacy,omitempty"`
 	MediaURL      *string             `json:"media_url"`
@@ -398,6 +399,7 @@ func newPostResponse(post *domain.Post) *postResponse {
 		ID:            post.ID,
 		Author:        newUserSummaryResponse(post.Author),
 		GroupID:       post.GroupID,
+		GroupTitle:    post.GroupTitle,
 		Text:          post.Text,
 		Privacy:       post.Privacy,
 		MediaURL:      domain.PostMediaURL(post),

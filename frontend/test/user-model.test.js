@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const UserModel = require('./user-model.js');
+const UserModel = require('../src/js/user-model.js');
 
 test('normalization keeps one backend user object and merges full profile data', () => {
   let store = UserModel.mergeUsers({}, [{

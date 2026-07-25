@@ -133,3 +133,50 @@ func TestCreateCommentCountsTrimmedUnicodeCodePoints(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateMediaOnlyComment(t *testing.T) {
+	root := t.TempDir()
+	db, err := sqlite.Open(context.Background(), filepath.Join(root, "social-network.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	now := time.Date(2026, time.July, 24, 10, 30, 0, 0, time.UTC)
+	users := sqlite.NewUserRepo(db)
+	authorID := createPostTestUser(t, ctx, users, "media-only-comment-author@example.com", now)
+	commenterID := createPostTestUser(t, ctx, users, "media-only-commenter@example.com", now)
+	privacy := domain.PostPublic
+	postID, err := sqlite.NewPostRepo(db).Create(ctx, &domain.Post{
+		AuthorUserID: authorID,
+		Text:         "Media-only comment target",
+		Privacy:      &privacy,
+		CreatedAt:    now,
+	})
+	if err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+	stager, err := service.NewMediaStager(&authTestIDGenerator{}, filepath.Join(root, "uploads"), service.MaxMediaBytes)
+	if err != nil {
+		t.Fatalf("new comment media stager: %v", err)
+	}
+	comments := service.NewCommentService(sqlite.NewTransactionManager(db), fixedPostClock{now: now}, stager)
+
+	comment, err := comments.Create(ctx, commenterID, postID, service.CreateCommentInput{
+		Text: " \n ",
+		Media: &service.MediaUpload{
+			OriginalName: "comment.png",
+			Reader:       bytes.NewReader([]byte("\x89PNG\r\n\x1a\ncomment-only")),
+		},
+	})
+	if err != nil {
+		t.Fatalf("create media-only comment: %v", err)
+	}
+	if comment.Text != "" || comment.MediaID == nil {
+		t.Fatalf("unexpected media-only comment: %+v", comment)
+	}
+	if rejected, err := comments.Create(ctx, commenterID, postID, service.CreateCommentInput{Text: "\t"}); !errors.Is(err, service.ErrInvalidInput) || rejected != nil {
+		t.Fatalf("expected empty comment rejection, comment=%+v err=%v", rejected, err)
+	}
+}

@@ -5,6 +5,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 
@@ -119,7 +122,36 @@ func newFrontendHandler(frontendDir string) http.Handler {
 			writeError(w, http.StatusNotFound, "not found")
 		})
 	}
-	return http.FileServer(http.Dir(frontendDir))
+	files := http.FileServer(http.Dir(frontendDir))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			files.ServeHTTP(w, r)
+			return
+		}
+
+		cleanPath := path.Clean("/" + r.URL.Path)
+		relativePath := strings.TrimPrefix(cleanPath, "/")
+		targetPath := filepath.Join(frontendDir, filepath.FromSlash(relativePath))
+		if _, err := os.Stat(targetPath); err == nil {
+			files.ServeHTTP(w, r)
+			return
+		} else if !os.IsNotExist(err) {
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+
+		if strings.HasPrefix(cleanPath, "/uploads/") || filepath.Ext(cleanPath) != "" {
+			files.ServeHTTP(w, r)
+			return
+		}
+
+		fallback := r.Clone(r.Context())
+		fallbackURL := *r.URL
+		fallbackURL.Path = "/"
+		fallbackURL.RawPath = ""
+		fallback.URL = &fallbackURL
+		files.ServeHTTP(w, fallback)
+	})
 }
 
 func (h *Handler) Routes() http.Handler {

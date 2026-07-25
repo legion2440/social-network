@@ -20,3 +20,4 @@ coverage.*
 *.test
 
 frontend/**/*.test.js
+frontend/dist/

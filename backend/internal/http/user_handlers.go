@@ -135,6 +135,8 @@ func newUserProfileResponse(profile *service.UserProfile) *userProfileResponse {
 		CanViewProfile: profile.CanView,
 	}
 	if !profile.CanView {
+		zero := int64(0)
+		response.PostsCount = &zero
 		return response
 	}
 	response.Email = &user.Email

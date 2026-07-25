@@ -145,6 +145,14 @@ func TestCreatePostsSupportsStrictPrivacyAudienceAndMediaContracts(t *testing.T)
 	if mediaPost.MediaURL == nil || *mediaPost.MediaURL != fmt.Sprintf("/api/posts/%d/media", mediaPost.ID) {
 		t.Fatalf("unexpected media URL: %+v", mediaPost.MediaURL)
 	}
+	mediaOnlyPost := createPostThroughHTTP(t, env, authorToken, " \n ", domain.PostPublic, nil, &postMultipartFile{
+		fieldName: "media",
+		filename:  "media-only.png",
+		contents:  png,
+	})
+	if mediaOnlyPost.Text != "" || mediaOnlyPost.MediaURL == nil {
+		t.Fatalf("unexpected media-only post response: %+v", mediaOnlyPost)
+	}
 
 	for name, fields := range map[string][]postMultipartField{
 		"selected missing audience": {{name: "text", value: "post"}, {name: "privacy", value: "selected"}},
@@ -234,8 +242,8 @@ func TestPostFeedAndProfileListsApplyCurrentAccessPolicyInSQL(t *testing.T) {
 		t.Fatalf("author must bypass post privacy: %+v", got.Posts)
 	}
 
-	if got := getPostPage(t, env, outsiderToken, "/api/posts/feed?limit=10", http.StatusOK); len(got.Posts) != 0 {
-		t.Fatalf("feed must not be global public discovery: %+v", got.Posts)
+	if got := getPostPage(t, env, outsiderToken, "/api/posts/feed?limit=10", http.StatusOK); len(got.Posts) != 1 || got.Posts[0].ID != publicPost.ID {
+		t.Fatalf("public post is missing from outsider feed: %+v", got.Posts)
 	}
 	if got := getPostPage(t, env, followerToken, "/api/posts/feed?limit=10", http.StatusOK); len(got.Posts) != 2 {
 		t.Fatalf("accepted follower feed: %+v", got.Posts)
@@ -246,6 +254,9 @@ func TestPostFeedAndProfileListsApplyCurrentAccessPolicyInSQL(t *testing.T) {
 
 	setProfilePrivacy(t, env, authorToken, true)
 	getPostPage(t, env, outsiderToken, profilePath, http.StatusForbidden)
+	if got := getPostPage(t, env, outsiderToken, "/api/posts/feed?limit=10", http.StatusOK); len(got.Posts) != 1 || got.Posts[0].ID != publicPost.ID {
+		t.Fatalf("private profile hid its public post from Home: %+v", got.Posts)
+	}
 	if got := getPostPage(t, env, followerToken, profilePath, http.StatusOK); len(got.Posts) != 2 {
 		t.Fatalf("accepted follower lost private profile access: %+v", got.Posts)
 	}
@@ -396,7 +407,7 @@ func TestPostMediaDeliveryUsesCurrentPostAccessPolicy(t *testing.T) {
 	assertMedia(followerToken, followersPost.ID, http.StatusOK, png)
 
 	setProfilePrivacy(t, env, authorToken, true)
-	assertMedia(outsiderToken, publicPost.ID, http.StatusForbidden, nil)
+	assertMedia(outsiderToken, publicPost.ID, http.StatusOK, png)
 	assertMedia(followerToken, publicPost.ID, http.StatusOK, png)
 	setProfilePrivacy(t, env, authorToken, false)
 

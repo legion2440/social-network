@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const CommentModel = require('./comment-model.js');
+const CommentModel = require('../src/js/comment-model.js');
 
 function response(id, createdAt) {
   return {

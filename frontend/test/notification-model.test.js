@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const NotificationModel = require('./notification-model.js');
+const NotificationModel = require('../src/js/notification-model.js');
 
 function rawNotification(id, type, options) {
   options = options || {};

@@ -12,6 +12,7 @@ This document covers frontend implementation, state, HTTP/WebSocket integration,
 
 - [🚀 Run and test](#-run-and-test)
 - [🧩 Execution model](#-execution-model)
+- [🧭 Frontend framework model](#-frontend-framework-model)
 - [⚙️ dc-runtime](#️-dc-runtime)
 - [📄 Template syntax](#-template-syntax)
 - [📁 File responsibilities](#-file-responsibilities)
@@ -20,6 +21,7 @@ This document covers frontend implementation, state, HTTP/WebSocket integration,
 - [🔄 Normalization and authoritative state](#-normalization-and-authoritative-state)
 - [🛡️ Request generations](#️-request-generations)
 - [🔑 Authentication lifecycle](#-authentication-lifecycle)
+- [🛣️ Client router](#️-client-router)
 - [📝 Posts, comments, and media](#-posts-comments-and-media)
 - [👥 Groups and events](#-groups-and-events)
 - [🔔 Notifications](#-notifications)
@@ -36,9 +38,11 @@ The frontend is static. It is served by:
 - the Go backend during local development;
 - Caddy in the production Docker topology.
 
-Start the local full-stack application from `backend/`:
+Build the generated frontend and start the local full-stack application:
 
 ```bash
+cd frontend
+npm run build
 cd ../backend
 go run ./cmd/server
 ```
@@ -53,32 +57,48 @@ Run frontend tests from `frontend/`:
 
 ```bash
 npm test
+npm run build
 ```
 
-The command uses Node's built-in test runner. There is no production dependency install or frontend build step in `package.json`.
+Tests use Node's built-in test runner. The dependency-free `scripts/build.mjs` command always cleans and recreates `dist/`.
 
 ## 🧩 Execution model
 
-The browser loads the application from `index.html`.
+The browser loads the generated application from `dist/index.html`.
 
 ```text
-index.html
+src/index.html + src/templates/
   |
-  +--> resources and model scripts
+  +--> build-time composition
   +--> bundled React
   +--> bundled ReactDOM
   +--> AuthAPI
   +--> dc-runtime
-  +--> application logic
+  +--> models, controllers, and application source
 ```
 
 The `<x-dc>` element contains the application template. `dc-runtime` parses it, replaces `<x-dc>` with `#dc-root`, compiles directives and interpolations, creates React elements, and mounts through ReactDOM.
 
-The UI is not split into conventional `.jsx` React components. Most application behavior lives in one `Component extends DCLogic` class whose state, methods, and computed values are exposed to the declarative template.
+The UI is not split into conventional `.jsx` React components. The root `Component extends DCLogic` owns shared state and lifecycle, while feature controller factories expose explicit actions, derived values, and lifecycle hooks through injected dependencies.
+
+## 🧭 Frontend framework model
+
+`dc-runtime` is the application framework. React is the rendering library; it does not define the application architecture and is not used as a standalone SPA framework.
+
+`dc-runtime` is responsible for:
+
+- component/template interpretation;
+- state binding;
+- lifecycle;
+- mounting;
+- event/action resolution;
+- composition.
+
+Feature controllers are not separate framework instances and do not own a hidden second global state. The root component owns shared state, startup/shutdown, session generations, and cross-feature coordination. At build time, separate source templates are composed into one production `<x-dc>`.
 
 ## ⚙️ dc-runtime
 
-`frontend/js/runtime.js` is a generated runtime bundle and should not be edited manually without rebuilding its source.
+`frontend/src/js/runtime.js` is a generated runtime bundle and should not be edited manually without rebuilding its source.
 
 The runtime provides:
 
@@ -176,22 +196,20 @@ Values are resolved from the component scope.
 
 | File | Responsibility |
 |---|---|
-| `index.html` | declarative SPA template and script loading |
-| `js/runtime.js` | generated `dc-runtime` bundle |
-| `js/app.js` | main application state and screen orchestration |
-| `js/auth-api.js` | same-origin HTTP client and `APIError` |
-| `js/resources.js` | resource/bootstrap integration |
-| `js/user-model.js` | user normalization, privacy cleanup, relationship state, request gates |
-| `js/post-model.js` | post normalization and state helpers |
-| `js/comment-model.js` | comment normalization and pagination merge |
-| `js/group-event-model.js` | event normalization and RSVP state |
-| `js/notification-model.js` | notification normalization, revision merges |
-| `js/chat-model.js` | chat keys, history merge, optimistic/realtime reconciliation |
-| `js/avatar-url.js` | controlled avatar URL classification |
-| `css/styles.css` | bundled font declarations |
-| `css/styles-2.css` | theme tokens, global styles, animations |
+| `src/index.html` | source document, include points, and ordered script loading |
+| `src/templates/*.html` | build-time-composed screen and shared modal fragments |
+| `src/js/runtime.js` | generated `dc-runtime` bundle |
+| `src/js/app.js` | root state, lifecycle, and cross-feature coordination |
+| `src/js/controllers/*.js` | explicit controller factories, actions, derived values, and hooks |
+| `src/js/auth-api.js` | same-origin HTTP client and `APIError` |
+| `src/js/*-model.js` | normalization, merge, privacy cleanup, and request gates |
+| `src/css/base.css` | bundled font declarations |
+| `src/css/layout.css` | theme tokens, global layout, and animations |
+| `src/css/components.css` | static template/component styles |
+| `src/css/responsive.css` | tablet/mobile layout rules |
+| `scripts/build.mjs` | clean source-to-`dist` production build |
 | `Caddyfile` | static delivery, backend proxy, SPA boundary |
-| `Dockerfile` | non-root static Caddy image |
+| `Dockerfile` | Node build stage and non-root Caddy runtime stage |
 
 Production identities, posts, comments, groups, events, notifications, and chats are loaded from backend responses. `USERS.me` remains only as the current-user holder.
 
@@ -220,6 +238,7 @@ Feature-specific constructors define consistent reset state:
 ```text
 emptyRegistrationForm
 emptyProfileEditor
+emptyConfirmationState
 emptyCommentState
 emptyGroupPostState
 emptyGroupEventState
@@ -409,6 +428,25 @@ Logout:
 
 A failed logout does not pretend the server session was removed.
 
+## 🛣️ Client router
+
+The router owns URL parsing and History API synchronization:
+
+```text
+/                         Home feed
+/users/:id                profile
+/groups                   groups
+/groups/:id               group
+/notifications            notifications
+/messages                 chat list
+/messages/user/:id        direct chat
+/messages/group/:id       group chat
+```
+
+It uses `pushState`, `replaceState`, and `popstate`, restores deep links after refresh and login, supports Back/Forward, and replaces malformed routes with `/`. Closed resources resolve to controlled profile/group/chat error state.
+
+Unfollow and profile privacy changes use one shared confirmation dialog. No mutation is sent before confirmation; Cancel and Escape close it, focus is trapped and restored, and pending confirmation disables repeat submission.
+
 ## 📝 Posts, comments, and media
 
 ### Post composers
@@ -425,7 +463,9 @@ pending/error
 
 Group post composer uses independent state and request gates.
 
-Both post and comment creation use `FormData`.
+Both post and comment creation use `FormData`. Personal posts, group posts, and comments require trimmed text or one media file. Media-only content sends and renders an empty text string. Completely empty composers stay disabled.
+
+Home contains personal posts only. A public post is independent of author profile privacy; followers and selected posts depend on the current accepted follow, and selected also requires the audience row. Profile activity can additionally show member-visible group posts, using `group_id` and backend-provided `group_title` for the group link.
 
 ### Per-post comments
 
@@ -455,8 +495,8 @@ comment-media-{postID}
 
 Comment creation behavior:
 
-- send requires non-empty text;
-- media is optional;
+- send requires non-empty text or media;
+- media is optional when text is present;
 - file controls are disabled while create is pending;
 - validation, network, and server errors preserve text, `File`, and preview;
 - `403` or `404` is treated as access revoke and clears attachment state;
@@ -523,6 +563,16 @@ Leave or realtime `chat:remove`:
 - removes the group chat;
 - blocks stale responses from restoring access.
 
+Date inputs intentionally remain text fields rather than `date` or `datetime-local`, so the required display and typing contract is stable across browsers:
+
+```text
+date of birth UI:  DD-MM-YYYY
+event UI:          DD-MM-YYYY HH:MM in local time
+event API:         RFC3339 UTC
+```
+
+Digit-only input is formatted automatically. The frontend checks real calendar dates and local hours/minutes, then converts event time with `toISOString()`; the backend independently parses RFC3339 and requires a future instant. Both inputs expose numeric input hints, patterns, maximum lengths, labels, and `aria-describedby` examples.
+
 ## 🔔 Notifications
 
 Notification state includes:
@@ -547,6 +597,8 @@ The frontend:
 - race-gates source transitions independently;
 - supports mark-one, mark-all, accept, and decline;
 - updates the navigation badge from persisted unread state.
+
+The implemented `follow_started` bonus notification is normalized, rendered, and covered by tests.
 
 ## 💬 Chat and realtime
 
@@ -647,6 +699,8 @@ The cleanup model prevents one user's state from leaking into a later session.
 
 ## 📦 Production delivery
 
+`npm run build` removes `dist/`, composes source templates in fixed order, embeds application source in the `text/x-dc` marker, copies runtime/vendor/CSS/assets, and fails if an include placeholder remains. `dist/` is generated and ignored by Git.
+
 The production image contains only:
 
 ```text
@@ -658,6 +712,8 @@ Caddyfile
 ```
 
 It does not include Node, test files, or frontend build tooling.
+
+The Dockerfile is multi-stage: Node performs the clean build, then Caddy receives only `dist/`. Production HTML and CSS asset references are root-absolute (`/js/...`, `/css/...`, `/assets/...`) so deep links never resolve assets relative to `/users/...` or `/groups/...`.
 
 Caddy proxies exact and wildcard paths:
 
@@ -679,6 +735,8 @@ Removed legacy paths return `404` before SPA fallback:
 
 All other paths use static delivery with `index.html` fallback.
 
+Responsive rules preserve the three-column desktop layout, hide the right rail on tablets, switch the sidebar to bottom navigation on mobile, stack narrow forms/actions, and show chat list/conversation sequentially. The 360 px layout prevents page-level horizontal overflow.
+
 Caddy runs as a numeric non-root user. Writable config/data paths use `/tmp`, and the container root filesystem is read-only.
 
 Build and launch commands are in the [root README](../README.md).
@@ -692,15 +750,18 @@ npm test
 Executed files:
 
 ```text
-js/app-race.test.js
-js/auth-api.test.js
-js/avatar-url.test.js
-js/chat-model.test.js
-js/comment-model.test.js
-js/group-event-model.test.js
-js/notification-model.test.js
-js/post-model.test.js
-js/user-model.test.js
+test/accessibility.test.js
+test/app-race.test.js
+test/auth-api.test.js
+test/avatar-url.test.js
+test/build.test.js
+test/chat-model.test.js
+test/comment-model.test.js
+test/controllers.test.js
+test/group-event-model.test.js
+test/notification-model.test.js
+test/post-model.test.js
+test/user-model.test.js
 ```
 
 Coverage includes:
@@ -720,38 +781,37 @@ Coverage includes:
 - reconnect/history merge;
 - unread and read-marker monotonicity;
 - logout/access-revoke stale-response protection.
+- build reproducibility and root-absolute assets;
+- router push/replace/popstate behavior;
+- confirmation behavior and date input contracts.
 
 Accepted result:
 
 ```text
-121/121 tests passed
+all tests passed
 ```
 
 ## 📁 Structure
 
 ```text
 frontend/
-├── assets/
-│   ├── fonts/
-│   └── ...
-├── css/
-│   ├── styles.css
-│   └── styles-2.css
-├── js/
-│   ├── app.js
-│   ├── app-race.test.js
-│   ├── auth-api.js
-│   ├── auth-api.test.js
-│   ├── avatar-url.js
-│   ├── chat-model.js
-│   ├── comment-model.js
-│   ├── group-event-model.js
-│   ├── notification-model.js
-│   ├── post-model.js
-│   ├── resources.js
-│   ├── runtime.js
-│   ├── user-model.js
-│   └── vendor/
+├── scripts/
+│   └── build.mjs
+├── src/
+│   ├── assets/
+│   ├── css/
+│   │   ├── base.css
+│   │   ├── components.css
+│   │   ├── layout.css
+│   │   └── responsive.css
+│   ├── js/
+│   │   ├── controllers/
+│   │   ├── vendor/
+│   │   └── ...
+│   ├── templates/
+│   └── index.html
+├── test/
+├── dist/ (generated, ignored)
 ├── Caddyfile
 ├── Dockerfile
 ├── index.html

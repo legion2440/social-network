@@ -19,16 +19,21 @@ global.DCLogic = class {
     if (callback) callback();
   }
 };
-global.AvatarURL = require('./avatar-url.js');
-global.UserModel = require('./user-model.js');
-global.PostModel = require('./post-model.js');
-global.CommentModel = require('./comment-model.js');
-global.ChatModel = require('./chat-model.js');
-global.GroupEventModel = require('./group-event-model.js');
-global.NotificationModel = require('./notification-model.js');
+global.AvatarURL = require('../src/js/avatar-url.js');
+global.UserModel = require('../src/js/user-model.js');
+global.PostModel = require('../src/js/post-model.js');
+global.CommentModel = require('../src/js/comment-model.js');
+global.ChatModel = require('../src/js/chat-model.js');
+global.GroupEventModel = require('../src/js/group-event-model.js');
+global.NotificationModel = require('../src/js/notification-model.js');
 global.AuthAPI = {};
 
-const { Component } = require('./app.js');
+const {
+  Component,
+  formatDateTimeInput,
+  parseDateOfBirth,
+  parseLocalDateTime
+} = require('../src/js/app.js');
 
 function deferred() {
   let resolve;
@@ -280,6 +285,31 @@ test('date of birth inputs format digit-only values as DD-MM-YYYY', () => {
 
   view.onEditDateOfBirth({ target: { value: '311219999' } });
   assert.equal(component.state.editDateOfBirth, '31-12-1999');
+
+  assert.equal(parseDateOfBirth('29-02-2025'), null);
+  assert.notEqual(parseDateOfBirth('29-02-2024'), null);
+});
+
+test('personal, group, and comment composers enable media-only submission', () => {
+  const component = createComponent();
+  assert.equal(component.renderVals().postBtnDisabled, true);
+
+  component.state.composerFile = { name: 'personal.png' };
+  assert.equal(component.renderVals().postBtnDisabled, false);
+
+  component.state.groupId = 7;
+  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 1)) };
+  component.state.groupPostComposerFile = { name: 'group.gif' };
+  assert.equal(component.renderVals().groupPostComposerDisabled, false);
+
+  component.state.posts = [component.mapAPIPost(rawPost(9, 2))];
+  component.state.commentsByPostID = {
+    '9': Object.assign(emptyCommentStateForTest(), {
+      mediaFile: { name: 'comment.webp' },
+      mediaFileName: 'comment.webp'
+    })
+  };
+  assert.equal(component.renderVals().posts[0].commentSendDisabled, false);
 });
 
 test('group event datetime input is masked and rejects impossible local dates', () => {
@@ -327,6 +357,26 @@ test('group event datetime input is masked and rejects impossible local dates', 
   view.onGroupEventStartsAt({ target: { value: '29-02-2032 23:59' } });
   assert.equal(component.state.groupEventStartsAt, '29-02-2032 23:59');
   assert.equal(component.renderVals().groupEventCreateDisabled, false);
+
+  assert.equal(formatDateTimeInput('240720261830'), '24-07-2026 18:30');
+  assert.equal(parseLocalDateTime('31-02-2026 18:30'), null);
+  assert.equal(parseLocalDateTime('24-07-2026 25:00'), null);
+  assert.equal(parseLocalDateTime('24-07-2026 18:60'), null);
+});
+
+test('registration rejects impossible dates before calling the API', async () => {
+  const component = createComponent();
+  component.state.authMode = 'register';
+  component.state.regDateOfBirth = '29-02-2025';
+  let calls = 0;
+  global.AuthAPI.register = async () => {
+    calls += 1;
+    return rawUser(1);
+  };
+
+  await component.submitAuth();
+  assert.equal(calls, 0);
+  assert.match(component.state.authError, /real calendar date/);
 });
 
 test('directory ignores an older relationship response', async () => {
@@ -392,7 +442,7 @@ test('unfollow purges target posts immediately and stale feed cannot restore the
   };
 
   const staleLoad = component.loadFeed(true);
-  await component.toggleFollow(2);
+  await component.toggleFollow(2, true);
 
   assert.deepEqual(component.state.posts.map(post => post.id), ['11']);
   assert.equal(component.state.commentsByPostID['21'], undefined);
@@ -406,6 +456,63 @@ test('unfollow purges target posts immediately and stale feed cannot restore the
   await Promise.resolve();
 
   assert.deepEqual(component.state.posts, []);
+});
+
+test('unfollow confirmation defers the API call, cancels safely, and blocks repeat confirmation', async () => {
+  const component = createComponent();
+  component.state.apiUsersByID = component.mergeAPIUsers([rawUser(2, 'accepted')]);
+  const response = deferred();
+  let calls = 0;
+  let restoredFocus = 0;
+  global.AuthAPI.unfollow = () => {
+    calls += 1;
+    return response.promise;
+  };
+  component.loadDirectory = () => {};
+  component.loadFeed = () => {};
+
+  await component.toggleFollow(2, false, { focus: () => { restoredFocus += 1; } });
+  assert.equal(calls, 0);
+  assert.equal(component.state.confirmationOpen, true);
+
+  component.cancelConfirmation();
+  assert.equal(component.state.confirmationOpen, false);
+  assert.equal(restoredFocus, 1);
+
+  await component.toggleFollow(2);
+  const firstConfirm = component.confirmConfirmation();
+  const repeatedConfirm = component.confirmConfirmation();
+  assert.equal(calls, 1);
+  response.resolve();
+  await Promise.all([firstConfirm, repeatedConfirm]);
+
+  assert.equal(component.state.confirmationOpen, false);
+  assert.equal(component.apiUser(2).relationship.status, 'none');
+});
+
+test('privacy confirmation supports Escape and calls the API only after confirmation', async () => {
+  const component = createComponent();
+  let calls = 0;
+  global.AuthAPI.updateProfile = async payload => {
+    calls += 1;
+    return Object.assign(rawUser(1), { is_private: payload.is_private });
+  };
+
+  await component.setProfilePrivacy('private');
+  assert.equal(calls, 0);
+  let prevented = false;
+  component.handleConfirmationKeyDown({
+    key: 'Escape',
+    preventDefault: () => { prevented = true; }
+  });
+  assert.equal(prevented, true);
+  assert.equal(component.state.confirmationOpen, false);
+
+  await component.setProfilePrivacy('private');
+  await component.confirmConfirmation();
+  assert.equal(calls, 1);
+  assert.equal(component.state.myPrivacy, 'private');
+  assert.equal(component.state.confirmationOpen, false);
 });
 
 function emptyTestCommentState() {
@@ -843,7 +950,7 @@ test('personal and group posts use the same backend comment mutation', () => {
 
 test('production runtime has no prototype identities or seeded post state', () => {
   const component = new Component({ defaultTheme: 'light' });
-  const source = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'app.js'), 'utf8');
 
   for (const prototypeValue of [
     'Alex Morgan', 'Mei Lin', 'David Okafor', 'Nina Kovács', 'Tomás Rivera', 'Sara Bishop',
@@ -959,7 +1066,7 @@ test('owner request and invitation lists expose and load their second pages', as
   assert.equal(view.groupInvitationsHasMore, false);
   assert.deepEqual(view.inviteCandidates.map(item => item.user.apiId), [6]);
 
-  const template = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const template = fs.readFileSync(path.join(__dirname, '..', 'src', 'templates', 'group.html'), 'utf8');
   const requestsSection = template.indexOf('PENDING JOIN REQUESTS');
   const requestsButton = template.indexOf('onclick="{{loadMoreGroupRequests}}"');
   const invitationsSection = template.indexOf('SENT INVITATIONS');

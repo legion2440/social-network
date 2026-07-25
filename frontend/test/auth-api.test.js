@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { APIError, createAuthAPI } = require('./auth-api.js');
+const { APIError, createAuthAPI } = require('../src/js/auth-api.js');
 
 function jsonResponse(status, body) {
   return {

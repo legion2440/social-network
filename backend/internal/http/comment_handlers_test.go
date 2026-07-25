@@ -205,11 +205,18 @@ func TestCreateCommentStrictMultipartAndPostCountContract(t *testing.T) {
 			http.MethodPost,
 			path,
 			commenterToken,
-			nil,
+			[]postMultipartField{{name: "text", value: " \n "}},
 			[]postMultipartFile{{fieldName: "media", filename: "image.png", contents: []byte("\x89PNG\r\n\x1a\nmedia")}},
 		))
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d body=%q", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d body=%q", rec.Code, rec.Body.String())
+		}
+		var response commentResponse
+		if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+			t.Fatalf("decode media-only comment: %v", err)
+		}
+		if response.Text != "" || response.MediaURL == nil {
+			t.Fatalf("unexpected media-only comment response: %+v", response)
 		}
 	})
 
@@ -375,8 +382,8 @@ func TestCommentMediaDeliveryUsesCurrentPostAccessPolicy(t *testing.T) {
 	assertMedia(followerToken, followerComment.ID, http.StatusOK, formats[1].contents)
 
 	setProfilePrivacy(t, env, authorToken, true)
-	assertMedia(outsiderToken, first.ID, http.StatusForbidden, nil)
-	assertMedia(outsiderToken, noMedia.ID, http.StatusForbidden, nil)
+	assertMedia(outsiderToken, first.ID, http.StatusOK, formats[0].contents)
+	assertMedia(outsiderToken, noMedia.ID, http.StatusNotFound, nil)
 	assertMedia(followerToken, first.ID, http.StatusOK, formats[0].contents)
 	setProfilePrivacy(t, env, authorToken, false)
 
@@ -448,7 +455,7 @@ func TestCommentsInheritCurrentPostAccessPolicy(t *testing.T) {
 
 	setProfilePrivacy(t, env, authorToken, true)
 	getCommentPage(t, env, acceptedToken, "/api/posts/"+strconv.FormatInt(publicPost.ID, 10)+"/comments", http.StatusOK)
-	getCommentPage(t, env, outsiderToken, "/api/posts/"+strconv.FormatInt(publicPost.ID, 10)+"/comments", http.StatusForbidden)
+	getCommentPage(t, env, outsiderToken, "/api/posts/"+strconv.FormatInt(publicPost.ID, 10)+"/comments", http.StatusOK)
 
 	if err := env.follows.Unfollow(context.Background(), selectedID, authorID); err != nil {
 		t.Fatalf("unfollow selected user: %v", err)
