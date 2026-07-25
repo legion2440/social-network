@@ -79,7 +79,7 @@ src/index.html + src/templates/
 
 The `<x-dc>` element contains the application template. `dc-runtime` parses it, replaces `<x-dc>` with `#dc-root`, compiles directives and interpolations, creates React elements, and mounts through ReactDOM.
 
-The UI is not split into conventional `.jsx` React components. The root `Component extends DCLogic` owns shared state and lifecycle, while feature controller factories expose explicit actions, derived values, and lifecycle hooks through injected dependencies.
+The UI is not split into conventional `.jsx` React components. The root `Component extends DCLogic` owns shared state, application lifecycle, controller wiring, shared request gates, and view-model aggregation. Feature controller factories contain the feature actions and expose derived values and lifecycle hooks through narrow injected dependencies.
 
 ## 🧭 Frontend framework model
 
@@ -94,7 +94,7 @@ The UI is not split into conventional `.jsx` React components. The root `Compone
 - event/action resolution;
 - composition.
 
-Feature controllers are not separate framework instances and do not own a hidden second global state. The root component owns shared state, startup/shutdown, session generations, and cross-feature coordination. At build time, separate source templates are composed into one production `<x-dc>`.
+Feature controllers are not separate framework instances and do not own a hidden second global state. They receive a `state.get()`/`state.set()` adapter, feature-specific API/model/gate dependencies, shared helpers, and named cross-feature callbacks; they never receive the root component. Realtime delivery reaches chat, notifications, and groups through those callbacks. At build time, separate source templates are composed into one production `<x-dc>`.
 
 ## ⚙️ dc-runtime
 
@@ -463,7 +463,7 @@ pending/error
 
 Group post composer uses independent state and request gates.
 
-Both post and comment creation use `FormData`. Personal posts, group posts, and comments require trimmed text or one media file. Media-only content sends and renders an empty text string. Completely empty composers stay disabled.
+Both post and comment creation use `FormData`. Personal posts, group posts, and comments require trimmed text or one media file. Media-only content sends an empty text string and omits the empty text element when rendered. Completely empty composers stay disabled.
 
 Home contains personal posts only. A public post is independent of author profile privacy; followers and selected posts depend on the current accepted follow, and selected also requires the audience row. Profile activity can additionally show member-visible group posts, using `group_id` and backend-provided `group_title` for the group link.
 
@@ -805,7 +805,7 @@ frontend/
 │   │   ├── layout.css
 │   │   └── responsive.css
 │   ├── js/
-│   │   ├── controllers/
+│   │   ├── controllers/ (feature actions, context adapter, derived values)
 │   │   ├── vendor/
 │   │   └── ...
 │   ├── templates/

@@ -140,7 +140,7 @@ func newFrontendHandler(frontendDir string) http.Handler {
 			return
 		}
 
-		if strings.HasPrefix(cleanPath, "/uploads/") || filepath.Ext(cleanPath) != "" {
+		if cleanPath == "/uploads" || strings.HasPrefix(cleanPath, "/uploads/") || filepath.Ext(cleanPath) != "" {
 			files.ServeHTTP(w, r)
 			return
 		}

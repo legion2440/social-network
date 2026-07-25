@@ -79,7 +79,7 @@ src/index.html + src/templates/
 
 `<x-dc>` содержит application template. `dc-runtime` парсит его, заменяет `<x-dc>` на `#dc-root`, компилирует directives и interpolations, создаёт React elements и монтирует их через ReactDOM.
 
-UI не разбит на обычные `.jsx` React components. Root `Component extends DCLogic` владеет shared state и lifecycle, а feature controller factories через явные dependencies предоставляют actions, derived values и lifecycle hooks.
+UI не разбит на обычные `.jsx` React components. Root `Component extends DCLogic` владеет shared state, lifecycle приложения, подключением controllers, общими request gates и сборкой view model. Feature controller factories содержат feature actions и через узкие явные dependencies предоставляют derived values и lifecycle hooks.
 
 ## 🧭 Модель frontend framework
 
@@ -94,7 +94,7 @@ UI не разбит на обычные `.jsx` React components. Root `Componen
 - event/action resolution;
 - composition.
 
-Feature controllers не являются отдельными framework instances и не создают скрытый второй global state. Root component владеет shared state, startup/shutdown, session generations и cross-feature coordination. При build отдельные source templates собираются в единый production `<x-dc>`.
+Feature controllers не являются отдельными framework instances и не создают скрытый второй global state. Они получают adapter `state.get()`/`state.set()`, feature-specific API/model/gate dependencies, shared helpers и именованные cross-feature callbacks; root component им не передаётся. Realtime передаёт события в chat, notifications и groups через эти callbacks. При build отдельные source templates собираются в единый production `<x-dc>`.
 
 ## ⚙️ dc-runtime
 
@@ -463,7 +463,7 @@ pending/error
 
 Group post composer имеет отдельный state и gates.
 
-Posts и comments создаются через `FormData`. Personal posts, group posts и comments требуют trimmed text или один media file. Media-only content отправляет и отображает пустую строку text. Полностью пустые composers остаются disabled.
+Posts и comments создаются через `FormData`. Personal posts, group posts и comments требуют trimmed text или один media file. Media-only content отправляет пустую строку text, но при rendering пустой текстовый элемент не создаётся. Полностью пустые composers остаются disabled.
 
 Home содержит только personal posts. Public post не зависит от profile privacy автора; followers и selected зависят от текущего accepted follow, а selected дополнительно требует audience row. Profile activity также может показывать member-visible group posts, используя `group_id` и полученный от backend `group_title` для group link.
 
@@ -811,7 +811,7 @@ frontend/
 │   │   ├── layout.css
 │   │   └── responsive.css
 │   ├── js/
-│   │   ├── controllers/
+│   │   ├── controllers/ (feature actions, context adapter, derived values)
 │   │   ├── vendor/
 │   │   └── ...
 │   ├── templates/

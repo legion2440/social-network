@@ -160,7 +160,7 @@ Demo data использует отдельный embedded-набор `internal/
 docker compose exec backend /app/seed
 ```
 
-Команда versioned и безопасна при повторном запуске. Она создаёт трёх demo users, примеры privacy/audience, group post и event с RSVP. У всех трёх accounts пароль `LoopDemo123!`:
+Команда versioned и безопасна при повторном запуске. Пока первая seed version ещё не записана, наличие любого зарезервированного demo email завершает команду ошибкой до изменения `seed_migrations` или demo data; после применения повторный запуск является idempotent no-op. Seed создаёт трёх demo users, примеры privacy/audience, group post и event с RSVP. У всех трёх accounts пароль `LoopDemo123!`:
 
 ```text
 alice.demo@example.com
@@ -584,7 +584,7 @@ Hub хранит только `SHA-256(raw session token)`. Logout, unfollow и 
 - `500`: storage/unexpected failure;
 - unknown `/api/*`: JSON `404`.
 - local frontend files выдаются напрямую; отсутствующие extensionless client
-  routes получают fallback на `index.html`, а missing assets и `/uploads/*`
+  routes получают fallback на `index.html`, а missing assets, точный `/uploads` и `/uploads/*`
   остаются `404`.
 
 ## 🧪 Проверка

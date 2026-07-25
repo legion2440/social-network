@@ -37,22 +37,39 @@ func ApplyDemoSeedMigrations(ctx context.Context, db *sql.DB, passwordHash strin
 	if passwordHash == "" {
 		return nil, errors.New("demo password hash is required")
 	}
-	if _, err := db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS seed_migrations (
-			version INTEGER PRIMARY KEY,
-			applied_at INTEGER NOT NULL
-		)
-	`); err != nil {
-		return nil, fmt.Errorf("create seed_migrations: %w", err)
-	}
-
 	migrations, err := embeddedSeedMigrations()
 	if err != nil {
 		return nil, err
 	}
-	applied, err := appliedSeedVersions(ctx, db)
+	hasSeedTable, err := seedMigrationsTableExists(ctx, db)
 	if err != nil {
 		return nil, err
+	}
+	applied := make(map[uint]struct{})
+	if hasSeedTable {
+		applied, err = appliedSeedVersions(ctx, db)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(applied) == 0 {
+		conflictingEmail, err := existingDemoEmail(ctx, db)
+		if err != nil {
+			return nil, err
+		}
+		if conflictingEmail != "" {
+			return nil, fmt.Errorf("demo seed requires an empty demo namespace: user %q already exists", conflictingEmail)
+		}
+	}
+	if !hasSeedTable {
+		if _, err := db.ExecContext(ctx, `
+			CREATE TABLE seed_migrations (
+				version INTEGER PRIMARY KEY,
+				applied_at INTEGER NOT NULL
+			)
+		`); err != nil {
+			return nil, fmt.Errorf("create seed_migrations: %w", err)
+		}
 	}
 
 	known := make(map[uint]struct{}, len(migrations))
@@ -94,6 +111,43 @@ func ApplyDemoSeedMigrations(ctx context.Context, db *sql.DB, passwordHash strin
 		newlyApplied = append(newlyApplied, migration.version)
 	}
 	return newlyApplied, nil
+}
+
+func seedMigrationsTableExists(ctx context.Context, db *sql.DB) (bool, error) {
+	var exists bool
+	if err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM sqlite_master
+			WHERE type = 'table' AND name = 'seed_migrations'
+		)
+	`).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check seed_migrations table: %w", err)
+	}
+	return exists, nil
+}
+
+func existingDemoEmail(ctx context.Context, db *sql.DB) (string, error) {
+	var email string
+	err := db.QueryRowContext(ctx, `
+		SELECT email
+		FROM users
+		WHERE email IN (
+			'alice.demo@example.com',
+			'bob.demo@example.com',
+			'carol.demo@example.com'
+		)
+		COLLATE NOCASE
+		ORDER BY email
+		LIMIT 1
+	`).Scan(&email)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("check demo email namespace: %w", err)
+	}
+	return email, nil
 }
 
 func embeddedSeedMigrations() ([]seedMigration, error) {

@@ -160,7 +160,7 @@ Demo data uses a separate embedded migration set in `internal/repo/sqlite/seedmi
 docker compose exec backend /app/seed
 ```
 
-The command is versioned and safe to repeat. It creates three demo users, privacy/audience examples, a group post, and an event with RSVP. All three accounts use password `LoopDemo123!`:
+The command is versioned and safe to repeat. Before the first seed version is recorded, any existing reserved demo email aborts the command before `seed_migrations` or demo data are changed; once applied, subsequent runs are idempotent no-ops. The seed creates three demo users, privacy/audience examples, a group post, and an event with RSVP. All three accounts use password `LoopDemo123!`:
 
 ```text
 alice.demo@example.com
@@ -586,7 +586,7 @@ The Hub stores only `SHA-256(raw session token)`. Logout, unfollow, and group le
 - `500`: storage or unexpected failure;
 - unknown `/api/*`: JSON `404`.
 - local frontend files are served directly; missing extensionless client routes
-  fall back to `index.html`, while missing assets and `/uploads/*` remain `404`.
+  fall back to `index.html`, while missing assets, exact `/uploads`, and `/uploads/*` remain `404`.
 
 ## 🧪 Verification
 

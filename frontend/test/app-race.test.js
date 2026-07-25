@@ -27,6 +27,18 @@ global.ChatModel = require('../src/js/chat-model.js');
 global.GroupEventModel = require('../src/js/group-event-model.js');
 global.NotificationModel = require('../src/js/notification-model.js');
 global.AuthAPI = {};
+global.createFeatureController = require('../src/js/controllers/controller-factory.js');
+global.createControllerContext = require('../src/js/controllers/controller-context.js');
+global.createAuthController = require('../src/js/controllers/auth-controller.js');
+global.createFeedController = require('../src/js/controllers/feed-controller.js');
+global.createProfileController = require('../src/js/controllers/profile-controller.js');
+global.createGroupsController = require('../src/js/controllers/groups-controller.js');
+global.createEventsController = require('../src/js/controllers/events-controller.js');
+global.createChatController = require('../src/js/controllers/chat-controller.js');
+global.createNotificationController = require('../src/js/controllers/notification-controller.js');
+global.createRealtimeController = require('../src/js/controllers/realtime-controller.js');
+global.createRouterController = require('../src/js/controllers/router-controller.js');
+global.createFeatureControllers = require('../src/js/controllers/feature-controllers.js');
 
 const {
   Component,
@@ -193,8 +205,8 @@ test('feed reset starts a new generation while the previous request is pending',
   let calls = 0;
   global.AuthAPI.feed = () => (++calls === 1 ? oldRequest.promise : newRequest.promise);
 
-  const oldLoad = component.loadFeed(true);
-  const newLoad = component.loadFeed(true);
+  const oldLoad = component.controllers.feed.actions.loadFeed(true);
+  const newLoad = component.controllers.feed.actions.loadFeed(true);
   assert.equal(calls, 2);
 
   newRequest.resolve({ posts: [rawPost(22, 3)], next_cursor: null });
@@ -249,13 +261,13 @@ test('registration avatar preview replaces and releases object URLs', () => {
   URL.revokeObjectURL = value => revoked.push(value);
 
   try {
-    component.onRegistrationAvatar({ target: { files: [{ name: 'first.webp' }] } });
+    component.controllers.auth.actions.onRegistrationAvatar({ target: { files: [{ name: 'first.webp' }] } });
     let view = component.renderVals();
     assert.equal(component.state.regAvatarName, 'first.webp');
     assert.equal(view.registrationAvatarHasPreview, true);
     assert.equal(view.registrationAvatarPreviewURL, 'blob:registration-1');
 
-    component.onRegistrationAvatar({ target: { files: [{ name: 'second.png' }] } });
+    component.controllers.auth.actions.onRegistrationAvatar({ target: { files: [{ name: 'second.png' }] } });
     view = component.renderVals();
     assert.deepEqual(revoked, ['blob:registration-1']);
     assert.equal(component.state.regAvatarName, 'second.png');
@@ -298,7 +310,7 @@ test('personal, group, and comment composers enable media-only submission', () =
   assert.equal(component.renderVals().postBtnDisabled, false);
 
   component.state.groupId = 7;
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 1)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 1)) };
   component.state.groupPostComposerFile = { name: 'group.gif' };
   assert.equal(component.renderVals().groupPostComposerDisabled, false);
 
@@ -374,7 +386,7 @@ test('registration rejects impossible dates before calling the API', async () =>
     return rawUser(1);
   };
 
-  await component.submitAuth();
+  await component.controllers.auth.actions.submitAuth();
   assert.equal(calls, 0);
   assert.match(component.state.authError, /real calendar date/);
 });
@@ -386,8 +398,8 @@ test('directory ignores an older relationship response', async () => {
   let calls = 0;
   global.AuthAPI.users = () => (++calls === 1 ? oldRequest.promise : newRequest.promise);
 
-  const oldLoad = component.loadDirectory();
-  const newLoad = component.loadDirectory();
+  const oldLoad = component.controllers.profile.actions.loadDirectory();
+  const newLoad = component.controllers.profile.actions.loadDirectory();
   assert.equal(calls, 2);
 
   newRequest.resolve({ users: [rawUser(2, 'accepted')], next_cursor: null });
@@ -408,8 +420,8 @@ test('selected followers ignore an older response and prune the audience', async
   global.AuthAPI.followers = () => (++calls === 1 ? oldRequest.promise : newRequest.promise);
   component.state.selectedFollowers = { 2: true, 3: true };
 
-  const oldLoad = component.loadPostFollowers();
-  const newLoad = component.loadPostFollowers();
+  const oldLoad = component.controllers.feed.actions.loadPostFollowers();
+  const newLoad = component.controllers.feed.actions.loadPostFollowers();
   assert.equal(calls, 2);
 
   newRequest.resolve({ users: [rawUser(3, 'none', { followsMe: true })] });
@@ -441,8 +453,8 @@ test('unfollow purges target posts immediately and stale feed cannot restore the
     '11': Object.assign(emptyTestCommentState(), { comments: [{ apiId: 10 }] })
   };
 
-  const staleLoad = component.loadFeed(true);
-  await component.toggleFollow(2, true);
+  const staleLoad = component.controllers.feed.actions.loadFeed(true);
+  await component.controllers.profile.actions.toggleFollow(2, true);
 
   assert.deepEqual(component.state.posts.map(post => post.id), ['11']);
   assert.equal(component.state.commentsByPostID['21'], undefined);
@@ -468,10 +480,10 @@ test('unfollow confirmation defers the API call, cancels safely, and blocks repe
     calls += 1;
     return response.promise;
   };
-  component.loadDirectory = () => {};
-  component.loadFeed = () => {};
+  component.controllers.profile.actions.loadDirectory = () => {};
+  component.controllers.feed.actions.loadFeed = () => {};
 
-  await component.toggleFollow(2, false, { focus: () => { restoredFocus += 1; } });
+  await component.controllers.profile.actions.toggleFollow(2, false, { focus: () => { restoredFocus += 1; } });
   assert.equal(calls, 0);
   assert.equal(component.state.confirmationOpen, true);
 
@@ -479,7 +491,7 @@ test('unfollow confirmation defers the API call, cancels safely, and blocks repe
   assert.equal(component.state.confirmationOpen, false);
   assert.equal(restoredFocus, 1);
 
-  await component.toggleFollow(2);
+  await component.controllers.profile.actions.toggleFollow(2);
   const firstConfirm = component.confirmConfirmation();
   const repeatedConfirm = component.confirmConfirmation();
   assert.equal(calls, 1);
@@ -498,7 +510,7 @@ test('privacy confirmation supports Escape and calls the API only after confirma
     return Object.assign(rawUser(1), { is_private: payload.is_private });
   };
 
-  await component.setProfilePrivacy('private');
+  await component.controllers.profile.actions.setProfilePrivacy('private');
   assert.equal(calls, 0);
   let prevented = false;
   component.handleConfirmationKeyDown({
@@ -508,7 +520,7 @@ test('privacy confirmation supports Escape and calls the API only after confirma
   assert.equal(prevented, true);
   assert.equal(component.state.confirmationOpen, false);
 
-  await component.setProfilePrivacy('private');
+  await component.controllers.profile.actions.setProfilePrivacy('private');
   await component.confirmConfirmation();
   assert.equal(calls, 1);
   assert.equal(component.state.myPrivacy, 'private');
@@ -532,18 +544,18 @@ test('feed load has no comment N+1 and first open loads comments lazily', async 
     return { comments: [rawComment(1, 7, 2)], next_cursor: null };
   };
 
-  await component.loadFeed(true);
+  await component.controllers.feed.actions.loadFeed(true);
   assert.equal(commentCalls, 0);
-  component.togglePostComments(7);
+  component.controllers.feed.actions.togglePostComments(7);
   await Promise.resolve();
   await Promise.resolve();
 
   assert.equal(commentCalls, 1);
-  assert.equal(component.commentState(7).loaded, true);
-  assert.deepEqual(component.commentState(7).comments.map(comment => comment.apiId), [1]);
+  assert.equal(component.controllers.feed.actions.commentState(7).loaded, true);
+  assert.deepEqual(component.controllers.feed.actions.commentState(7).comments.map(comment => comment.apiId), [1]);
 
-  component.togglePostComments(7);
-  component.togglePostComments(7);
+  component.controllers.feed.actions.togglePostComments(7);
+  component.controllers.feed.actions.togglePostComments(7);
   await Promise.resolve();
   assert.equal(commentCalls, 1);
 });
@@ -565,15 +577,15 @@ test('comment pagination uses cursor and deduplicates page boundaries', async ()
     };
   };
 
-  await component.loadComments(7, true);
-  await component.loadComments(7, false);
+  await component.controllers.feed.actions.loadComments(7, true);
+  await component.controllers.feed.actions.loadComments(7, false);
 
   assert.deepEqual(calls, [
     { postID: 7, cursor: null, limit: 20 },
     { postID: 7, cursor: 'next-comment-page', limit: 20 }
   ]);
-  assert.deepEqual(component.commentState(7).comments.map(comment => comment.apiId), [1, 2, 3]);
-  assert.equal(component.commentState(7).nextCursor, null);
+  assert.deepEqual(component.controllers.feed.actions.commentState(7).comments.map(comment => comment.apiId), [1, 2, 3]);
+  assert.equal(component.controllers.feed.actions.commentState(7).nextCursor, null);
 });
 
 test('comment create prevents duplicates, preserves unloaded state and increments count', async () => {
@@ -587,13 +599,13 @@ test('comment create prevents duplicates, preserves unloaded state and increment
     '7': Object.assign(emptyTestCommentState(), { draft: '  new comment  ' })
   };
 
-  const first = component.createComment(7);
-  const duplicate = component.createComment(7);
+  const first = component.controllers.feed.actions.createComment(7);
+  const duplicate = component.controllers.feed.actions.createComment(7);
   assert.equal(calls, 1);
   response.resolve(rawComment(9, 7, 1));
   await Promise.all([first, duplicate]);
 
-  const state = component.commentState(7);
+  const state = component.controllers.feed.actions.commentState(7);
   assert.equal(state.loaded, false);
   assert.equal(state.draft, '');
   assert.deepEqual(state.comments.map(comment => comment.apiId), [9]);
@@ -611,18 +623,18 @@ test('pending comment create survives a reset comments request', async () => {
     '7': Object.assign(emptyTestCommentState(), { draft: 'survives retry' })
   };
 
-  const create = component.createComment(7);
-  const retry = component.loadComments(7, true);
+  const create = component.controllers.feed.actions.createComment(7);
+  const retry = component.controllers.feed.actions.loadComments(7, true);
   loadResponse.resolve({ comments: [], next_cursor: null });
   await retry;
-  assert.equal(component.commentState(7).createPending, true);
+  assert.equal(component.controllers.feed.actions.commentState(7).createPending, true);
 
   createResponse.resolve(rawComment(9, 7, 1));
   await create;
 
-  assert.equal(component.commentState(7).createPending, false);
-  assert.equal(component.commentState(7).draft, '');
-  assert.deepEqual(component.commentState(7).comments.map(comment => comment.apiId), [9]);
+  assert.equal(component.controllers.feed.actions.commentState(7).createPending, false);
+  assert.equal(component.controllers.feed.actions.commentState(7).draft, '');
+  assert.deepEqual(component.controllers.feed.actions.commentState(7).comments.map(comment => comment.apiId), [9]);
   assert.equal(component.state.posts[0].commentsCount, 5);
 });
 
@@ -640,8 +652,8 @@ test('comment create does not double-count a refreshed server count', async () =
     '7': Object.assign(emptyTestCommentState(), { draft: 'count once' })
   };
 
-  const create = component.createComment(7);
-  await component.loadFeed(true);
+  const create = component.controllers.feed.actions.createComment(7);
+  await component.controllers.feed.actions.loadFeed(true);
   assert.equal(component.state.posts[0].commentsCount, 5);
 
   createResponse.resolve(rawComment(9, 7, 1));
@@ -661,8 +673,8 @@ test('stale feed count cannot roll back a locally completed comment create', asy
     '7': Object.assign(emptyTestCommentState(), { draft: 'monotonic count' })
   };
 
-  const staleFeed = component.loadFeed(true);
-  await component.createComment(7);
+  const staleFeed = component.controllers.feed.actions.loadFeed(true);
+  await component.controllers.feed.actions.createComment(7);
   assert.equal(component.state.posts[0].commentsCount, 5);
 
   feedResponse.resolve({
@@ -683,7 +695,7 @@ test('stale profile response cannot lower a local comments count', async () => {
     next_cursor: null
   });
 
-  await component.loadProfilePosts(2, true, component.profileGate.current());
+  await component.controllers.profile.actions.loadProfilePosts(2, true, component.profileGate.current());
 
   assert.equal(component.state.profilePosts[0].commentsCount, 5);
 });
@@ -702,14 +714,14 @@ test('current terminal comments denial invalidates a pending create', async () =
     '7': Object.assign(emptyTestCommentState(), { draft: 'must become stale' })
   };
 
-  const create = component.createComment(7);
-  await component.loadComments(7, true);
+  const create = component.controllers.feed.actions.createComment(7);
+  await component.controllers.feed.actions.loadComments(7, true);
   createResponse.resolve(rawComment(9, 7, 1));
   await create;
 
-  assert.equal(component.commentState(7).createPending, false);
-  assert.match(component.commentState(7).error, /no longer have access/i);
-  assert.deepEqual(component.commentState(7).comments, []);
+  assert.equal(component.controllers.feed.actions.commentState(7).createPending, false);
+  assert.match(component.controllers.feed.actions.commentState(7).error, /no longer have access/i);
+  assert.deepEqual(component.controllers.feed.actions.commentState(7).comments, []);
   assert.equal(component.state.posts[0].commentsCount, 4);
 });
 
@@ -723,11 +735,11 @@ test('comment created before the first page response is retained and deduplicate
     '7': Object.assign(emptyTestCommentState(), { draft: 'while loading' })
   };
 
-  const load = component.loadComments(7, true);
-  const create = component.createComment(7);
+  const load = component.controllers.feed.actions.loadComments(7, true);
+  const create = component.controllers.feed.actions.createComment(7);
   createResponse.resolve(rawComment(9, 7, 1, '2026-07-21T12:00:02Z'));
   await create;
-  assert.equal(component.commentState(7).loaded, false);
+  assert.equal(component.controllers.feed.actions.commentState(7).loaded, false);
 
   pageResponse.resolve({
     comments: [rawComment(1, 7, 2), rawComment(9, 7, 1, '2026-07-21T12:00:02Z')],
@@ -735,8 +747,8 @@ test('comment created before the first page response is retained and deduplicate
   });
   await load;
 
-  assert.equal(component.commentState(7).loaded, true);
-  assert.deepEqual(component.commentState(7).comments.map(comment => comment.apiId), [1, 9]);
+  assert.equal(component.controllers.feed.actions.commentState(7).loaded, true);
+  assert.deepEqual(component.controllers.feed.actions.commentState(7).comments.map(comment => comment.apiId), [1, 9]);
 });
 
 test('comment create error keeps the draft', async () => {
@@ -746,10 +758,10 @@ test('comment create error keeps the draft', async () => {
     '7': Object.assign(emptyTestCommentState(), { draft: 'keep me' })
   };
 
-  await component.createComment(7);
-  assert.equal(component.commentState(7).draft, 'keep me');
-  assert.equal(component.commentState(7).createPending, false);
-  assert.match(component.commentState(7).createError, /offline/);
+  await component.controllers.feed.actions.createComment(7);
+  assert.equal(component.controllers.feed.actions.commentState(7).draft, 'keep me');
+  assert.equal(component.controllers.feed.actions.commentState(7).createPending, false);
+  assert.match(component.controllers.feed.actions.commentState(7).createError, /offline/);
 });
 
 test('comment media replace and remove revoke object URLs immediately', () => {
@@ -766,17 +778,17 @@ test('comment media replace and remove revoke object URLs immediately', () => {
     const second = new Blob(['second'], { type: 'image/webp' });
     Object.defineProperty(second, 'name', { value: 'second.webp' });
 
-    component.selectCommentMedia(7, { target: { files: [first] } });
-    assert.equal(component.commentState(7).mediaPreviewURL, 'blob:comment-1');
-    component.selectCommentMedia(7, { target: { files: [second] } });
+    component.controllers.feed.actions.selectCommentMedia(7, { target: { files: [first] } });
+    assert.equal(component.controllers.feed.actions.commentState(7).mediaPreviewURL, 'blob:comment-1');
+    component.controllers.feed.actions.selectCommentMedia(7, { target: { files: [second] } });
     assert.deepEqual(revoked, ['blob:comment-1']);
-    assert.equal(component.commentState(7).mediaFile, second);
-    assert.equal(component.commentState(7).mediaFileName, 'second.webp');
+    assert.equal(component.controllers.feed.actions.commentState(7).mediaFile, second);
+    assert.equal(component.controllers.feed.actions.commentState(7).mediaFileName, 'second.webp');
 
-    component.removeCommentMedia(7);
+    component.controllers.feed.actions.removeCommentMedia(7);
     assert.deepEqual(revoked, ['blob:comment-1', 'blob:comment-2']);
-    assert.equal(component.commentState(7).mediaFile, null);
-    assert.equal(component.commentState(7).mediaPreviewURL, '');
+    assert.equal(component.controllers.feed.actions.commentState(7).mediaFile, null);
+    assert.equal(component.controllers.feed.actions.commentState(7).mediaPreviewURL, '');
   } finally {
     URL.createObjectURL = originalCreateObjectURL;
     URL.revokeObjectURL = originalRevokeObjectURL;
@@ -807,13 +819,13 @@ test('pending comment media is immutable and successful multipart create clears 
   };
 
   try {
-    const create = component.createComment(7);
-    assert.equal(component.commentState(7).createPending, true);
+    const create = component.controllers.feed.actions.createComment(7);
+    assert.equal(component.controllers.feed.actions.commentState(7).createPending, true);
     const replacement = new Blob(['webp'], { type: 'image/webp' });
     Object.defineProperty(replacement, 'name', { value: 'replacement.webp' });
-    component.selectCommentMedia(7, { target: { files: [replacement] } });
-    component.removeCommentMedia(7);
-    assert.equal(component.commentState(7).mediaFile, file);
+    component.controllers.feed.actions.selectCommentMedia(7, { target: { files: [replacement] } });
+    component.controllers.feed.actions.removeCommentMedia(7);
+    assert.equal(component.controllers.feed.actions.commentState(7).mediaFile, file);
     assert.equal(sentFormData.get('text'), 'attached comment');
     assert.equal(sentFormData.get('media').type, 'image/png');
 
@@ -823,10 +835,10 @@ test('pending comment media is immutable and successful multipart create clears 
     await create;
 
     assert.deepEqual(revoked, ['blob:submitted']);
-    assert.equal(component.commentState(7).draft, '');
-    assert.equal(component.commentState(7).mediaFile, null);
-    assert.equal(component.commentState(7).mediaPreviewURL, '');
-    assert.equal(component.commentState(7).comments[0].mediaUrl, '/api/comments/9/media');
+    assert.equal(component.controllers.feed.actions.commentState(7).draft, '');
+    assert.equal(component.controllers.feed.actions.commentState(7).mediaFile, null);
+    assert.equal(component.controllers.feed.actions.commentState(7).mediaPreviewURL, '');
+    assert.equal(component.controllers.feed.actions.commentState(7).comments[0].mediaUrl, '/api/comments/9/media');
   } finally {
     URL.revokeObjectURL = originalRevokeObjectURL;
   }
@@ -850,10 +862,10 @@ test('comment media survives retryable errors but is revoked on access loss, pur
   global.AuthAPI.createComment = async () => { throw new Error('offline'); };
   global.AuthAPI.postComments = async () => ({ comments: [], next_cursor: null });
   try {
-    await component.createComment(7);
-    await component.loadComments(7, true);
-    assert.equal(component.commentState(7).mediaFile, file);
-    assert.equal(component.commentState(7).mediaPreviewURL, 'blob:retry');
+    await component.controllers.feed.actions.createComment(7);
+    await component.controllers.feed.actions.loadComments(7, true);
+    assert.equal(component.controllers.feed.actions.commentState(7).mediaFile, file);
+    assert.equal(component.controllers.feed.actions.commentState(7).mediaPreviewURL, 'blob:retry');
     assert.deepEqual(revoked, []);
 
     global.AuthAPI.createComment = async () => {
@@ -861,18 +873,18 @@ test('comment media survives retryable errors but is revoked on access loss, pur
       error.status = 403;
       throw error;
     };
-    await component.createComment(7);
-    assert.equal(component.commentState(7).mediaFile, null);
+    await component.controllers.feed.actions.createComment(7);
+    assert.equal(component.controllers.feed.actions.commentState(7).mediaFile, null);
     assert.deepEqual(revoked, ['blob:retry']);
 
     component.state.commentsByPostID = {
       '8': Object.assign(emptyTestCommentState(), { mediaPreviewURL: 'blob:purge' }),
       '9': Object.assign(emptyTestCommentState(), { mediaPreviewURL: 'blob:logout' })
     };
-    component.purgeCommentStates([8]);
+    component.controllers.feed.actions.purgeCommentStates([8]);
     assert.ok(revoked.includes('blob:purge'));
     global.AuthAPI.logout = async () => null;
-    await component.logout();
+    await component.controllers.auth.actions.logout();
     assert.ok(revoked.includes('blob:logout'));
 
     const unmount = createComponent();
@@ -893,14 +905,14 @@ test('comment reset ignores an older response', async () => {
   let calls = 0;
   global.AuthAPI.postComments = () => (++calls === 1 ? oldRequest.promise : newRequest.promise);
 
-  const oldLoad = component.loadComments(7, true);
-  const newLoad = component.loadComments(7, true);
+  const oldLoad = component.controllers.feed.actions.loadComments(7, true);
+  const newLoad = component.controllers.feed.actions.loadComments(7, true);
   newRequest.resolve({ comments: [rawComment(2, 7, 2)], next_cursor: null });
   await newLoad;
   oldRequest.resolve({ comments: [rawComment(1, 7, 2)], next_cursor: null });
   await oldLoad;
 
-  assert.deepEqual(component.commentState(7).comments.map(comment => comment.apiId), [2]);
+  assert.deepEqual(component.controllers.feed.actions.commentState(7).comments.map(comment => comment.apiId), [2]);
 });
 
 test('pending comment load cannot update state after logout', async () => {
@@ -909,8 +921,8 @@ test('pending comment load cannot update state after logout', async () => {
   global.AuthAPI.postComments = () => response.promise;
   global.AuthAPI.logout = async () => null;
 
-  const load = component.loadComments(7, true);
-  await component.logout();
+  const load = component.controllers.feed.actions.loadComments(7, true);
+  await component.controllers.auth.actions.logout();
   response.resolve({ comments: [rawComment(1, 7, 2)], next_cursor: null });
   await load;
 
@@ -927,8 +939,8 @@ test('pending comment create cannot update state after logout', async () => {
     '7': Object.assign(emptyTestCommentState(), { draft: 'stale create' })
   };
 
-  const create = component.createComment(7);
-  await component.logout();
+  const create = component.controllers.feed.actions.createComment(7);
+  await component.controllers.auth.actions.logout();
   response.resolve(rawComment(1, 7, 1));
   await create;
 
@@ -937,13 +949,59 @@ test('pending comment create cannot update state after logout', async () => {
   assert.deepEqual(component.state.posts, []);
 });
 
-test('personal and group posts use the same backend comment mutation', () => {
+test('logout resets every feature state slice through auth orchestration', async () => {
+  const component = createComponent();
+  component.state.posts = [component.mapAPIPost(rawPost(1, 1))];
+  component.state.profileId = 2;
+  component.state.profileReady = true;
+  component.state.profilePosts = [component.mapAPIPost(rawPost(2, 2))];
+  component.state.groupId = 7;
+  component.state.groupIDs = [7];
+  component.state.apiGroupsByID = {
+    '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 1))
+  };
+  component.state.groupPosts = [component.mapAPIPost(rawGroupPost(3, 7, 1))];
+  component.state.groupEvents = [rawGroupEvent(4, 7, 1)];
+  component.state.notifications = [rawNotification(5, 'follow_started')];
+  component.state.notificationUnreadCount = 1;
+  component.state.chatKeys = ['direct:2'];
+  component.state.chatsByKey = { 'direct:2': { kind: 'direct', targetID: 2 } };
+  component.state.commentsByPostID = {
+    '1': Object.assign(emptyCommentStateForTest(), { draft: 'draft' })
+  };
+  global.AuthAPI.logout = async () => null;
+
+  await component.controllers.auth.actions.logout();
+
+  assert.equal(component.state.authStatus, 'anonymous');
+  assert.deepEqual(component.state.posts, []);
+  assert.equal(component.state.profileId, null);
+  assert.deepEqual(component.state.profilePosts, []);
+  assert.equal(component.state.groupId, null);
+  assert.deepEqual(component.state.groupIDs, []);
+  assert.deepEqual(component.state.groupPosts, []);
+  assert.deepEqual(component.state.groupEvents, []);
+  assert.deepEqual(component.state.notifications, []);
+  assert.equal(component.state.notificationUnreadCount, 0);
+  assert.deepEqual(component.state.chatKeys, []);
+  assert.deepEqual(component.state.chatsByKey, {});
+  assert.deepEqual(component.state.commentsByPostID, {});
+});
+
+test('personal and group posts use the same backend comment mutation', async () => {
   const component = createComponent();
   const calls = [];
-  component.createComment = postID => { calls.push(Number(postID)); };
+  global.AuthAPI.createComment = async postID => {
+    calls.push(Number(postID));
+    return rawComment(postID, postID, 1);
+  };
+  component.state.commentsByPostID = {
+    '7': Object.assign(emptyCommentStateForTest(), { draft: 'personal comment' }),
+    '8': Object.assign(emptyCommentStateForTest(), { draft: 'group comment' })
+  };
 
-  component.mapPost(component.mapAPIPost(rawPost(7, 2))).onSendComment();
-  component.mapPost(component.mapAPIPost(rawGroupPost(8, 3, 2))).onSendComment();
+  await component.controllers.feed.actions.mapPost(component.mapAPIPost(rawPost(7, 2))).onSendComment();
+  await component.controllers.feed.actions.mapPost(component.mapAPIPost(rawGroupPost(8, 3, 2))).onSendComment();
 
   assert.deepEqual(calls, [7, 8]);
 });
@@ -967,11 +1025,11 @@ test('group mutation invalidates an older directory response', async () => {
   const staleDirectory = deferred();
   global.AuthAPI.groups = () => staleDirectory.promise;
   global.AuthAPI.requestGroupJoin = async () => rawGroup(5, 'requested', 1, 2);
-  component.state.apiGroupsByID = { '5': component.mapAPIGroup(rawGroup(5, 'none', 1, 2)) };
+  component.state.apiGroupsByID = { '5': component.controllers.groups.actions.mapAPIGroup(rawGroup(5, 'none', 1, 2)) };
   component.state.groupIDs = [5];
 
-  const staleLoad = component.loadGroups(true);
-  await component.requestGroupJoin(5);
+  const staleLoad = component.controllers.groups.actions.loadGroups(true);
+  await component.controllers.groups.actions.requestGroupJoin(5);
   staleDirectory.resolve({ groups: [rawGroup(5, 'none', 1, 2)], next_cursor: null });
   await staleLoad;
 
@@ -988,8 +1046,8 @@ test('opening group B rejects the late detail and members responses for group A'
     ? membersA.promise
     : Promise.resolve({ members: [{ user: rawUser(3), status: 'owner', created_at: '2026-07-21T12:00:00Z' }], next_cursor: null });
 
-  component.openGroup(10);
-  component.openGroup(20);
+  component.controllers.groups.actions.openGroup(10);
+  component.controllers.groups.actions.openGroup(20);
   await Promise.resolve();
   await Promise.resolve();
   detailA.resolve(rawGroup(10, 'owner', 4, 1));
@@ -1007,7 +1065,7 @@ test('accepted request cannot be resurrected by an older owner list response', a
   const staleRequests = deferred();
   let requestCalls = 0;
   component.state.groupId = 5;
-  component.state.apiGroupsByID = { '5': component.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
+  component.state.apiGroupsByID = { '5': component.controllers.groups.actions.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
   global.AuthAPI.groupJoinRequests = () => (++requestCalls === 1
     ? staleRequests.promise
     : Promise.resolve({ requests: [], next_cursor: null }));
@@ -1015,8 +1073,8 @@ test('accepted request cannot be resurrected by an older owner list response', a
   global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
   global.AuthAPI.groupInvitations = async () => ({ invitations: [], next_cursor: null });
 
-  const staleLoad = component.loadGroupRequests(5, true);
-  await component.acceptGroupRequest(5, 2);
+  const staleLoad = component.controllers.groups.actions.loadGroupRequests(5, true);
+  await component.controllers.groups.actions.acceptGroupRequest(5, 2);
   staleRequests.resolve({ requests: [{ user: rawUser(2), created_at: '2026-07-21T12:00:00Z' }], next_cursor: null });
   await staleLoad;
 
@@ -1028,7 +1086,7 @@ test('owner request and invitation lists expose and load their second pages', as
   const component = createComponent();
   component.state.groupId = 5;
   component.state.screen = 'group';
-  component.state.apiGroupsByID = { '5': component.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
+  component.state.apiGroupsByID = { '5': component.controllers.groups.actions.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
   component.state.groupIDs = [5];
   component.state.directoryUserIDs = [2, 3, 4, 5, 6];
   component.state.apiUsersByID = component.mergeAPIUsers([rawUser(6)]);
@@ -1049,7 +1107,7 @@ test('owner request and invitation lists expose and load their second pages', as
       : { invitations: [{ user: rawUser(4), created_at: '2026-07-21T12:02:00Z' }], next_cursor: 'invitations-page-2' };
   };
 
-  await Promise.all([component.loadGroupRequests(5, true), component.loadGroupInvitations(5, true)]);
+  await Promise.all([component.controllers.groups.actions.loadGroupRequests(5, true), component.controllers.groups.actions.loadGroupInvitations(5, true)]);
   let view = component.renderVals();
   assert.equal(view.groupRequestsHasMore, true);
   assert.equal(view.groupInvitationsHasMore, true);
@@ -1078,18 +1136,24 @@ test('owner request and invitation lists expose and load their second pages', as
 test('accepted invitation invalidates the old inbox response', async () => {
   const component = createComponent();
   const staleInbox = deferred();
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'invited', 1, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'invited', 1, 2)) };
   component.state.groupIDs = [7];
-  global.AuthAPI.groupInvitationInbox = () => staleInbox.promise;
+  let inboxCalls = 0;
+  global.AuthAPI.groupInvitationInbox = () => {
+    inboxCalls += 1;
+    return inboxCalls === 1
+      ? staleInbox.promise
+      : Promise.resolve({ invitations: [], next_cursor: null });
+  };
   global.AuthAPI.acceptGroupInvitation = async () => rawGroup(7, 'member', 2, 2);
+  global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null, total_unread: 0, unread_revision: 0 });
+  global.AuthAPI.groupPosts = async () => ({ posts: [], next_cursor: null });
+  global.AuthAPI.groupEvents = async () => ({ events: [], next_cursor: null });
 
-  const staleLoad = component.loadGroupInvitationInbox(true);
-  const originalReload = component.loadGroupInvitationInbox;
-  component.loadGroupInvitationInbox = async () => {};
-  await component.acceptGroupInvitation(7);
+  const staleLoad = component.controllers.groups.actions.loadGroupInvitationInbox(true);
+  await component.controllers.groups.actions.acceptGroupInvitation(7);
   staleInbox.resolve({ invitations: [{ group: rawGroup(7, 'invited', 1, 2), created_at: '2026-07-21T12:00:00Z' }], next_cursor: null });
   await staleLoad;
-  component.loadGroupInvitationInbox = originalReload;
 
   assert.equal(component.state.apiGroupsByID['7'].state, 'member');
   assert.deepEqual(component.state.groupInvitationInbox, []);
@@ -1099,15 +1163,15 @@ test('group mutation is serialized and cannot update state after logout', async 
   const component = createComponent();
   const response = deferred();
   let calls = 0;
-  component.state.apiGroupsByID = { '9': component.mapAPIGroup(rawGroup(9, 'none', 1, 2)) };
+  component.state.apiGroupsByID = { '9': component.controllers.groups.actions.mapAPIGroup(rawGroup(9, 'none', 1, 2)) };
   component.state.groupIDs = [9];
   global.AuthAPI.requestGroupJoin = () => { calls += 1; return response.promise; };
   global.AuthAPI.logout = async () => null;
 
-  const first = component.requestGroupJoin(9);
-  const duplicate = component.requestGroupJoin(9);
+  const first = component.controllers.groups.actions.requestGroupJoin(9);
+  const duplicate = component.controllers.groups.actions.requestGroupJoin(9);
   assert.equal(calls, 1);
-  await component.logout();
+  await component.controllers.auth.actions.logout();
   response.resolve(rawGroup(9, 'requested', 1, 2));
   await Promise.all([first, duplicate]);
 
@@ -1121,15 +1185,15 @@ test('failed group create and invitation preserve their form selections', async 
   component.state.ngName = 'Keep title';
   component.state.ngDesc = 'Keep description';
   global.AuthAPI.createGroup = async () => { throw new Error('create failed'); };
-  await component.createGroup();
+  await component.controllers.groups.actions.createGroup();
   assert.equal(component.state.ngName, 'Keep title');
   assert.equal(component.state.ngDesc, 'Keep description');
 
   component.state.groupId = 5;
   component.state.groupInviteUserID = '2';
-  component.state.apiGroupsByID = { '5': component.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
+  component.state.apiGroupsByID = { '5': component.controllers.groups.actions.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
   global.AuthAPI.inviteToGroup = async () => { throw new Error('invite failed'); };
-  await component.inviteSelectedUser();
+  await component.controllers.groups.actions.inviteSelectedUser();
   assert.equal(component.state.groupInviteUserID, '2');
   assert.match(component.state.groupMutationErrorByID['5'], /invite failed/);
 });
@@ -1139,21 +1203,21 @@ test('stale invitation from an old session cannot clear the new session selectio
   const oldInvitation = deferred();
   component.state.groupId = 5;
   component.state.groupInviteUserID = '2';
-  component.state.apiGroupsByID = { '5': component.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
+  component.state.apiGroupsByID = { '5': component.controllers.groups.actions.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
   global.AuthAPI.inviteToGroup = () => oldInvitation.promise;
   global.AuthAPI.logout = async () => null;
 
-  const oldMutation = component.inviteSelectedUser();
-  await component.logout();
+  const oldMutation = component.controllers.groups.actions.inviteSelectedUser();
+  await component.controllers.auth.actions.logout();
   installEmptyAuthenticatedLoads();
   global.AuthAPI.login = async () => rawUser(7);
   component.state.authMode = 'login';
   component.state.authEmail = 'new-session@example.test';
   component.state.authPassword = 'password';
-  await component.submitAuth();
+  await component.controllers.auth.actions.submitAuth();
   component.state.groupId = 8;
   component.state.groupInviteUserID = '9';
-  component.state.apiGroupsByID = { '8': component.mapAPIGroup(rawGroup(8, 'owner', 1, 7)) };
+  component.state.apiGroupsByID = { '8': component.controllers.groups.actions.mapAPIGroup(rawGroup(8, 'owner', 1, 7)) };
 
   oldInvitation.resolve(rawGroup(5, 'owner', 1, 1));
   assert.equal(await oldMutation, false);
@@ -1166,15 +1230,15 @@ test('duplicate pending invitation does not clear a newer selection', async () =
   let calls = 0;
   component.state.groupId = 5;
   component.state.groupInviteUserID = '2';
-  component.state.apiGroupsByID = { '5': component.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
+  component.state.apiGroupsByID = { '5': component.controllers.groups.actions.mapAPIGroup(rawGroup(5, 'owner', 1, 1)) };
   global.AuthAPI.inviteToGroup = () => { calls += 1; return invitation.promise; };
   global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
   global.AuthAPI.groupJoinRequests = async () => ({ requests: [], next_cursor: null });
   global.AuthAPI.groupInvitations = async () => ({ invitations: [], next_cursor: null });
 
-  const first = component.inviteSelectedUser();
+  const first = component.controllers.groups.actions.inviteSelectedUser();
   component.state.groupInviteUserID = '3';
-  const duplicate = component.inviteSelectedUser();
+  const duplicate = component.controllers.groups.actions.inviteSelectedUser();
   assert.equal(await duplicate, false);
   assert.equal(calls, 1);
   assert.equal(component.state.groupInviteUserID, '3');
@@ -1196,12 +1260,27 @@ test('accept invalidates feed, directory, selected followers and current profile
   let directoryCalls = 0;
   let followerCalls = 0;
   const openedProfiles = [];
-  component.loadFeed = reset => { assert.equal(reset, true); feedCalls += 1; };
-  component.loadDirectory = () => { directoryCalls += 1; };
-  component.loadPostFollowers = () => { followerCalls += 1; };
-  component.openProfile = id => { openedProfiles.push(id); };
+  global.AuthAPI.feed = async () => {
+    feedCalls += 1;
+    return { posts: [], next_cursor: null };
+  };
+  global.AuthAPI.users = async () => {
+    directoryCalls += 1;
+    return { users: [], next_cursor: null };
+  };
+  global.AuthAPI.followers = async userID => {
+    if (Number(userID) === 1) followerCalls += 1;
+    return { users: [], next_cursor: null };
+  };
+  global.AuthAPI.userProfile = async id => {
+    openedProfiles.push(Number(id));
+    return rawUser(id, 'accepted', { followsMe: true });
+  };
+  global.AuthAPI.relationship = async () => ({ status: 'accepted', follows_me: true });
+  global.AuthAPI.userPosts = async () => ({ posts: [], next_cursor: null });
+  global.AuthAPI.following = async () => ({ users: [], next_cursor: null });
 
-  await component.acceptFollowRequest(41);
+  await component.controllers.profile.actions.acceptFollowRequest(41);
 
   assert.equal(feedCalls, 1);
   assert.equal(directoryCalls, 1);
@@ -1217,15 +1296,15 @@ test('pending follow requests cannot leak from the logged-out user into a new lo
   global.AuthAPI.followRequests = () => oldRequests.promise;
   global.AuthAPI.logout = async () => null;
 
-  const staleLoad = component.loadFollowRequests();
-  await component.logout();
+  const staleLoad = component.controllers.profile.actions.loadFollowRequests();
+  await component.controllers.auth.actions.logout();
 
   installEmptyAuthenticatedLoads();
   global.AuthAPI.login = async () => rawUser(9);
   component.state.authMode = 'login';
   component.state.authEmail = 'user9@example.com';
   component.state.authPassword = 'secret';
-  await component.submitAuth();
+  await component.controllers.auth.actions.submitAuth();
 
   oldRequests.resolve({
     requests: [{ id: 55, user: rawUser(2, 'none', { followsMe: true }) }]
@@ -1246,11 +1325,11 @@ test('pending follow mutation cannot update state or refresh data after logout',
   global.AuthAPI.follow = () => mutationResponse.promise;
   global.AuthAPI.logout = async () => null;
   let refreshes = 0;
-  component.loadDirectory = () => { refreshes += 1; };
-  component.loadFeed = () => { refreshes += 1; };
+  component.controllers.profile.actions.loadDirectory = () => { refreshes += 1; };
+  component.controllers.feed.actions.loadFeed = () => { refreshes += 1; };
 
-  const mutation = component.toggleFollow(2);
-  await component.logout();
+  const mutation = component.controllers.profile.actions.toggleFollow(2);
+  await component.controllers.auth.actions.logout();
   mutationResponse.resolve({ status: 'accepted' });
   await mutation;
 
@@ -1268,13 +1347,13 @@ test('pending accept mutation cannot update state or refresh data after logout',
   global.AuthAPI.acceptFollowRequest = () => mutationResponse.promise;
   global.AuthAPI.logout = async () => null;
   let refreshes = 0;
-  component.loadPostFollowers = () => { refreshes += 1; };
-  component.loadDirectory = () => { refreshes += 1; };
-  component.loadFeed = () => { refreshes += 1; };
-  component.openProfile = () => { refreshes += 1; };
+  component.controllers.feed.actions.loadPostFollowers = () => { refreshes += 1; };
+  component.controllers.profile.actions.loadDirectory = () => { refreshes += 1; };
+  component.controllers.feed.actions.loadFeed = () => { refreshes += 1; };
+  component.controllers.profile.actions.openProfile = () => { refreshes += 1; };
 
-  const mutation = component.acceptFollowRequest(41);
-  await component.logout();
+  const mutation = component.controllers.profile.actions.acceptFollowRequest(41);
+  await component.controllers.auth.actions.logout();
   mutationResponse.resolve({ status: 'accepted' });
   await mutation;
 
@@ -1292,10 +1371,10 @@ test('pending reject mutation cannot update state or refresh data after logout',
   global.AuthAPI.rejectFollowRequest = () => mutationResponse.promise;
   global.AuthAPI.logout = async () => null;
   let refreshes = 0;
-  component.loadDirectory = () => { refreshes += 1; };
+  component.controllers.profile.actions.loadDirectory = () => { refreshes += 1; };
 
-  const mutation = component.rejectFollowRequest(41);
-  await component.logout();
+  const mutation = component.controllers.profile.actions.rejectFollowRequest(41);
+  await component.controllers.auth.actions.logout();
   mutationResponse.resolve(null);
   await mutation;
 
@@ -1327,13 +1406,13 @@ test('chat list maps direct and group summaries and opens real HTTP history', as
   };
   global.AuthAPI.groupMessages = async () => ({ messages: [], next_cursor: null });
 
-  await component.loadChats(true);
+  await component.controllers.chat.actions.loadChats(true);
   await Promise.resolve();
 
   assert.deepEqual(component.state.chatKeys, ['direct:2', 'group:7'], component.state.chatsError);
   assert.equal(component.state.activeChatKey, 'direct:2');
   assert.deepEqual(histories, [{ kind: 'direct', userID: 2, cursor: null, limit: 20 }]);
-  assert.deepEqual(component.chatMessages('direct:2').messages.map(message => message.apiId), [11]);
+  assert.deepEqual(component.controllers.chat.actions.chatMessages('direct:2').messages.map(message => message.apiId), [11]);
 });
 
 test('stale chat list cannot restore a group chat after access revocation', async () => {
@@ -1344,12 +1423,12 @@ test('stale chat list cannot restore a group chat after access revocation', asyn
     last_message: null, activity_at: '2026-07-22T11:30:00Z'
   };
   const key = ChatModel.chatKey('group', 7);
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 3, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 3, 2)) };
   global.AuthAPI.chats = () => staleChats.promise;
 
-  const pending = component.loadChats(true);
+  const pending = component.controllers.chat.actions.loadChats(true);
   const staleGeneration = component.chatsGate.current();
-  component.handleRealtimeEvent(JSON.stringify({
+  component.controllers.realtime.actions.handleRealtimeEvent(JSON.stringify({
     type: 'chat:remove', chat: { kind: 'group', target_id: 7 }
   }));
   staleChats.resolve({ chats: [groupChat], next_cursor: null });
@@ -1360,14 +1439,14 @@ test('stale chat list cannot restore a group chat after access revocation', asyn
   assert.equal(component.revokedChatKeys.has(key), true);
 
   global.AuthAPI.chats = async () => ({ chats: [groupChat], next_cursor: null });
-  await component.loadChats(true);
+  await component.controllers.chat.actions.loadChats(true);
   assert.equal(component.state.chatsByKey[key], undefined);
   assert.equal(component.revokedChatKeys.has(key), true);
 
   component.state.chatsByKey[key] = ChatModel.normalizeChatSummary(groupChat);
   component.state.chatKeys = [key];
   component.state.activeChatKey = null;
-  component.openChat(key);
+  component.controllers.chat.actions.openChat(key);
   assert.equal(component.state.screen, 'feed');
   assert.equal(component.state.activeChatKey, null);
 });
@@ -1376,14 +1455,14 @@ test('group posts expose a real composer only to active owner or member access',
   const component = createComponent();
   component.state.screen = 'group';
   component.state.groupId = 7;
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
 
   let view = component.renderVals();
   assert.equal(view.gCanContent, true);
   assert.equal(view.gContentLocked, false);
   assert.equal(typeof view.sendGroupPost, 'function');
 
-  component.state.apiGroupsByID['7'] = component.mapAPIGroup(rawGroup(7, 'requested', 1, 2));
+  component.state.apiGroupsByID['7'] = component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'requested', 1, 2));
   view = component.renderVals();
   assert.equal(view.gCanContent, false);
   assert.equal(view.gContentLocked, true);
@@ -1396,14 +1475,14 @@ test('group switch and reset gates reject stale group post pages', async () => {
   component.state.screen = 'group';
   component.state.groupId = 7;
   component.state.apiGroupsByID = {
-    '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
-    '8': component.mapAPIGroup(rawGroup(8, 'member', 2, 2))
+    '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
+    '8': component.controllers.groups.actions.mapAPIGroup(rawGroup(8, 'member', 2, 2))
   };
   global.AuthAPI.groupPosts = groupID => groupID === 7 ? groupA.promise : groupB.promise;
 
-  const first = component.loadGroupPosts(7, true);
+  const first = component.controllers.groups.actions.loadGroupPosts(7, true);
   component.state.groupId = 8;
-  const second = component.loadGroupPosts(8, true);
+  const second = component.controllers.groups.actions.loadGroupPosts(8, true);
   groupB.resolve({ posts: [rawGroupPost(80, 8, 2)], next_cursor: null });
   await second;
   groupA.resolve({ posts: [rawGroupPost(70, 7, 2)], next_cursor: null });
@@ -1419,12 +1498,12 @@ test('authoritative group post survives an older pending page', async () => {
   component.state.screen = 'group';
   component.state.groupId = 7;
   component.state.groupPostComposerText = 'new group post';
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'owner', 1, 1)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'owner', 1, 1)) };
   global.AuthAPI.groupPosts = () => stalePage.promise;
   global.AuthAPI.createGroupPost = async () => rawGroupPost(72, 7, 1);
 
-  const staleLoad = component.loadGroupPosts(7, true);
-  await component.sendGroupPost();
+  const staleLoad = component.controllers.groups.actions.loadGroupPosts(7, true);
+  await component.controllers.groups.actions.sendGroupPost();
   stalePage.resolve({ posts: [rawGroupPost(71, 7, 1)], next_cursor: null });
   await staleLoad;
 
@@ -1438,7 +1517,7 @@ test('chat remove purges group posts, comments, drafts and pending content respo
   const stalePage = deferred();
   component.state.screen = 'group';
   component.state.groupId = 7;
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
   component.state.groupPosts = [component.mapAPIPost(rawGroupPost(71, 7, 2))];
   component.state.groupPostComposerText = 'discarded draft';
   component.state.groupPostComposerFile = { name: 'discarded.png' };
@@ -1450,8 +1529,8 @@ test('chat remove purges group posts, comments, drafts and pending content respo
   component.state.openComments = { '71': true };
   global.AuthAPI.groupPosts = () => stalePage.promise;
 
-  const pending = component.loadGroupPosts(7, true);
-  component.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
+  const pending = component.controllers.groups.actions.loadGroupPosts(7, true);
+  component.controllers.realtime.actions.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
   stalePage.resolve({ posts: [rawGroupPost(72, 7, 2)], next_cursor: null });
   await pending;
 
@@ -1460,7 +1539,7 @@ test('chat remove purges group posts, comments, drafts and pending content respo
   assert.equal(component.state.openComments['71'], undefined);
   assert.equal(component.state.groupPostComposerText, '');
   assert.equal(component.state.groupPostComposerFile, null);
-  assert.equal(component.groupAccessIsRevoked(7), true);
+  assert.equal(component.controllers.groups.actions.groupAccessIsRevoked(7), true);
   const view = component.renderVals();
   assert.equal(view.gCanChat, false);
   assert.equal(view.gCanContent, false);
@@ -1468,7 +1547,7 @@ test('chat remove purges group posts, comments, drafts and pending content respo
   assert.equal(view.inviteOpen, false);
 
   const chatKey = ChatModel.chatKey('group', 7);
-  component.openGroupChat(7);
+  component.controllers.chat.actions.openGroupChat(7);
   assert.equal(component.state.chatsByKey[chatKey], undefined);
   assert.equal(component.revokedChatKeys.has(chatKey), true);
 });
@@ -1478,18 +1557,18 @@ test('chat remove for another group does not clear the active group content', ()
   component.state.screen = 'group';
   component.state.groupId = 8;
   component.state.apiGroupsByID = {
-    '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
-    '8': component.mapAPIGroup(rawGroup(8, 'member', 2, 2))
+    '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
+    '8': component.controllers.groups.actions.mapAPIGroup(rawGroup(8, 'member', 2, 2))
   };
   component.state.groupPosts = [component.mapAPIPost(rawGroupPost(81, 8, 2))];
   component.state.groupPostComposerText = 'keep active draft';
 
-  component.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
+  component.controllers.realtime.actions.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
 
   assert.deepEqual(component.state.groupPosts.map(post => post.id), ['81']);
   assert.equal(component.state.groupPostComposerText, 'keep active draft');
-  assert.equal(component.groupAccessIsRevoked(7), true);
-  assert.equal(component.groupAccessIsRevoked(8), false);
+  assert.equal(component.controllers.groups.actions.groupAccessIsRevoked(7), true);
+  assert.equal(component.controllers.groups.actions.groupAccessIsRevoked(8), false);
 });
 
 test('chat remove invalidates pending group detail and members without reviving access', async () => {
@@ -1498,20 +1577,20 @@ test('chat remove invalidates pending group detail and members without reviving 
   const members = deferred();
   component.state.screen = 'group';
   component.state.groupId = 7;
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
   component.state.groupMembers = [{ userID: 1, status: 'member', createdAt: '2026-07-22T10:00:00Z' }];
   global.AuthAPI.group = () => detail.promise;
   global.AuthAPI.groupMembers = () => members.promise;
 
-  const pendingDetail = component.loadGroupDetail(7);
-  const pendingMembers = component.loadGroupMembers(7, true);
-  component.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
+  const pendingDetail = component.controllers.groups.actions.loadGroupDetail(7);
+  const pendingMembers = component.controllers.groups.actions.loadGroupMembers(7, true);
+  component.controllers.realtime.actions.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
   detail.resolve(rawGroup(7, 'member', 2, 2));
   members.resolve({ members: [{ user: rawUser(2), status: 'member', created_at: '2026-07-22T10:01:00Z' }], next_cursor: null });
   await Promise.all([pendingDetail, pendingMembers]);
 
   const view = component.renderVals();
-  assert.equal(component.groupAccessIsRevoked(7), true);
+  assert.equal(component.controllers.groups.actions.groupAccessIsRevoked(7), true);
   assert.equal(view.gCanChat, false);
   assert.equal(view.gIsMember, false);
   assert.deepEqual(component.state.groupMembers, []);
@@ -1521,7 +1600,7 @@ test('local leave purges group content and authoritative rejoin loads fresh hist
   const component = createComponent();
   component.state.screen = 'group';
   component.state.groupId = 7;
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
   component.state.groupPosts = [component.mapAPIPost(rawGroupPost(71, 7, 1))];
   component.state.commentsByPostID = {
     '71': Object.assign({}, emptyCommentStateForTest(), { draft: 'leave draft', loaded: true })
@@ -1530,20 +1609,20 @@ test('local leave purges group content and authoritative rejoin loads fresh hist
   global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
   global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null });
 
-  await component.leaveGroup(7);
-  assert.equal(component.groupAccessIsRevoked(7), true);
+  await component.controllers.groups.actions.leaveGroup(7);
+  assert.equal(component.controllers.groups.actions.groupAccessIsRevoked(7), true);
   assert.deepEqual(component.state.groupPosts, []);
   assert.equal(component.state.commentsByPostID['71'], undefined);
 
-  component.state.apiGroupsByID['7'] = component.mapAPIGroup(rawGroup(7, 'invited', 1, 2));
+  component.state.apiGroupsByID['7'] = component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'invited', 1, 2));
   global.AuthAPI.acceptGroupInvitation = async () => rawGroup(7, 'member', 2, 2);
   global.AuthAPI.groupInvitationInbox = async () => ({ invitations: [], next_cursor: null });
   global.AuthAPI.groupPosts = async () => ({ posts: [rawGroupPost(72, 7, 1)], next_cursor: null });
-  await component.acceptGroupInvitation(7);
+  await component.controllers.groups.actions.acceptGroupInvitation(7);
   await Promise.resolve();
   await Promise.resolve();
 
-  assert.equal(component.groupAccessIsRevoked(7), false);
+  assert.equal(component.controllers.groups.actions.groupAccessIsRevoked(7), false);
   assert.deepEqual(component.state.groupPosts.map(post => post.id), ['72']);
 });
 
@@ -1552,19 +1631,19 @@ test('realtime revoke before leave response does not discard authoritative none 
   const leave = deferred();
   component.state.screen = 'group';
   component.state.groupId = 7;
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
   global.AuthAPI.leaveGroup = () => leave.promise;
   global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
   global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null });
 
-  const pendingLeave = component.leaveGroup(7);
-  component.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
+  const pendingLeave = component.controllers.groups.actions.leaveGroup(7);
+  component.controllers.realtime.actions.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
   leave.resolve(rawGroup(7, 'none', 1, 2));
   await pendingLeave;
 
   assert.equal(component.state.apiGroupsByID['7'].state, 'none');
   assert.equal(component.state.apiGroupsByID['7'].members, 1);
-  assert.equal(component.groupAccessIsRevoked(7), true);
+  assert.equal(component.controllers.groups.actions.groupAccessIsRevoked(7), true);
   const view = component.renderVals();
   assert.equal(view.gIsNone, true);
   assert.equal(view.gCanContent, false);
@@ -1577,16 +1656,16 @@ test('rejected group post create cannot write an error into the next group compo
   component.state.groupId = 7;
   component.state.groupPostComposerText = 'group A draft';
   component.state.apiGroupsByID = {
-    '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
-    '8': component.mapAPIGroup(rawGroup(8, 'member', 2, 2))
+    '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
+    '8': component.controllers.groups.actions.mapAPIGroup(rawGroup(8, 'member', 2, 2))
   };
   global.AuthAPI.createGroupPost = () => create.promise;
   global.AuthAPI.group = async () => rawGroup(8, 'member', 2, 2);
   global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
   global.AuthAPI.groupPosts = async () => ({ posts: [], next_cursor: null });
 
-  const pendingCreate = component.sendGroupPost();
-  component.openGroup(8);
+  const pendingCreate = component.controllers.groups.actions.sendGroupPost();
+  component.controllers.groups.actions.openGroup(8);
   component.setState({
     groupPostComposerText: 'group B draft',
     groupPostComposerPending: false,
@@ -1612,7 +1691,7 @@ test('group comment count is monotonic across group and personal copies', async 
   };
   global.AuthAPI.createComment = () => create.promise;
 
-  const pending = component.createComment(91);
+  const pending = component.controllers.feed.actions.createComment(91);
   component.state.groupPosts = [Object.assign({}, groupPost, { commentsCount: 5 })];
   create.resolve(rawComment(99, 91, 1));
   await pending;
@@ -1628,14 +1707,14 @@ test('logout invalidates pending group post load and create operations', async (
   component.state.screen = 'group';
   component.state.groupId = 7;
   component.state.groupPostComposerText = 'pending create';
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
   global.AuthAPI.groupPosts = () => load.promise;
   global.AuthAPI.createGroupPost = () => create.promise;
   global.AuthAPI.logout = async () => null;
 
-  const pendingLoad = component.loadGroupPosts(7, true);
-  const pendingCreate = component.sendGroupPost();
-  await component.logout();
+  const pendingLoad = component.controllers.groups.actions.loadGroupPosts(7, true);
+  const pendingCreate = component.controllers.groups.actions.sendGroupPost();
+  await component.controllers.auth.actions.logout();
   load.resolve({ posts: [rawGroupPost(71, 7, 2)], next_cursor: null });
   create.resolve(rawGroupPost(72, 7, 1));
   await Promise.all([pendingLoad, pendingCreate]);
@@ -1650,14 +1729,14 @@ test('group event composer and list are exposed only to active group access', ()
   component.state.screen = 'group';
   component.state.groupId = 7;
   component.state.groupTab = 'events';
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
 
   let view = component.renderVals();
   assert.equal(view.gCanContent, true);
   assert.equal(typeof view.createGroupEvent, 'function');
   assert.equal(Array.isArray(view.gEvents), true);
 
-  component.state.apiGroupsByID['7'] = component.mapAPIGroup(rawGroup(7, 'requested', 1, 2));
+  component.state.apiGroupsByID['7'] = component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'requested', 1, 2));
   view = component.renderVals();
   assert.equal(view.gCanContent, false);
   assert.equal(view.gContentLocked, true);
@@ -1668,7 +1747,7 @@ test('authoritative created event survives an older list and is sorted by start 
   const staleList = deferred();
   component.state.screen = 'group';
   component.state.groupId = 7;
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'owner', 1, 1)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'owner', 1, 1)) };
   component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(73, 7, 1, {
     startsAt: '2026-07-26T12:00:00Z'
   }))];
@@ -1680,8 +1759,8 @@ test('authoritative created event survives an older list and is sorted by start 
     startsAt: '2026-07-25T12:00:00Z'
   });
 
-  const pendingList = component.loadGroupEvents(7, true);
-  await component.createGroupEvent();
+  const pendingList = component.controllers.events.actions.loadGroupEvents(7, true);
+  await component.controllers.events.actions.createGroupEvent();
   staleList.resolve({ events: [rawGroupEvent(71, 7, 1)], next_cursor: null });
   await pendingList;
 
@@ -1697,14 +1776,14 @@ test('group switch invalidates the old event list', async () => {
   component.state.screen = 'group';
   component.state.groupId = 7;
   component.state.apiGroupsByID = {
-    '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
-    '8': component.mapAPIGroup(rawGroup(8, 'member', 2, 2))
+    '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
+    '8': component.controllers.groups.actions.mapAPIGroup(rawGroup(8, 'member', 2, 2))
   };
   global.AuthAPI.groupEvents = groupID => groupID === 7 ? groupA.promise : groupB.promise;
 
-  const pendingA = component.loadGroupEvents(7, true);
+  const pendingA = component.controllers.events.actions.loadGroupEvents(7, true);
   component.state.groupId = 8;
-  const pendingB = component.loadGroupEvents(8, true);
+  const pendingB = component.controllers.events.actions.loadGroupEvents(8, true);
   groupB.resolve({ events: [rawGroupEvent(81, 8, 2)], next_cursor: null });
   await pendingB;
   groupA.resolve({ events: [rawGroupEvent(71, 7, 2)], next_cursor: null });
@@ -1720,13 +1799,13 @@ test('event list reset does not invalidate pending RSVP', async () => {
   const reset = deferred();
   component.state.screen = 'group';
   component.state.groupId = 7;
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
   component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(71, 7, 2))];
   global.AuthAPI.respondToGroupEvent = () => response.promise;
   global.AuthAPI.groupEvents = () => reset.promise;
 
-  const pendingResponse = component.respondToGroupEvent(71, 'going');
-  const pendingReset = component.loadGroupEvents(7, true);
+  const pendingResponse = component.controllers.events.actions.respondToGroupEvent(71, 'going');
+  const pendingReset = component.controllers.events.actions.loadGroupEvents(7, true);
   reset.resolve({ events: [rawGroupEvent(71, 7, 2)], next_cursor: null });
   await pendingReset;
   response.resolve(rawGroupEvent(71, 7, 2, { goingCount: 1, viewerResponse: 'going' }));
@@ -1743,13 +1822,13 @@ test('successful RSVP invalidates a stale event list with older counts', async (
   const response = deferred();
   component.state.screen = 'group';
   component.state.groupId = 7;
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
   component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(71, 7, 2))];
   global.AuthAPI.groupEvents = () => staleList.promise;
   global.AuthAPI.respondToGroupEvent = () => response.promise;
 
-  const pendingList = component.loadGroupEvents(7, true);
-  const pendingResponse = component.respondToGroupEvent(71, 'going');
+  const pendingList = component.controllers.events.actions.loadGroupEvents(7, true);
+  const pendingResponse = component.controllers.events.actions.respondToGroupEvent(71, 'going');
   response.resolve(rawGroupEvent(71, 7, 2, { goingCount: 2, viewerResponse: 'going' }));
   await pendingResponse;
   staleList.resolve({ events: [rawGroupEvent(71, 7, 2, { goingCount: 1 })], next_cursor: null });
@@ -1765,8 +1844,8 @@ test('pending RSVP cannot mutate the next group after a switch', async () => {
   component.state.screen = 'group';
   component.state.groupId = 7;
   component.state.apiGroupsByID = {
-    '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
-    '8': component.mapAPIGroup(rawGroup(8, 'member', 2, 2))
+    '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
+    '8': component.controllers.groups.actions.mapAPIGroup(rawGroup(8, 'member', 2, 2))
   };
   component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(71, 7, 2))];
   global.AuthAPI.respondToGroupEvent = () => response.promise;
@@ -1775,8 +1854,8 @@ test('pending RSVP cannot mutate the next group after a switch', async () => {
   global.AuthAPI.groupPosts = async () => ({ posts: [], next_cursor: null });
   global.AuthAPI.groupEvents = async () => ({ events: [rawGroupEvent(81, 8, 2)], next_cursor: null });
 
-  const pendingResponse = component.respondToGroupEvent(71, 'going');
-  component.openGroup(8);
+  const pendingResponse = component.controllers.events.actions.respondToGroupEvent(71, 'going');
+  component.controllers.groups.actions.openGroup(8);
   await Promise.resolve();
   await Promise.resolve();
   response.resolve(rawGroupEvent(71, 7, 2, { goingCount: 1, viewerResponse: 'going' }));
@@ -1792,8 +1871,8 @@ test('rejected event create from group A cannot write into group B composer', as
   component.state.screen = 'group';
   component.state.groupId = 7;
   component.state.apiGroupsByID = {
-    '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
-    '8': component.mapAPIGroup(rawGroup(8, 'member', 2, 2))
+    '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)),
+    '8': component.controllers.groups.actions.mapAPIGroup(rawGroup(8, 'member', 2, 2))
   };
   component.state.groupEventTitle = 'Group A event';
   component.state.groupEventDescription = 'Group A description';
@@ -1804,8 +1883,8 @@ test('rejected event create from group A cannot write into group B composer', as
   global.AuthAPI.groupPosts = async () => ({ posts: [], next_cursor: null });
   global.AuthAPI.groupEvents = async () => ({ events: [], next_cursor: null });
 
-  const pendingCreate = component.createGroupEvent();
-  component.openGroup(8);
+  const pendingCreate = component.controllers.events.actions.createGroupEvent();
+  component.controllers.groups.actions.openGroup(8);
   component.setState({
     groupEventTitle: 'Group B event', groupEventDescription: 'Group B description',
     groupEventStartsAt: '26-07-2026 12:00', groupEventCreatePending: false, groupEventCreateError: ''
@@ -1824,7 +1903,7 @@ test('chat remove clears events and ignores pending list and RSVP responses', as
   const response = deferred();
   component.state.screen = 'group';
   component.state.groupId = 7;
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
   component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(71, 7, 2))];
   component.state.groupEventTitle = 'Discarded event';
   component.state.groupEventDescription = 'Discarded description';
@@ -1832,9 +1911,9 @@ test('chat remove clears events and ignores pending list and RSVP responses', as
   global.AuthAPI.groupEvents = () => list.promise;
   global.AuthAPI.respondToGroupEvent = () => response.promise;
 
-  const pendingList = component.loadGroupEvents(7, true);
-  const pendingResponse = component.respondToGroupEvent(71, 'going');
-  component.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
+  const pendingList = component.controllers.events.actions.loadGroupEvents(7, true);
+  const pendingResponse = component.controllers.events.actions.respondToGroupEvent(71, 'going');
+  component.controllers.realtime.actions.handleRealtimeEvent(JSON.stringify({ type: 'chat:remove', chat: { kind: 'group', target_id: 7 } }));
   list.resolve({ events: [rawGroupEvent(72, 7, 2)], next_cursor: null });
   response.resolve(rawGroupEvent(71, 7, 2, { goingCount: 1, viewerResponse: 'going' }));
   await Promise.all([pendingList, pendingResponse]);
@@ -1842,14 +1921,14 @@ test('chat remove clears events and ignores pending list and RSVP responses', as
   assert.deepEqual(component.state.groupEvents, []);
   assert.equal(component.state.groupEventTitle, '');
   assert.deepEqual(component.state.groupEventResponsePendingByID, {});
-  assert.equal(component.groupAccessIsRevoked(7), true);
+  assert.equal(component.controllers.groups.actions.groupAccessIsRevoked(7), true);
 });
 
 test('authoritative rejoin clears revoked events and loads a fresh page', async () => {
   const component = createComponent();
   component.state.screen = 'group';
   component.state.groupId = 7;
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'invited', 1, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'invited', 1, 2)) };
   component.revokedGroupAccessIDs.add('7');
   global.AuthAPI.acceptGroupInvitation = async () => rawGroup(7, 'member', 2, 2);
   global.AuthAPI.groupInvitationInbox = async () => ({ invitations: [], next_cursor: null });
@@ -1858,11 +1937,11 @@ test('authoritative rejoin clears revoked events and loads a fresh page', async 
   global.AuthAPI.groupEvents = async () => ({ events: [rawGroupEvent(75, 7, 2)], next_cursor: null });
   global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null });
 
-  await component.acceptGroupInvitation(7);
+  await component.controllers.groups.actions.acceptGroupInvitation(7);
   await Promise.resolve();
   await Promise.resolve();
 
-  assert.equal(component.groupAccessIsRevoked(7), false);
+  assert.equal(component.controllers.groups.actions.groupAccessIsRevoked(7), false);
   assert.deepEqual(component.state.groupEvents.map(event => event.id), [75]);
 });
 
@@ -1873,7 +1952,7 @@ test('logout invalidates pending event list create and RSVP operations', async (
   const response = deferred();
   component.state.screen = 'group';
   component.state.groupId = 7;
-  component.state.apiGroupsByID = { '7': component.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
+  component.state.apiGroupsByID = { '7': component.controllers.groups.actions.mapAPIGroup(rawGroup(7, 'member', 2, 2)) };
   component.state.groupEvents = [GroupEventModel.normalizeEventResponse(rawGroupEvent(71, 7, 2))];
   component.state.groupEventTitle = 'Pending event';
   component.state.groupEventDescription = 'Pending description';
@@ -1883,10 +1962,10 @@ test('logout invalidates pending event list create and RSVP operations', async (
   global.AuthAPI.respondToGroupEvent = () => response.promise;
   global.AuthAPI.logout = async () => null;
 
-  const pendingList = component.loadGroupEvents(7, true);
-  const pendingCreate = component.createGroupEvent();
-  const pendingResponse = component.respondToGroupEvent(71, 'going');
-  await component.logout();
+  const pendingList = component.controllers.events.actions.loadGroupEvents(7, true);
+  const pendingCreate = component.controllers.events.actions.createGroupEvent();
+  const pendingResponse = component.controllers.events.actions.respondToGroupEvent(71, 'going');
+  await component.controllers.auth.actions.logout();
   list.resolve({ events: [rawGroupEvent(72, 7, 2)], next_cursor: null });
   create.resolve(rawGroupEvent(73, 7, 2));
   response.resolve(rawGroupEvent(71, 7, 2, { goingCount: 1, viewerResponse: 'going' }));
@@ -1908,8 +1987,8 @@ test('late history for chat A never replaces active chat B', async () => {
   component.state.chatKeys = ['direct:2', 'direct:3'];
   global.AuthAPI.directMessages = userID => userID === 2 ? historyA.promise : historyB.promise;
 
-  component.openChat('direct:2');
-  component.openChat('direct:3');
+  component.controllers.chat.actions.openChat('direct:2');
+  component.controllers.chat.actions.openChat('direct:3');
   historyB.resolve({
     messages: [rawChatMessage(32, 'e62617ed-e1bb-4483-81dd-a317d59aa23a', 'direct', 3, 3)],
     next_cursor: null
@@ -1924,7 +2003,7 @@ test('late history for chat A never replaces active chat B', async () => {
   await Promise.resolve();
 
   assert.equal(component.state.activeChatKey, 'direct:3');
-  assert.deepEqual(component.chatMessages(component.state.activeChatKey).messages.map(message => message.apiId), [32]);
+  assert.deepEqual(component.controllers.chat.actions.chatMessages(component.state.activeChatKey).messages.map(message => message.apiId), [32]);
 });
 
 test('optimistic message becomes one authoritative message and HTTP copy stays deduplicated', async () => {
@@ -1938,18 +2017,18 @@ test('optimistic message becomes one authoritative message and HTTP copy stays d
   const sent = [];
   component.ws = { readyState: 1, send: payload => sent.push(JSON.parse(payload)) };
 
-  component.sendMsg();
+  component.controllers.chat.actions.sendMsg();
   assert.equal(sent.length, 1);
   const clientID = sent[0].client_message_id;
   const authoritative = rawChatMessage(90, clientID, 'direct', 2, 1);
-  component.handleRealtimeMessage(authoritative);
-  component.handleRealtimeMessage(authoritative);
+  component.controllers.chat.actions.handleRealtimeMessage(authoritative);
+  component.controllers.chat.actions.handleRealtimeMessage(authoritative);
 
-  const messages = component.chatMessages(key).messages;
+  const messages = component.controllers.chat.actions.chatMessages(key).messages;
   assert.equal(messages.length, 1);
   assert.equal(messages[0].apiId, 90);
   assert.equal(messages[0].pending, false);
-  component.stopRealtime(false);
+  component.controllers.realtime.actions.stopRealtime(false);
 });
 
 test('failed send retries with the exact same client_message_id', () => {
@@ -1963,15 +2042,15 @@ test('failed send retries with the exact same client_message_id', () => {
   const sent = [];
   component.ws = { readyState: 1, send: payload => sent.push(JSON.parse(payload)) };
 
-  component.sendMsg();
+  component.controllers.chat.actions.sendMsg();
   const clientID = sent[0].client_message_id;
-  component.handleRealtimeError({ client_message_id: clientID, message: 'forbidden' });
-  component.retryMessage(clientID);
+  component.controllers.chat.actions.handleRealtimeError({ client_message_id: clientID, message: 'forbidden' });
+  component.controllers.chat.actions.retryMessage(clientID);
 
   assert.equal(sent.length, 2);
   assert.equal(sent[1].client_message_id, clientID);
-  assert.equal(component.chatMessages(key).messages.length, 1);
-  component.stopRealtime(false);
+  assert.equal(component.controllers.chat.actions.chatMessages(key).messages.length, 1);
+  component.controllers.realtime.actions.stopRealtime(false);
 });
 
 test('group leave purges chat and a late socket message cannot recreate it', () => {
@@ -1986,8 +2065,8 @@ test('group leave purges chat and a late socket message cannot recreate it', () 
   component.state.chatKeys = [key];
   component.state.activeChatKey = key;
 
-  component.purgeChat(key);
-  component.handleRealtimeMessage(rawChatMessage(
+  component.controllers.chat.actions.purgeChat(key);
+  component.controllers.chat.actions.handleRealtimeMessage(rawChatMessage(
     77, '0932903b-c2f1-4dca-9e52-c7ca9ac4f94c', 'group', 7, 2
   ));
 
@@ -2013,12 +2092,12 @@ test('chat remove purges revoked group access in every tab state', () => {
   };
   component.state.typingByChatKey = { [removedKey]: { 2: { id: 2, name: 'User 2' } } };
   component.typingChatKey = removedKey;
-  const accessGeneration = component.chatAccessGate(removedKey).current();
+  const accessGeneration = component.controllers.chat.actions.chatAccessGate(removedKey).current();
 
-  component.handleRealtimeEvent(JSON.stringify({
+  component.controllers.realtime.actions.handleRealtimeEvent(JSON.stringify({
     type: 'chat:remove', chat: { kind: 'group', target_id: 7 }
   }));
-  component.handleRealtimeMessage(rawChatMessage(
+  component.controllers.chat.actions.handleRealtimeMessage(rawChatMessage(
     78, '14ecf674-cfed-48f0-8ea0-ed6c9dcd0627', 'group', 7, 2
   ));
 
@@ -2027,7 +2106,7 @@ test('chat remove purges revoked group access in every tab state', () => {
   assert.equal(component.state.typingByChatKey[removedKey], undefined);
   assert.equal(component.state.activeChatKey, fallbackKey);
   assert.equal(component.typingChatKey, null);
-  assert.equal(component.chatAccessGate(removedKey).isCurrent(accessGeneration), false);
+  assert.equal(component.controllers.chat.actions.chatAccessGate(removedKey).isCurrent(accessGeneration), false);
 });
 
 test('old WebSocket generation cannot mutate a newly authenticated session', () => {
@@ -2047,13 +2126,13 @@ test('old WebSocket generation cannot mutate a newly authenticated session', () 
   global.window = { location: { protocol: 'http:', host: 'example.test' } };
   global.WebSocket = FakeSocket;
   try {
-    component.connectRealtime(component.authGate.current());
+    component.controllers.realtime.actions.connectRealtime(component.authGate.current());
     const oldSocket = FakeSocket.instances[0];
     oldSocket.readyState = 1;
     oldSocket.onopen();
-    component.stopRealtime(false);
+    component.controllers.realtime.actions.stopRealtime(false);
     component.state.authStatus = 'authenticated';
-    component.connectRealtime(component.authGate.current());
+    component.controllers.realtime.actions.connectRealtime(component.authGate.current());
     const currentSocket = FakeSocket.instances[1];
     currentSocket.readyState = 1;
     currentSocket.onopen();
@@ -2062,7 +2141,7 @@ test('old WebSocket generation cannot mutate a newly authenticated session', () 
       data: JSON.stringify({ type: 'presence:init', online_user_ids: [99] })
     });
     assert.deepEqual(component.state.onlineUserIDs, {});
-    component.stopRealtime(false);
+    component.controllers.realtime.actions.stopRealtime(false);
   } finally {
     global.window = previousWindow;
     global.WebSocket = previousWebSocket;
@@ -2086,13 +2165,13 @@ test('deferred send callback cannot cross logout into another session', () => {
     originalSetState(patch);
     if (callback) deferredSend = callback;
   };
-  component.sendMsg();
+  component.controllers.chat.actions.sendMsg();
   assert.equal(typeof deferredSend, 'function');
 
   component.authGate.begin();
-  component.chatAccessGate(key).begin();
+  component.controllers.chat.actions.chatAccessGate(key).begin();
   component.state.authStatus = 'anonymous';
-  component.stopRealtime(false);
+  component.controllers.realtime.actions.stopRealtime(false);
   deferredSend();
 
   assert.deepEqual(sent, []);
@@ -2105,9 +2184,9 @@ test('typing state is keyed by chat and clears on stop', () => {
     user: { id: 2, display_name: 'User 2' },
     typing: true
   };
-  component.handleTypingUpdate(event);
+  component.controllers.chat.actions.handleTypingUpdate(event);
   assert.equal(component.state.typingByChatKey['group:7']['2'].name, 'User 2');
-  component.handleTypingUpdate(Object.assign({}, event, { typing: false }));
+  component.controllers.chat.actions.handleTypingUpdate(Object.assign({}, event, { typing: false }));
   assert.equal(component.state.typingByChatKey['group:7'], undefined);
 });
 
@@ -2119,15 +2198,15 @@ test('older action revision cannot block a still-current group source or revoked
   component.state.notifications = [invitation];
   component.state.notificationRevision = 9;
   component.state.notificationUnreadCount = 1;
-  component.state.apiGroupsByID['9'] = component.mapAPIGroup(rawGroup(9, 'invited', 1));
+  component.state.apiGroupsByID['9'] = component.controllers.groups.actions.mapAPIGroup(rawGroup(9, 'invited', 1));
   component.revokedGroupAccessIDs.add('9');
   global.AuthAPI.actOnNotification = () => action.promise;
   global.AuthAPI.notifications = () => freshNotifications.promise;
   global.AuthAPI.groups = async () => ({ groups: [], next_cursor: null });
   global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null });
 
-  const pending = component.actOnNotification(42, 'accept');
-  component.handleRealtimeEvent(JSON.stringify({
+  const pending = component.controllers.notification.actions.actOnNotification(42, 'accept');
+  component.controllers.realtime.actions.handleRealtimeEvent(JSON.stringify({
     type: 'notification:upsert',
     revision: 11,
     unread_count: 2,
@@ -2143,7 +2222,7 @@ test('older action revision cannot block a still-current group source or revoked
 
   assert.equal(component.state.notificationRevision, 11);
   assert.equal(component.state.apiGroupsByID['9'].state, 'member');
-  assert.equal(component.groupAccessIsRevoked(9), false);
+  assert.equal(component.controllers.groups.actions.groupAccessIsRevoked(9), false);
   assert.equal(component.state.notifications.find(item => item.id === 42).resolution, null);
 });
 
@@ -2154,12 +2233,12 @@ test('group revoke during pending invitation action resolves notification withou
   const invitation = NotificationModel.normalize(rawNotification(42, 'group_invitation', { groupID: 9 }));
   component.state.notifications = [invitation];
   component.state.notificationUnreadCount = 1;
-  component.state.apiGroupsByID['9'] = component.mapAPIGroup(rawGroup(9, 'invited', 1));
+  component.state.apiGroupsByID['9'] = component.controllers.groups.actions.mapAPIGroup(rawGroup(9, 'invited', 1));
   global.AuthAPI.actOnNotification = () => action.promise;
   global.AuthAPI.notifications = () => freshNotifications.promise;
 
-  const pending = component.actOnNotification(42, 'accept');
-  component.handleRealtimeEvent(JSON.stringify({
+  const pending = component.controllers.notification.actions.actOnNotification(42, 'accept');
+  component.controllers.realtime.actions.handleRealtimeEvent(JSON.stringify({
     type: 'chat:remove', chat: { kind: 'group', target_id: 9 }
   }));
   action.resolve({
@@ -2176,7 +2255,7 @@ test('group revoke during pending invitation action resolves notification withou
   assert.equal(resolved.resolution, 'accepted');
   assert.equal(component.state.notificationUnreadCount, 0);
   assert.equal(component.state.apiGroupsByID['9'].state, 'invited');
-  assert.equal(component.groupAccessIsRevoked(9), true);
+  assert.equal(component.controllers.groups.actions.groupAccessIsRevoked(9), true);
 });
 
 test('new actionable lifecycle invalidates source from an older pending action', async () => {
@@ -2185,14 +2264,14 @@ test('new actionable lifecycle invalidates source from an older pending action',
   const freshNotifications = deferred();
   const invitation = NotificationModel.normalize(rawNotification(42, 'group_invitation', { groupID: 9 }));
   component.state.notifications = [invitation];
-  component.state.apiGroupsByID['9'] = component.mapAPIGroup(rawGroup(9, 'invited', 1));
+  component.state.apiGroupsByID['9'] = component.controllers.groups.actions.mapAPIGroup(rawGroup(9, 'invited', 1));
   global.AuthAPI.actOnNotification = () => action.promise;
   global.AuthAPI.notifications = () => freshNotifications.promise;
   global.AuthAPI.groups = async () => ({ groups: [], next_cursor: null });
   global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null });
 
-  const pending = component.actOnNotification(42, 'accept');
-  component.handleRealtimeEvent(JSON.stringify({
+  const pending = component.controllers.notification.actions.actOnNotification(42, 'accept');
+  component.controllers.realtime.actions.handleRealtimeEvent(JSON.stringify({
     type: 'notification:upsert', revision: 2, unread_count: 1,
     notification: rawNotification(43, 'group_invitation', { groupID: 9, createdAt: '2026-07-23T12:00:00Z' })
   }));
@@ -2213,7 +2292,7 @@ test('applied group source generation rejects an older pending group detail resp
   const oldDetail = deferred();
   let detailCalls = 0;
   component.state.groupId = 9;
-  component.state.apiGroupsByID['9'] = component.mapAPIGroup(rawGroup(9, 'invited', 1));
+  component.state.apiGroupsByID['9'] = component.controllers.groups.actions.mapAPIGroup(rawGroup(9, 'invited', 1));
   global.AuthAPI.group = () => (++detailCalls === 1 ? oldDetail.promise : Promise.resolve(rawGroup(9, 'member', 2)));
   global.AuthAPI.groupMembers = async () => ({ members: [], next_cursor: null });
   global.AuthAPI.groupPosts = async () => ({ posts: [], next_cursor: null });
@@ -2221,9 +2300,9 @@ test('applied group source generation rejects an older pending group detail resp
   global.AuthAPI.groups = async () => ({ groups: [], next_cursor: null });
   global.AuthAPI.chats = async () => ({ chats: [], next_cursor: null });
 
-  const staleLoad = component.loadGroupDetail(9);
-  const gate = component.groupGeneration(9);
-  assert.equal(component.applyNotificationSource(
+  const staleLoad = component.controllers.groups.actions.loadGroupDetail(9);
+  const gate = component.controllers.groups.actions.groupGeneration(9);
+  assert.equal(component.controllers.notification.actions.applyNotificationSource(
     { kind: 'group', group: rawGroup(9, 'member', 2) },
     { kind: 'group', groupID: 9, gate, generation: gate.current() }
   ), true);
@@ -2239,8 +2318,8 @@ test('logout invalidates pending notification list and action responses', async 
   const list = deferred();
   global.AuthAPI.notifications = () => list.promise;
   global.AuthAPI.logout = async () => null;
-  const pendingList = component.loadNotifications(true);
-  await component.logout();
+  const pendingList = component.controllers.notification.actions.loadNotifications(true);
+  await component.controllers.auth.actions.logout();
   list.resolve({
     notifications: [rawNotification(7, 'follow_started')],
     next_cursor: null, unread_count: 1, revision: 1
@@ -2251,11 +2330,11 @@ test('logout invalidates pending notification list and action responses', async 
   const nextComponent = createComponent();
   const action = deferred();
   nextComponent.state.notifications = [NotificationModel.normalize(rawNotification(8, 'group_invitation', { groupID: 9 }))];
-  nextComponent.state.apiGroupsByID['9'] = nextComponent.mapAPIGroup(rawGroup(9, 'invited', 1));
+  nextComponent.state.apiGroupsByID['9'] = nextComponent.controllers.groups.actions.mapAPIGroup(rawGroup(9, 'invited', 1));
   global.AuthAPI.actOnNotification = () => action.promise;
   global.AuthAPI.logout = async () => null;
-  const pendingAction = nextComponent.actOnNotification(8, 'accept');
-  await nextComponent.logout();
+  const pendingAction = nextComponent.controllers.notification.actions.actOnNotification(8, 'accept');
+  await nextComponent.controllers.auth.actions.logout();
   action.resolve({
     notification: rawNotification(8, 'group_invitation', { groupID: 9, resolution: 'accepted' }),
     unread_count: 0, revision: 1,
@@ -2287,7 +2366,7 @@ test('chat unread list pages merge per key while total and revision stay authori
   });
   global.AuthAPI.directMessages = async () => ({ messages: [first], next_cursor: null });
 
-  await component.loadChats(false);
+  await component.controllers.chat.actions.loadChats(false);
   assert.equal(component.state.chatUnreadByKey['direct:2'], 2);
   assert.equal(component.state.chatUnreadByKey['direct:3'], 5);
   assert.equal(component.state.chatUnreadCount, 7);
@@ -2299,7 +2378,7 @@ test('chat unread list pages merge per key while total and revision stay authori
     unread_count: 0,
     revision: 3
   });
-  await component.loadChats(true);
+  await component.controllers.chat.actions.loadChats(true);
   assert.equal(component.state.chatUnreadByKey['direct:2'], 2);
   assert.equal(component.state.chatUnreadCount, 7);
   assert.equal(component.state.chatUnreadRevision, 4);
@@ -2331,11 +2410,11 @@ test('chat read queue serializes newer displayed markers without comparing serve
       return calls.length === 1 ? firstRead.promise : secondRead.promise;
     };
 
-    component.enqueueChatRead(key);
+    component.controllers.chat.actions.enqueueChatRead(key);
     await Promise.resolve();
     assert.deepEqual(calls, [[2, 911]]);
     component.state.messagesByChatKey[key].messages.push(ChatModel.normalizeMessage(secondRaw));
-    component.enqueueChatRead(key);
+    component.controllers.chat.actions.enqueueChatRead(key);
     firstRead.resolve({
       chat: { kind: 'direct', target_id: 2 },
       chat_unread_count: 1, unread_count: 1, revision: 5,
@@ -2387,10 +2466,10 @@ test('chat read queue resumes a newer marker after visibility eligibility return
       return calls.length === 1 ? firstRead.promise : secondRead.promise;
     };
 
-    component.enqueueChatRead(key);
+    component.controllers.chat.actions.enqueueChatRead(key);
     await Promise.resolve();
     component.state.messagesByChatKey[key].messages.push(ChatModel.normalizeMessage(secondRaw));
-    component.enqueueChatRead(key);
+    component.controllers.chat.actions.enqueueChatRead(key);
     global.document.visibilityState = 'hidden';
     firstRead.resolve({
       chat: { kind: 'direct', target_id: 2 },
@@ -2438,7 +2517,7 @@ test('purging a stale per-chat unread key never subtracts from authoritative tot
   component.state.chatUnreadCount = 1;
   component.state.chatUnreadRevision = 7;
 
-  component.purgeChat(groupKey);
+  component.controllers.chat.actions.purgeChat(groupKey);
 
   assert.equal(component.state.chatsByKey[groupKey], undefined);
   assert.equal(component.state.chatUnreadByKey[groupKey], undefined);
@@ -2470,17 +2549,17 @@ test('background preload and hidden tab do not mark read but entering Messages w
   });
   try {
     global.document = { visibilityState: 'visible' };
-    await component.loadChatHistory(key, true, 'background');
+    await component.controllers.chat.actions.loadChatHistory(key, true, 'background');
     assert.deepEqual(reads, []);
 
     global.document.visibilityState = 'hidden';
     component.state.screen = 'chat';
-    component.enqueueChatRead(key);
+    component.controllers.chat.actions.enqueueChatRead(key);
     assert.deepEqual(reads, []);
 
     global.document.visibilityState = 'visible';
     component.state.screen = 'feed';
-    component.go('chat');
+    component.controllers.router.actions.go('chat');
     await Promise.resolve();
     await Promise.resolve();
     assert.deepEqual(reads, [[2, 921]]);
@@ -2498,7 +2577,7 @@ test('pending chat read cannot revive unread state after group revoke or logout'
     const message = rawChatMessage(931, '64cb59ab-338c-452e-bf66-1761881967ec', 'group', 9, 2);
     component.state.screen = 'chat';
     component.state.activeChatKey = key;
-    component.state.apiGroupsByID = { '9': component.mapAPIGroup(rawGroup(9, 'member', 2, 1)) };
+    component.state.apiGroupsByID = { '9': component.controllers.groups.actions.mapAPIGroup(rawGroup(9, 'member', 2, 1)) };
     component.state.chatsByKey = {
       [key]: ChatModel.normalizeChatSummary({
         kind: 'group', target_id: 9, group: rawGroup(9, 'member', 2, 1),
@@ -2514,9 +2593,9 @@ test('pending chat read cannot revive unread state after group revoke or logout'
     };
     const read = deferred();
     global.AuthAPI.markGroupChatRead = () => read.promise;
-    component.enqueueChatRead(key);
+    component.controllers.chat.actions.enqueueChatRead(key);
     await Promise.resolve();
-    component.handleRealtimeEvent(JSON.stringify({
+    component.controllers.realtime.actions.handleRealtimeEvent(JSON.stringify({
       type: 'chat:remove', chat: { kind: 'group', target_id: 9 }
     }));
     read.resolve({
@@ -2543,9 +2622,9 @@ test('pending chat read cannot revive unread state after group revoke or logout'
     const directRead = deferred();
     global.AuthAPI.markDirectChatRead = () => directRead.promise;
     global.AuthAPI.logout = async () => null;
-    component.enqueueChatRead(directKey);
+    component.controllers.chat.actions.enqueueChatRead(directKey);
     await Promise.resolve();
-    await component.logout();
+    await component.controllers.auth.actions.logout();
     directRead.resolve({
       chat: { kind: 'direct', target_id: 2 },
       chat_unread_count: 0, unread_count: 0, revision: 9,

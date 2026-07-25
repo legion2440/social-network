@@ -217,7 +217,7 @@ Every other path is served from `/srv`, with `index.html` used for client-side r
 | Static server / reverse proxy | Caddy                                 |
 | Containers                    | Docker and Docker Compose             |
 
-The browser application is not organized as a conventional React component tree. The `dc-runtime` application framework processes the build-time-composed `<x-dc>` template, while React and ReactDOM provide only the rendering layer. Production source lives under `frontend/src` and is generated into ignored `frontend/dist`.
+The browser application is not organized as a conventional React component tree. The `dc-runtime` application framework processes the build-time-composed `<x-dc>` template, while React and ReactDOM provide only the rendering layer. The root owns one shared state and application lifecycle; feature controllers contain actions and use narrow state/API/model/gate/helper/callback dependencies without access to the root component. Production source lives under `frontend/src` and is generated into ignored `frontend/dist`.
 
 ## 🔐 Security and access control
 
@@ -385,7 +385,7 @@ The opt-in demo dataset uses a separate embedded migration set and a separate `s
 docker compose exec backend /app/seed
 ```
 
-The command is repeatable and creates three demo accounts with password `LoopDemo123!`:
+The command is repeatable. Before the first seed version, a reserved demo email collision aborts without changing the database; after the seed has been applied, another run is an idempotent no-op. It creates three demo accounts with password `LoopDemo123!`:
 
 ```text
 alice.demo@example.com

@@ -96,7 +96,7 @@
                   {{p.privacyLabel}}
                 </span>
               </div>
-              <p class="ui-126">{{p.text}}</p>
+              <sc-if value="{{p.hasText}}" hint-placeholder-val="{{true}}"><p class="ui-126">{{p.text}}</p></sc-if>
               <sc-if value="{{p.hasImage}}" hint-placeholder-val="{{false}}">
                 <img class="ui-127" src="{{p.mediaUrl}}" alt="Post media">
               </sc-if>
@@ -118,7 +118,7 @@
                       </div>
                       <div class="ui-135">
                         <span class="ui-136">{{c.user.name}}</span><span class="ui-137"> · {{c.time}}</span>
-                        <p class="ui-138">{{c.text}}</p>
+                        <sc-if value="{{c.hasText}}" hint-placeholder-val="{{true}}"><p class="ui-138">{{c.text}}</p></sc-if>
                         <sc-if value="{{c.hasMedia}}" hint-placeholder-val="{{false}}"><img class="ui-139" src="{{c.mediaUrl}}" alt="Comment attachment"></sc-if>
                       </div>
                     </div>

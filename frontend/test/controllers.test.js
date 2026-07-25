@@ -4,61 +4,228 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const controllerDir = path.resolve(__dirname, '..', 'src', 'js', 'controllers');
+const appPath = path.resolve(__dirname, '..', 'src', 'js', 'app.js');
 
-test('feature controllers expose explicit actions and keep state ownership in Root', () => {
-  global.createFeatureController = require(path.join(controllerDir, 'controller-factory.js'));
-  global.createAuthController = require(path.join(controllerDir, 'auth-controller.js'));
-  global.createFeedController = require(path.join(controllerDir, 'feed-controller.js'));
-  global.createProfileController = require(path.join(controllerDir, 'profile-controller.js'));
-  global.createGroupsController = require(path.join(controllerDir, 'groups-controller.js'));
-  global.createEventsController = require(path.join(controllerDir, 'events-controller.js'));
-  global.createChatController = require(path.join(controllerDir, 'chat-controller.js'));
-  global.createNotificationController = require(path.join(controllerDir, 'notification-controller.js'));
-  global.createRealtimeController = require(path.join(controllerDir, 'realtime-controller.js'));
-  global.createRouterController = require(path.join(controllerDir, 'router-controller.js'));
+global.createFeatureController = require(path.join(controllerDir, 'controller-factory.js'));
+global.createControllerContext = require(path.join(controllerDir, 'controller-context.js'));
 
-  const calls = [];
-  const root = new Proxy({}, {
-    get(target, property) {
-      if (!(property in target)) target[property] = (...args) => calls.push([property, ...args]);
-      return target[property];
+function requestGate() {
+  let generation = 0;
+  return {
+    begin() { generation += 1; return generation; },
+    current() { return generation; },
+    isCurrent(value) { return value === generation; }
+  };
+}
+
+function stateAdapter(initial) {
+  const state = initial;
+  return {
+    state,
+    adapter: {
+      get: () => state,
+      set(update, callback) {
+        const patch = typeof update === 'function' ? update(state) : update;
+        Object.assign(state, patch || {});
+        if (callback) callback();
+      }
     }
-  });
-  const createFeatureControllers = require(path.join(controllerDir, 'feature-controllers.js'));
-  const controllers = createFeatureControllers({ root, api: {}, models: {} });
+  };
+}
 
-  assert.deepEqual(Object.keys(controllers), [
-    'auth', 'feed', 'profile', 'groups', 'events', 'chat', 'notification', 'realtime', 'router'
-  ]);
-  for (const controller of Object.values(controllers)) {
-    assert.equal(Object.isFrozen(controller), true);
-    assert.equal(Object.isFrozen(controller.actions), true);
-    assert.equal(typeof controller.derived, 'function');
-    assert.equal('state' in controller, false);
+function baseDependencies(initial) {
+  const store = stateAdapter(initial);
+  return {
+    store,
+    dependencies: {
+      state: store.adapter,
+      api: {},
+      models: {},
+      gates: {},
+      resources: {},
+      refs: {},
+      helpers: {},
+      callbacks: {},
+      navigation: {
+        isApplying: () => true,
+        applyCurrent: () => {},
+        profile: () => {},
+        group: () => {},
+        directChat: () => {},
+        groupChat: () => {}
+      },
+      session: { users: { me: { apiId: 1 } } },
+      values: { IC: { globe: '', users: '', lock: '' }, GROUP_COLORS: ['#000'] }
+    }
+  };
+}
+
+test('feature implementations live in controllers and cannot proxy back to Component', () => {
+  const appSource = fs.readFileSync(appPath, 'utf8');
+  const expectedActions = [
+    'loadCurrentUser', 'loadFeed', 'createComment', 'openProfile', 'toggleFollow',
+    'loadGroups', 'createGroupEvent', 'loadNotifications', 'loadChats',
+    'handleRealtimeEvent', 'connectRealtime'
+  ];
+  for (const action of expectedActions) {
+    assert.doesNotMatch(appSource, new RegExp('^\\s{2}' + action + '\\s*(?:=|\\()', 'm'), action);
   }
 
-  controllers.feed.actions.load(true);
-  controllers.router.actions.group(7);
-  controllers.realtime.lifecycle.stop();
-  assert.deepEqual(calls, [
-    ['loadFeed', true],
-    ['openGroup', 7],
-    ['stopRealtime']
-  ]);
-});
-
-test('controller modules do not mutate Root prototypes or merge hidden state', () => {
   for (const name of fs.readdirSync(controllerDir)) {
     if (!name.endsWith('.js')) continue;
     const source = fs.readFileSync(path.join(controllerDir, name), 'utf8');
-    assert.doesNotMatch(source, /\.prototype\s*=|Object\.assign\s*\(/, name);
+    assert.doesNotMatch(source, /dependencies\.root\b/, name);
+    assert.doesNotMatch(source, /var\s+view\s*=/, name);
   }
 });
 
-test('router parses strict routes and synchronizes push, replace, and popstate navigation', () => {
-  global.createFeatureController = require(path.join(controllerDir, 'controller-factory.js'));
-  delete require.cache[require.resolve(path.join(controllerDir, 'router-controller.js'))];
+test('feed actions mutate the shared state only through the provided adapter', () => {
+  const createFeedController = require(path.join(controllerDir, 'feed-controller.js'));
+  const { store, dependencies } = baseDependencies({
+    commentsByPostID: {},
+    posts: [],
+    openComments: {}
+  });
+  dependencies.api = {
+    createComment() {}, createPost() {}, feed() {}, followers() {}, postComments() {}
+  };
+  dependencies.models = {
+    users: { createRequestGate: requestGate },
+    posts: {},
+    comments: {}
+  };
+  dependencies.gates = {
+    authGate: requestGate(),
+    feedGate: requestGate(),
+    postFollowersGate: requestGate()
+  };
+  const commentAccessGatesByPostID = {};
+  const commentLoadGatesByPostID = {};
+  dependencies.refs = {
+    commentAccessGatesByPostID: {
+      get: () => commentAccessGatesByPostID,
+      set: () => { throw new Error('unexpected replacement'); }
+    },
+    commentLoadGatesByPostID: {
+      get: () => commentLoadGatesByPostID,
+      set: () => { throw new Error('unexpected replacement'); }
+    }
+  };
+  dependencies.helpers = {
+    emptyCommentState: () => ({
+      comments: [], draft: '', mediaFile: null, mediaFileName: '', mediaPreviewURL: '',
+      createPending: false, createError: '', loaded: false
+    }),
+    requestErrorMessage: (_error, fallback) => fallback,
+    num: String,
+    apiUser: id => ({ apiId: id }),
+    formatPostTime: value => value,
+    mapAPIPost: value => value,
+    mergeAPIUsers: () => ({})
+  };
+  const opened = [];
+  dependencies.callbacks = {
+    openGroup: id => opened.push(['group', id]),
+    openProfile: id => opened.push(['profile', id])
+  };
+
+  const controller = createFeedController(dependencies);
+  controller.actions.setCommentDraft(7, 'hello');
+  assert.equal(store.state.commentsByPostID['7'].draft, 'hello');
+  assert.deepEqual(controller.dependencies.api, [
+    'createComment', 'createPost', 'feed', 'followers', 'postComments'
+  ]);
+  assert.equal('root' in controller.dependencies, false);
+
+  const mapped = controller.actions.mapPost({
+    id: 9, apiAuthorID: 4, text: '', privacy: 'public', commentsCount: 0
+  });
+  mapped.goProfile();
+  assert.deepEqual(opened, [['profile', 4]]);
+  assert.equal(mapped.hasText, false);
+});
+
+test('derived contracts use the real shared state field names', () => {
+  const createAuthController = require(path.join(controllerDir, 'auth-controller.js'));
+  const createProfileController = require(path.join(controllerDir, 'profile-controller.js'));
+  const authBase = baseDependencies({ authStatus: 'authenticated' });
+  authBase.dependencies.models = {};
+  authBase.dependencies.helpers = {
+    emptyCurrentUser: () => ({}),
+    emptyRegistrationForm: () => ({}),
+    emptyProfileEditor: () => ({}),
+    emptyConfirmationState: () => ({}),
+    emptyGroupPostState: () => ({}),
+    emptyGroupEventState: () => ({}),
+    emptyNotificationState: () => ({}),
+    emptyChatState: () => ({}),
+    requestErrorMessage: (_error, fallback) => fallback,
+    parseDateOfBirth: () => true,
+    applyAuthUser: () => ({})
+  };
+  authBase.dependencies.callbacks = {
+    disposeAllCommentPreviews() {}, loadDirectory() {}, loadFeed() {},
+    loadNotifications() {}, loadPostFollowers() {},
+    startAuthenticatedRealtime() {}, stopRealtime() {}
+  };
+  authBase.dependencies.gates = {
+    authGate: requestGate(), feedGate: requestGate(), directoryGate: requestGate(),
+    postFollowersGate: requestGate(), profileGate: requestGate(),
+    groupsDirectoryGate: requestGate(), groupInvitationInboxGate: requestGate(),
+    groupDetailGate: requestGate(), groupMembersGate: requestGate(),
+    groupRequestsGate: requestGate(), groupInvitationsGate: requestGate(),
+    groupPostsGate: requestGate(), groupEventsGate: requestGate(),
+    groupEventCreateGate: requestGate(), notificationReadAllGate: requestGate(),
+    notificationsGate: requestGate(), chatsGate: requestGate(), activeChatGate: requestGate()
+  };
+  const disposable = {};
+  [
+    'chatAccessGatesByKey', 'chatHistoryGatesByKey', 'chatReadGatesByKey',
+    'chatReadInFlightByKey', 'chatReadSentCandidateByKey', 'commentAccessGatesByPostID',
+    'commentLoadGatesByPostID', 'groupEventResponseGatesByID', 'groupGenerationsByID',
+    'latestActionableNotificationIDBySourceKey', 'notificationActionGatesByID',
+    'notificationReadGatesByID', 'relationshipGenerationsByID'
+  ].forEach(name => {
+    disposable[name] = {};
+    authBase.dependencies.refs[name] = {
+      get: () => disposable[name],
+      set: value => { disposable[name] = value; }
+    };
+  });
+  ['revokedChatKeys', 'revokedGroupAccessIDs'].forEach(name => {
+    disposable[name] = new Set();
+    authBase.dependencies.refs[name] = {
+      get: () => disposable[name],
+      set: value => { disposable[name] = value; }
+    };
+  });
+  const auth = createAuthController(authBase.dependencies);
+  assert.deepEqual(auth.derived(authBase.store.state), {
+    authenticated: true,
+    checking: false
+  });
+
+  const profileBase = baseDependencies({ profileId: 17, profileReady: true });
+  profileBase.dependencies.models = { users: {} };
+  profileBase.dependencies.helpers = {
+    apiUser() {}, applyAuthUser() {}, mapAPIPost() {}, mergeAPIUsers() {},
+    openConfirmation() {}, requestErrorMessage() {}
+  };
+  profileBase.dependencies.callbacks = {
+    beginRelationshipGeneration() {}, loadFeed() {}, loadPostFollowers() {},
+    mergePostCommentsCounts() {}, purgeCommentStates() {},
+    relationshipGeneration() {}, stopTyping() {}
+  };
+  profileBase.dependencies.gates = {
+    authGate: requestGate(), directoryGate: requestGate(), profileGate: requestGate()
+  };
+  const profile = createProfileController(profileBase.dependencies);
+  assert.deepEqual(profile.derived(profileBase.store.state), { userID: 17, ready: true });
+});
+
+test('router parses strict routes and dispatches only named feature callbacks', () => {
   const createRouterController = require(path.join(controllerDir, 'router-controller.js'));
+  const { store, dependencies } = baseDependencies({ screen: 'feed', activeChatKey: null });
   const calls = [];
   const listeners = {};
   const environment = {
@@ -78,15 +245,21 @@ test('router parses strict routes and synchronizes push, replace, and popstate n
       if (listeners[type] === listener) delete listeners[type];
     }
   };
-  const root = {
-    state: { screen: 'feed' },
-    go: screen => calls.push(['screen', screen]),
+  dependencies.environment = environment;
+  dependencies.helpers = { usesMobileChatLayout: () => false };
+  dependencies.callbacks = {
+    stopTyping: () => {},
+    enqueueChatRead: () => {},
+    loadChats: () => {},
+    loadNotifications: () => {},
+    loadGroups: () => {},
+    loadGroupInvitationInbox: () => {},
     openProfile: id => calls.push(['profile', id]),
     openGroup: id => calls.push(['group', id]),
     openDirectChat: id => calls.push(['direct-chat', id]),
     openGroupChat: id => calls.push(['group-chat', id])
   };
-  const router = createRouterController({ root, api: {}, models: {}, environment });
+  const router = createRouterController(dependencies);
 
   assert.deepEqual(router.actions.parse('/users/14'), { kind: 'profile', id: 14 });
   assert.deepEqual(router.actions.parse('/users/0'), { kind: 'fallback' });
@@ -102,7 +275,8 @@ test('router parses strict routes and synchronizes push, replace, and popstate n
 
   environment.location.pathname = '/unknown';
   listeners.popstate();
-  assert.deepEqual(calls.slice(-2), [['replace', '/'], ['screen', 'feed']]);
+  assert.equal(store.state.screen, 'feed');
+  assert.deepEqual(calls.at(-1), ['replace', '/']);
 
   router.lifecycle.stop();
   assert.equal(listeners.popstate, undefined);

@@ -142,6 +142,38 @@ func TestDemoSeedMigrationsAreOptInVersionedAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestDemoSeedMigrationsRejectExistingDemoEmailBeforeChanges(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "seed-collision.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(`
+		INSERT INTO users (
+			email, password_hash, first_name, last_name, date_of_birth,
+			gender, nickname, about_me, created_at, updated_at
+		) VALUES (
+			'alice.demo@example.com', 'existing-hash', 'Existing', 'User', '01-01-1990',
+			NULL, NULL, NULL, unixepoch(), unixepoch()
+		)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := sqlite.ApplyDemoSeedMigrations(ctx, db, "new-seed-hash"); err == nil {
+		t.Fatal("expected a demo email collision error")
+	}
+	var ignored int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM seed_migrations`).Scan(&ignored); err == nil {
+		t.Fatal("failed seed unexpectedly created seed_migrations")
+	}
+	assertCount(t, db, `SELECT COUNT(*) FROM users`, 1)
+	assertCount(t, db, `SELECT COUNT(*) FROM groups`, 0)
+	assertCount(t, db, `SELECT COUNT(*) FROM posts`, 0)
+}
+
 func assertCount(t *testing.T, db *sql.DB, query string, want int) {
 	t.Helper()
 	var got int

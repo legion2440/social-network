@@ -5,15 +5,15 @@
 })(typeof window !== 'undefined' ? window : globalThis, function (root) {
   return function createFeatureControllers(dependencies) {
     return Object.freeze({
-      auth: root.createAuthController(dependencies),
-      feed: root.createFeedController(dependencies),
-      profile: root.createProfileController(dependencies),
-      groups: root.createGroupsController(dependencies),
-      events: root.createEventsController(dependencies),
-      chat: root.createChatController(dependencies),
-      notification: root.createNotificationController(dependencies),
-      realtime: root.createRealtimeController(dependencies),
-      router: root.createRouterController(dependencies)
+      auth: root.createAuthController(dependencies.auth),
+      feed: root.createFeedController(dependencies.feed),
+      profile: root.createProfileController(dependencies.profile),
+      groups: root.createGroupsController(dependencies.groups),
+      events: root.createEventsController(dependencies.events),
+      chat: root.createChatController(dependencies.chat),
+      notification: root.createNotificationController(dependencies.notification),
+      realtime: root.createRealtimeController(dependencies.realtime),
+      router: root.createRouterController(dependencies.router)
     });
   };
 });

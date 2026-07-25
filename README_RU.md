@@ -218,7 +218,7 @@ Caddy проксирует точные и вложенные маршруты:
 | Static server / reverse proxy | Caddy                                  |
 | Контейнеры                    | Docker и Docker Compose                |
 
-Browser-приложение не организовано как обычное React component tree. Application framework `dc-runtime` обрабатывает собранный build-time шаблон `<x-dc>`, а React и ReactDOM используются только как rendering layer. Production source находится в `frontend/src` и генерируется в ignored-каталог `frontend/dist`.
+Browser-приложение не организовано как обычное React component tree. Application framework `dc-runtime` обрабатывает собранный build-time шаблон `<x-dc>`, а React и ReactDOM используются только как rendering layer. Root владеет единым shared state и lifecycle приложения; feature controllers содержат actions и используют узкие state/API/model/gate/helper/callback dependencies без доступа к root component. Production source находится в `frontend/src` и генерируется в ignored-каталог `frontend/dist`.
 
 ## 🔐 Безопасность и контроль доступа
 
@@ -387,7 +387,7 @@ Opt-in demo dataset использует отдельный embedded-набор 
 docker compose exec backend /app/seed
 ```
 
-Команду можно запускать повторно. Она создаёт три demo accounts с паролем `LoopDemo123!`:
+Команду можно запускать повторно. До первой seed version конфликт с зарезервированным demo email завершает запуск без изменений базы; после применения повторный запуск является idempotent no-op. Seed создаёт три demo accounts с паролем `LoopDemo123!`:
 
 ```text
 alice.demo@example.com

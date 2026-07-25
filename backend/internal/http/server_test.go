@@ -412,6 +412,14 @@ func TestFrontendFilesAreServedWithoutShadowingBackendRoutes(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
+	removedUploadsRootReq := httptest.NewRequest(http.MethodGet, "/uploads", nil)
+	addSessionCookie(removedUploadsRootReq, "session-token")
+	handler.ServeHTTP(rec, removedUploadsRootReq)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("removed uploads root reached backend auth or SPA: status=%d content-type=%q body=%q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
 	missingAssetReq := httptest.NewRequest(http.MethodGet, "/js/missing.js", nil)
 	handler.ServeHTTP(rec, missingAssetReq)
 	if rec.Code != http.StatusNotFound {

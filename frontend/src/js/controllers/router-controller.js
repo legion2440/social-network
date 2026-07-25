@@ -1,8 +1,12 @@
 (function (root, factory) {
-  var create = factory(root, root && root.createFeatureController);
+  var create = factory(
+    root,
+    root && root.createFeatureController,
+    root && root.createControllerContext
+  );
   if (typeof module === 'object' && module.exports) module.exports = create;
   if (root) root.createRouterController = create;
-})(typeof window !== 'undefined' ? window : globalThis, function (browser, createController) {
+})(typeof window !== 'undefined' ? window : globalThis, function (browser, createController, createContext) {
   function positiveID(value) {
     var id = Number(value);
     return Number.isInteger(id) && id > 0 ? id : null;
@@ -27,7 +31,7 @@
   }
 
   return function createRouterController(dependencies) {
-    var view = dependencies.root;
+    var context = createContext(dependencies);
     var environment = dependencies.environment || browser;
     var applying = false;
     var popstate = function () { applyCurrent(); };
@@ -36,20 +40,48 @@
       if (environment && environment.history) environment.history.replaceState({}, '', path);
     }
 
+    function screenPath(screen) {
+      if (screen === 'feed') return '/';
+      if (screen === 'groups') return '/groups';
+      if (screen === 'notifications') return '/notifications';
+      if (screen === 'chat') return '/messages';
+      return '/';
+    }
+
+    function applyScreen(screen) {
+      if (screen !== 'chat') context.stopTyping();
+      var nextState = { screen: screen, privacyOpen: false, emojiOpen: false };
+      if (screen === 'chat') {
+        nextState.mobileChatList = context.usesMobileChatLayout();
+        if (nextState.mobileChatList) nextState.activeChatKey = null;
+      }
+      context.setState(nextState, function () {
+        if (screen === 'chat') {
+          if (context.state.activeChatKey) context.enqueueChatRead(context.state.activeChatKey);
+          context.loadChats(true, 'user-open');
+        }
+        if (screen === 'notifications') context.loadNotifications(true);
+        if (screen === 'groups') {
+          context.loadGroups(true);
+          context.loadGroupInvitationInbox(true);
+        }
+      });
+    }
+
     function apply(route) {
       applying = true;
       try {
-        if (route.kind === 'home') view.go('feed');
-        else if (route.kind === 'groups') view.go('groups');
-        else if (route.kind === 'notifications') view.go('notifications');
-        else if (route.kind === 'messages') view.go('chat');
-        else if (route.kind === 'profile') view.openProfile(route.id);
-        else if (route.kind === 'group') view.openGroup(route.id);
-        else if (route.kind === 'direct-chat') view.openDirectChat(route.id);
-        else if (route.kind === 'group-chat') view.openGroupChat(route.id);
+        if (route.kind === 'home') applyScreen('feed');
+        else if (route.kind === 'groups') applyScreen('groups');
+        else if (route.kind === 'notifications') applyScreen('notifications');
+        else if (route.kind === 'messages') applyScreen('chat');
+        else if (route.kind === 'profile') context.openProfile(route.id);
+        else if (route.kind === 'group') context.openGroup(route.id);
+        else if (route.kind === 'direct-chat') context.openDirectChat(route.id);
+        else if (route.kind === 'group-chat') context.openGroupChat(route.id);
         else {
           replace('/');
-          view.go('feed');
+          applyScreen('feed');
         }
       } finally {
         applying = false;
@@ -67,30 +99,34 @@
         return;
       }
       if (replaceCurrent) environment.history.replaceState({}, '', path);
-      else if (!environment.location || environment.location.pathname !== path) environment.history.pushState({}, '', path);
+      else if (!environment.location || environment.location.pathname !== path) {
+        environment.history.pushState({}, '', path);
+      }
       apply(parsePath(path));
     }
 
-    function screenPath(screen) {
-      if (screen === 'feed') return '/';
-      if (screen === 'groups') return '/groups';
-      if (screen === 'notifications') return '/notifications';
-      if (screen === 'chat') return '/messages';
-      return '/';
+    function go(screen) {
+      if (!applying) {
+        navigate(screenPath(screen), false);
+        return;
+      }
+      applyScreen(screen);
     }
 
-    var controller = createController('router', dependencies, {
+    var actions = {
       isApplying: function () { return applying; },
       parse: parsePath,
       applyCurrent: applyCurrent,
       navigate: navigate,
+      go: go,
       screen: function (screen) { navigate(screenPath(screen), false); },
       profile: function (userID) { navigate('/users/' + positiveID(userID), false); },
       group: function (groupID) { navigate('/groups/' + positiveID(groupID), false); },
       directChat: function (userID) { navigate('/messages/user/' + positiveID(userID), false); },
       groupChat: function (groupID) { navigate('/messages/group/' + positiveID(groupID), false); },
       reset: function () { navigate('/', true); }
-    }, function (state) {
+    };
+    return createController('router', dependencies, actions, function (state) {
       return { screen: state ? state.screen : 'feed' };
     }, {
       start: function () {
@@ -104,6 +140,5 @@
         }
       }
     });
-    return controller;
   };
 });
