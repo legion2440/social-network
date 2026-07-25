@@ -453,3 +453,7 @@
 .ui-378{font:800 9px 'Manrope',sans-serif;letter-spacing:.08em}
 .ui-379{font:700 13px 'Manrope',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ui-380{padding:0 6px;font:600 11px 'Manrope',sans-serif;color:var(--text3)}
+.oauth-github-button {
+  width: 100%;
+  margin-top: 12px;
+}

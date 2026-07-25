@@ -27,7 +27,7 @@ func TestDemoSeedMigrationsAreOptInVersionedAndIdempotent(t *testing.T) {
 	if err := db.QueryRow(`SELECT version, dirty FROM schema_migrations`).Scan(&schemaVersion, &schemaDirty); err != nil {
 		t.Fatal(err)
 	}
-	if schemaVersion != 16 || schemaDirty {
+	if schemaVersion != 18 || schemaDirty {
 		t.Fatalf("schema migration state=(%d, %t)", schemaVersion, schemaDirty)
 	}
 
@@ -137,7 +137,7 @@ func TestDemoSeedMigrationsAreOptInVersionedAndIdempotent(t *testing.T) {
 	if err := db.QueryRow(`SELECT version, dirty FROM schema_migrations`).Scan(&schemaVersion, &schemaDirty); err != nil {
 		t.Fatal(err)
 	}
-	if schemaVersion != 16 || schemaDirty {
+	if schemaVersion != 18 || schemaDirty {
 		t.Fatalf("seed changed schema migration state=(%d, %t)", schemaVersion, schemaDirty)
 	}
 }

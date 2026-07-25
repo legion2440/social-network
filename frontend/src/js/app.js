@@ -115,6 +115,28 @@ function emptyRegistrationForm() {
   };
 }
 
+function emptyOAuthState() {
+  return {
+    oauthProviders: [],
+    oauthProvidersLoading: true,
+    oauthError: '',
+    oauthCompletionActive: false,
+    oauthFlowToken: '',
+    oauthFlow: null,
+    oauthFlowLoading: false,
+    oauthCompletionPending: false,
+    oauthCompletionError: '',
+    oauthFirstName: '',
+    oauthLastName: '',
+    oauthDateOfBirth: '',
+    oauthNickname: '',
+    oauthAboutMe: '',
+    oauthAvatar: null,
+    oauthAvatarName: '',
+    oauthAvatarPreviewURL: ''
+  };
+}
+
 function emptyProfileEditor() {
   return {
     profileEditOpen: false, profileEditPending: false, profileAvatarPending: false,
@@ -281,6 +303,7 @@ class Component extends DCLogic {
       authMode: 'login', authStatus: 'checking', authPending: false, logoutPending: false,
       authError: '', bootstrapError: '', appError: '',
       ...emptyRegistrationForm(),
+      ...emptyOAuthState(),
       ...emptyProfileEditor(),
       ...emptyConfirmationState()
     };
@@ -353,6 +376,7 @@ class Component extends DCLogic {
     const helpers = Object.freeze({
       emptyCurrentUser,
       emptyRegistrationForm,
+      emptyOAuthState,
       emptyProfileEditor,
       emptyConfirmationState,
       emptyCommentState,
@@ -507,7 +531,7 @@ class Component extends DCLogic {
       realtime: ['chatSendLock','ws','wsGeneration','wsHasOpened','wsReconnectTimer']
     };
     const apiNames = {
-      auth: ['login','logout','me','register'],
+      auth: ['completeOAuthRegistration','login','logout','me','oauthFlow','oauthProviders','register'],
       feed: ['createComment','createPost','feed','followers','postComments'],
       profile: ['acceptFollowRequest','deleteAvatar','follow','followRequests','followers','following','rejectFollowRequest','relationship','replaceAvatar','unfollow','updateProfile','userPosts','userProfile','users'],
       groups: ['acceptGroupInvitation','acceptGroupJoinRequest','cancelGroupJoin','createGroup','createGroupPost','declineGroupInvitation','group','groupInvitationInbox','groupInvitations','groupJoinRequests','groupMembers','groupPosts','groups','inviteToGroup','leaveGroup','rejectGroupJoinRequest','requestGroupJoin'],
@@ -527,7 +551,7 @@ class Component extends DCLogic {
       realtime: ['chats','notifications']
     };
     const helperNames = {
-      auth: ['emptyCurrentUser','emptyRegistrationForm','emptyProfileEditor','emptyConfirmationState','emptyGroupPostState','emptyGroupEventState','emptyNotificationState','emptyChatState','requestErrorMessage','formatDateOfBirthInput','parseDateOfBirth','applyAuthUser'],
+      auth: ['emptyCurrentUser','emptyRegistrationForm','emptyOAuthState','emptyProfileEditor','emptyConfirmationState','emptyGroupPostState','emptyGroupEventState','emptyNotificationState','emptyChatState','requestErrorMessage','formatDateOfBirthInput','parseDateOfBirth','applyAuthUser'],
       feed: ['emptyCommentState','requestErrorMessage','apiUser','formatPostTime','mapAPIPost','mergeAPIUsers'],
       profile: ['emptyProfileEditor','requestErrorMessage','formatDateOfBirthInput','parseDateOfBirth','cover','num','apiUser','applyAuthUser','mapAPIPost','mergeAPIUsers','openConfirmation'],
       groups: ['emptyGroupPostState','emptyGroupEventState','requestErrorMessage','cover','num','apiUser','mapAPIPost','mergeAPIUsers'],
@@ -602,6 +626,7 @@ class Component extends DCLogic {
           : {}
       };
     });
+    dependencies.auth.environment = typeof window !== 'undefined' ? window : null;
     dependencies.router = {
       state,
       api: {},
@@ -622,8 +647,11 @@ class Component extends DCLogic {
         openProfile: action('profile', 'openProfile'),
         openGroup: action('groups', 'openGroup'),
         openDirectChat: action('chat', 'openDirectChat'),
-        openGroupChat: action('chat', 'openGroupChat')
+        openGroupChat: action('chat', 'openGroupChat'),
+        showOAuthCompletion: action('auth', 'showOAuthCompletion'),
+        showLoginOAuthError: action('auth', 'showLoginOAuthError')
       },
+      environment: typeof window !== 'undefined' ? window : null,
       session: {},
       values: {},
       presenters: {}

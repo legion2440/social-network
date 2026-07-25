@@ -76,6 +76,7 @@ The project deliberately keeps the backend private inside the Docker network. On
 ### Authentication and profiles
 
 - registration with email, password, first name, last name, and date of birth;
+- optional GitHub sign-in and registration through a verified GitHub email;
 - optional avatar, gender, nickname, and about text;
 - HttpOnly session cookie with multiple independent sessions per user;
 - login, persistent session restore, and logout available from every application page;
@@ -222,6 +223,8 @@ The browser application is not organized as a conventional React component tree.
 ## 🔐 Security and access control
 
 - passwords are stored as bcrypt hashes;
+- GitHub OAuth state and registration flows are random, server-side, one-time, and time-limited;
+- GitHub email is accepted only from `/user/emails` when verified; provider access tokens are never persisted;
 - session tokens are transported through an HttpOnly, SameSite=Lax cookie;
 - the backend is not published to the host in Docker;
 - private-profile fields and content are returned only to the owner and accepted followers; custom avatars remain visible to authenticated users;
@@ -418,13 +421,16 @@ Raw session tokens are deliberately excluded from documented audit queries.
 
 Backend environment variables:
 
-| Variable                       | Default                 | Purpose                                 |
-|--------------------------------|-------------------------|-----------------------------------------|
-| `SOCIAL_NETWORK_HTTP_ADDR`     | `127.0.0.1:8080`        | backend listen address                  |
-| `SOCIAL_NETWORK_DB_PATH`       | `var/social-network.db` | SQLite database path                    |
-| `SOCIAL_NETWORK_UPLOAD_DIR`    | `var/uploads`           | uploaded file directory                 |
-| `SOCIAL_NETWORK_FRONTEND_DIR`  | `../frontend/dist`      | generated local static frontend directory |
-| `SOCIAL_NETWORK_COOKIE_SECURE` | `false`                 | Secure attribute for the session cookie |
+| Variable                              | Default                 | Purpose                                      |
+|---------------------------------------|-------------------------|----------------------------------------------|
+| `SOCIAL_NETWORK_HTTP_ADDR`            | `127.0.0.1:8080`        | backend listen address                       |
+| `SOCIAL_NETWORK_DB_PATH`              | `var/social-network.db` | SQLite database path                         |
+| `SOCIAL_NETWORK_UPLOAD_DIR`           | `var/uploads`           | uploaded file directory                      |
+| `SOCIAL_NETWORK_FRONTEND_DIR`         | `../frontend/dist`      | generated local static frontend directory    |
+| `SOCIAL_NETWORK_COOKIE_SECURE`        | `false`                 | Secure attribute for the session cookie      |
+| `SOCIAL_NETWORK_GITHUB_CLIENT_ID`     | empty                   | GitHub OAuth App client ID                    |
+| `SOCIAL_NETWORK_GITHUB_CLIENT_SECRET` | empty                   | GitHub OAuth App client secret                |
+| `SOCIAL_NETWORK_GITHUB_REDIRECT_URL`  | empty                   | absolute GitHub OAuth callback URL            |
 
 Compose-specific host setting:
 
@@ -433,6 +439,13 @@ Compose-specific host setting:
 | `SOCIAL_NETWORK_PORT` | `8080`  | published frontend host port |
 
 Docker overrides backend paths to persistent `/data` mounts and disables backend static frontend serving.
+
+GitHub OAuth is disabled when all three GitHub variables are empty and enabled only
+when all three are set. A partial configuration stops startup with an error. For
+Compose, copy `.env.example` to `.env`, fill all three values, and configure the
+GitHub OAuth App callback to match `SOCIAL_NETWORK_GITHUB_REDIRECT_URL`. The Go
+application does not read `.env`; Compose performs the substitution. The real
+`.env` is ignored by Git.
 
 ## 🧪 Local development and tests
 
@@ -492,6 +505,7 @@ social-network/
 │   │   ├── config/
 │   │   ├── domain/
 │   │   ├── http/
+│   │   ├── oauth/
 │   │   ├── platform/
 │   │   ├── realtime/
 │   │   ├── repo/

@@ -217,13 +217,145 @@ test('derived contracts use the real shared state field names', () => {
   assert.equal('authChecking' in viewModel, false);
 });
 
+test('auth controller owns GitHub provider discovery, redirect, preview and completion', async () => {
+  const createAuthController = require(path.join(controllerDir, 'auth-controller.js'));
+  const { store, dependencies } = baseDependencies({
+    authStatus: 'anonymous',
+    screen: 'auth',
+    authMode: 'login',
+    authPending: false,
+    authError: '',
+    bootstrapError: '',
+    logoutPending: false,
+    oauthProviders: [],
+    oauthProvidersLoading: true,
+    oauthError: '',
+    oauthCompletionActive: false,
+    oauthFlowToken: '',
+    oauthFlow: null,
+    oauthFlowLoading: false,
+    oauthCompletionPending: false,
+    oauthCompletionError: '',
+    oauthFirstName: '',
+    oauthLastName: '',
+    oauthDateOfBirth: '',
+    oauthNickname: '',
+    oauthAboutMe: '',
+    oauthAvatar: null,
+    oauthAvatarName: '',
+    oauthAvatarPreviewURL: '',
+    regAvatarName: '',
+    regAvatarPreviewURL: ''
+  });
+  let assigned = '';
+  let replaced = '';
+  let completedForm = null;
+  dependencies.environment = {
+    location: { assign: value => { assigned = value; } },
+    history: { replaceState: (_state, _title, value) => { replaced = value; } }
+  };
+  dependencies.api = {
+    oauthProviders: async () => ({
+      providers: [{ name: 'github', label: 'GitHub' }]
+    }),
+    oauthFlow: async () => ({
+      provider: 'github',
+      email: 'verified@example.com',
+      github_username: 'octocat',
+      suggested_first_name: 'The',
+      suggested_last_name: 'Octocat',
+      suggested_nickname: 'octocat'
+    }),
+    completeOAuthRegistration: async (_token, form) => {
+      completedForm = form;
+      return {
+        id: 8,
+        email: 'verified@example.com',
+        first_name: 'The',
+        last_name: 'Octocat',
+        date_of_birth: '01-01-1990',
+        is_private: false
+      };
+    },
+    login: async () => ({}),
+    logout: async () => null,
+    me: async () => ({}),
+    register: async () => ({})
+  };
+  const emptyOAuthState = () => ({
+    oauthProviders: [],
+    oauthProvidersLoading: true,
+    oauthError: '',
+    oauthCompletionActive: false,
+    oauthFlowToken: '',
+    oauthFlow: null,
+    oauthFlowLoading: false,
+    oauthCompletionPending: false,
+    oauthCompletionError: '',
+    oauthFirstName: '',
+    oauthLastName: '',
+    oauthDateOfBirth: '',
+    oauthNickname: '',
+    oauthAboutMe: '',
+    oauthAvatar: null,
+    oauthAvatarName: '',
+    oauthAvatarPreviewURL: ''
+  });
+  dependencies.helpers = {
+    emptyCurrentUser: () => ({}),
+    emptyRegistrationForm: () => ({}),
+    emptyOAuthState,
+    emptyProfileEditor: () => ({}),
+    emptyConfirmationState: () => ({}),
+    emptyGroupPostState: () => ({}),
+    emptyGroupEventState: () => ({}),
+    emptyNotificationState: () => ({}),
+    emptyChatState: () => ({}),
+    requestErrorMessage: (_error, fallback) => fallback,
+    formatDateOfBirthInput: value => value,
+    parseDateOfBirth: value => value === '01-01-1990',
+    applyAuthUser: user => ({ [user.id]: user })
+  };
+  dependencies.gates = { authGate: requestGate() };
+  dependencies.callbacks = {
+    disposeAllCommentPreviews() {},
+    loadDirectory() {},
+    loadFeed() {},
+    loadNotifications() {},
+    loadPostFollowers() {},
+    startAuthenticatedRealtime() {},
+    stopRealtime() {}
+  };
+  dependencies.navigation = { applyCurrent() {} };
+
+  const auth = createAuthController(dependencies);
+  await auth.actions.loadOAuthProviders();
+  assert.equal(auth.derived(store.state).oauthHasGitHub, true);
+  auth.actions.startGitHubOAuth();
+  assert.equal(assigned, '/api/auth/oauth/github/start?next=/');
+
+  auth.actions.showOAuthCompletion('flow-token');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(store.state.oauthFlow.email, 'verified@example.com');
+  assert.equal(store.state.oauthFirstName, 'The');
+  auth.actions.updateOAuthRegistrationField('oauthDateOfBirth', '01-01-1990');
+  await auth.actions.completeOAuthRegistration({ preventDefault() {} });
+  assert.equal(completedForm.get('first_name'), 'The');
+  assert.equal(completedForm.get('date_of_birth'), '01-01-1990');
+  assert.equal(completedForm.has('email'), false);
+  assert.equal(store.state.authStatus, 'authenticated');
+  assert.equal(replaced, '/');
+});
+
 test('router parses strict routes and dispatches only named feature callbacks', () => {
   const createRouterController = require(path.join(controllerDir, 'router-controller.js'));
-  const { store, dependencies } = baseDependencies({ screen: 'feed', activeChatKey: null });
+  const { store, dependencies } = baseDependencies({
+    authStatus: 'authenticated', screen: 'feed', activeChatKey: null
+  });
   const calls = [];
   const listeners = {};
   const environment = {
-    location: { pathname: '/' },
+    location: { pathname: '/', search: '' },
     history: {
       pushState(_state, _title, pathname) {
         environment.location.pathname = pathname;
@@ -251,11 +383,21 @@ test('router parses strict routes and dispatches only named feature callbacks', 
     openProfile: id => calls.push(['profile', id]),
     openGroup: id => calls.push(['group', id]),
     openDirectChat: id => calls.push(['direct-chat', id]),
-    openGroupChat: id => calls.push(['group-chat', id])
+    openGroupChat: id => calls.push(['group-chat', id]),
+    showOAuthCompletion: flow => calls.push(['oauth-complete', flow]),
+    showLoginOAuthError: code => calls.push(['oauth-error', code])
   };
   const router = createRouterController(dependencies);
 
   assert.deepEqual(router.actions.parse('/users/14'), { kind: 'profile', id: 14 });
+  assert.deepEqual(
+    router.actions.parse('/oauth/complete', '?flow=one-time'),
+    { kind: 'oauth-complete', flow: 'one-time' }
+  );
+  assert.deepEqual(
+    router.actions.parse('/login', '?oauth_error=oauth_state_invalid'),
+    { kind: 'login', oauthError: 'oauth_state_invalid' }
+  );
   assert.deepEqual(router.actions.parse('/users/0'), { kind: 'fallback' });
   assert.deepEqual(router.actions.parse('/messages/group/nope'), { kind: 'fallback' });
 

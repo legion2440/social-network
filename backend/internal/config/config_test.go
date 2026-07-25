@@ -11,6 +11,9 @@ func TestLoadDefaultsUseBackendRelativeRuntimePaths(t *testing.T) {
 	t.Setenv("SOCIAL_NETWORK_UPLOAD_DIR", "")
 	t.Setenv("SOCIAL_NETWORK_FRONTEND_DIR", "")
 	t.Setenv("SOCIAL_NETWORK_COOKIE_SECURE", "")
+	t.Setenv("SOCIAL_NETWORK_GITHUB_CLIENT_ID", "")
+	t.Setenv("SOCIAL_NETWORK_GITHUB_CLIENT_SECRET", "")
+	t.Setenv("SOCIAL_NETWORK_GITHUB_REDIRECT_URL", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -31,6 +34,9 @@ func TestLoadDefaultsUseBackendRelativeRuntimePaths(t *testing.T) {
 	if cfg.CookieSecure {
 		t.Fatal("local HTTP cookie must not be secure by default")
 	}
+	if cfg.GitHubOAuth.Enabled {
+		t.Fatal("GitHub OAuth must be disabled when none of its variables are set")
+	}
 }
 
 func TestLoadUsesConfiguredFrontendDir(t *testing.T) {
@@ -49,5 +55,43 @@ func TestLoadRejectsInvalidCookieSecureValue(t *testing.T) {
 	t.Setenv("SOCIAL_NETWORK_COOKIE_SECURE", "sometimes")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected invalid boolean error")
+	}
+}
+
+func TestLoadEnablesGitHubOAuthOnlyWithCompleteConfiguration(t *testing.T) {
+	t.Setenv("SOCIAL_NETWORK_GITHUB_CLIENT_ID", "client-id")
+	t.Setenv("SOCIAL_NETWORK_GITHUB_CLIENT_SECRET", "client-secret")
+	t.Setenv("SOCIAL_NETWORK_GITHUB_REDIRECT_URL", "http://localhost:8080/api/auth/oauth/github/callback")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.GitHubOAuth.Enabled {
+		t.Fatal("GitHub OAuth must be enabled")
+	}
+	if cfg.GitHubOAuth.ClientID != "client-id" ||
+		cfg.GitHubOAuth.ClientSecret != "client-secret" ||
+		cfg.GitHubOAuth.RedirectURL != "http://localhost:8080/api/auth/oauth/github/callback" {
+		t.Fatalf("unexpected GitHub OAuth config: %+v", cfg.GitHubOAuth)
+	}
+}
+
+func TestLoadRejectsPartialGitHubOAuthConfiguration(t *testing.T) {
+	keys := []string{
+		"SOCIAL_NETWORK_GITHUB_CLIENT_ID",
+		"SOCIAL_NETWORK_GITHUB_CLIENT_SECRET",
+		"SOCIAL_NETWORK_GITHUB_REDIRECT_URL",
+	}
+	for _, configuredKey := range keys {
+		t.Run(configuredKey, func(t *testing.T) {
+			for _, key := range keys {
+				t.Setenv(key, "")
+			}
+			t.Setenv(configuredKey, "configured")
+			if _, err := Load(); err == nil {
+				t.Fatal("expected partial GitHub OAuth configuration error")
+			}
+		})
 	}
 }

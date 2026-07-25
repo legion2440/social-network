@@ -76,6 +76,7 @@ Backend намеренно остаётся приватным внутри Dock
 ### Аутентификация и профили
 
 - регистрация с email, паролем, именем, фамилией и датой рождения;
+- необязательные вход и регистрация через GitHub с подтверждённым GitHub email;
 - необязательные avatar, gender, nickname и about;
 - HttpOnly session cookie и несколько независимых сессий для одного пользователя;
 - login, восстановление сессии и logout с любой страницы приложения;
@@ -223,6 +224,8 @@ Browser-приложение не организовано как обычное
 ## 🔐 Безопасность и контроль доступа
 
 - пароли хранятся как bcrypt hashes;
+- GitHub OAuth state и registration flow случайны, хранятся на сервере, одноразовые и имеют TTL;
+- GitHub email принимается только из `/user/emails` с признаком verified; provider access token не сохраняется;
 - session token передаётся через HttpOnly, SameSite=Lax cookie;
 - Docker backend не публикуется на host;
 - поля и контент приватного профиля доступны только владельцу и accepted followers; custom avatar виден авторизованным пользователям;
@@ -420,13 +423,16 @@ Raw session tokens намеренно не входят в документир�
 
 Backend environment variables:
 
-| Переменная                     | Значение по умолчанию   | Назначение                    |
-|--------------------------------|-------------------------|-------------------------------|
-| `SOCIAL_NETWORK_HTTP_ADDR`     | `127.0.0.1:8080`        | адрес backend                 |
-| `SOCIAL_NETWORK_DB_PATH`       | `var/social-network.db` | путь к SQLite                 |
-| `SOCIAL_NETWORK_UPLOAD_DIR`    | `var/uploads`           | каталог uploaded files        |
-| `SOCIAL_NETWORK_FRONTEND_DIR`  | `../frontend/dist`      | generated local static frontend |
-| `SOCIAL_NETWORK_COOKIE_SECURE` | `false`                 | Secure-атрибут session cookie |
+| Переменная                            | Значение по умолчанию   | Назначение                         |
+|---------------------------------------|-------------------------|------------------------------------|
+| `SOCIAL_NETWORK_HTTP_ADDR`            | `127.0.0.1:8080`        | адрес backend                      |
+| `SOCIAL_NETWORK_DB_PATH`              | `var/social-network.db` | путь к SQLite                      |
+| `SOCIAL_NETWORK_UPLOAD_DIR`           | `var/uploads`           | каталог uploaded files             |
+| `SOCIAL_NETWORK_FRONTEND_DIR`         | `../frontend/dist`      | generated local static frontend    |
+| `SOCIAL_NETWORK_COOKIE_SECURE`        | `false`                 | Secure-атрибут session cookie      |
+| `SOCIAL_NETWORK_GITHUB_CLIENT_ID`     | пусто                   | client ID приложения GitHub OAuth  |
+| `SOCIAL_NETWORK_GITHUB_CLIENT_SECRET` | пусто                   | client secret приложения GitHub OAuth |
+| `SOCIAL_NETWORK_GITHUB_REDIRECT_URL`  | пусто                   | абсолютный callback URL GitHub OAuth |
 
 Настройка host-порта Compose:
 
@@ -435,6 +441,12 @@ Backend environment variables:
 | `SOCIAL_NETWORK_PORT` | `8080`                | опубликованный frontend port |
 
 Docker заменяет backend paths на постоянные `/data` mounts и отключает выдачу frontend через Go server.
+
+GitHub OAuth выключен, когда пусты все три GitHub-переменные, и включён только
+когда заданы все три. Частичная конфигурация завершает startup ошибкой. Для
+Compose скопируйте `.env.example` в `.env`, заполните три значения и укажите тот
+же callback в GitHub OAuth App. Go-приложение само `.env` не читает:
+подстановку выполняет Compose. Реальный `.env` игнорируется Git.
 
 ## 🧪 Локальная разработка и тесты
 
@@ -494,6 +506,7 @@ social-network/
 │   │   ├── config/
 │   │   ├── domain/
 │   │   ├── http/
+│   │   ├── oauth/
 │   │   ├── platform/
 │   │   ├── realtime/
 │   │   ├── repo/

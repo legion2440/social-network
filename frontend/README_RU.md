@@ -296,6 +296,7 @@ Network failure имеет status `0`.
 Client покрывает:
 
 - registration, login, logout, session restore;
+- OAuth provider discovery, safe registration flow preview и multipart completion;
 - profile update и avatar replacement;
 - users, relationships, followers, follow requests;
 - feed, profile posts, group posts, comments с media;
@@ -410,6 +411,19 @@ GET /api/auth/me
 
 Registration использует `FormData`, login использует JSON.
 
+Если backend объявляет GitHub provider, auth screen показывает
+`Continue with GitHub`. Action выполняет настоящий browser navigation через
+`window.location.assign()` на backend start endpoint, а не `fetch`. Callback
+errors приходят на `/login?oauth_error=...` и преобразуются из стабильных backend
+codes в понятные сообщения.
+
+Новая GitHub identity перенаправляется на `/oauth/complete?flow=...`. Auth
+controller загружает safe preview в `oauthFlow`, показывает verified email только
+для чтения и отправляет first name, last name, birth date, optional
+nickname/about и optional local avatar через `FormData`. Email не добавляется в
+completion `FormData`, GitHub avatar не копируется. После успеха запускается
+обычный authenticated bootstrap, а history заменяется на `/`.
+
 После authentication:
 
 - returned user становится `USERS.me`;
@@ -443,6 +457,8 @@ Router отвечает за parsing URL и синхронизацию History A
 /messages                 chat list
 /messages/user/:id        direct chat
 /messages/group/:id       group chat
+/oauth/complete?flow=...  завершение GitHub registration
+/login?oauth_error=...    OAuth error на local login
 ```
 
 Он использует `pushState`, `replaceState` и `popstate`, восстанавливает deep links после refresh и login, поддерживает Back/Forward и заменяет malformed routes на `/`. Закрытые resources приводят к контролируемому profile/group/chat error state.

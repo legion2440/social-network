@@ -70,6 +70,7 @@ internal/app
 | `internal/config` | environment parsing и defaults |
 | `internal/domain` | entities и enums |
 | `internal/http` | routing, auth middleware, strict parsing, responses |
+| `internal/oauth` | registry providers и GitHub OAuth HTTP client |
 | `internal/service` | business rules, authorization, transactions |
 | `internal/repo` | repository и transaction interfaces |
 | `internal/repo/sqlite` | SQLite implementations и embedded migrations |
@@ -131,6 +132,8 @@ internal/repo/sqlite/migrations
 000014_create_chat_read_states
 000015_add_comment_media
 000016_allow_media_only_content
+000017_create_auth_identities
+000018_create_auth_flows
 ```
 
 Проверка migration state:
@@ -143,7 +146,7 @@ sqlite3 var/social-network.db \
 Ожидаемое состояние:
 
 ```text
-16 | 0
+18 | 0
 ```
 
 Migration `000011` при перестройке `posts` сохраняет post/comment IDs, timestamps, selected audiences, media links и реальные high-water values в `sqlite_sequence`. Down migration запрещена, пока существуют group posts.
@@ -253,6 +256,37 @@ social_network_session
 ```
 
 Разрешены несколько sessions на одного user. Logout удаляет только текущую session и синхронно отзывает её Hub access. Expired sessions удаляются при чтении. WebSocket operations повторно проверяют raw session token в SQLite.
+
+Необязательный GitHub OAuth:
+
+```text
+GET  /api/auth/oauth/providers
+GET  /api/auth/oauth/github/start?next=/
+GET  /api/auth/oauth/github/callback
+GET  /api/auth/oauth/flows/{token}
+POST /api/auth/oauth/flows/{token}/complete
+```
+
+Переменные `SOCIAL_NETWORK_GITHUB_CLIENT_ID`,
+`SOCIAL_NETWORK_GITHUB_CLIENT_SECRET` и
+`SOCIAL_NETWORK_GITHUB_REDIRECT_URL` задаются только вместе. Если пусты все три,
+OAuth выключен; частичная конфигурация является startup error. Go-приложение
+читает только process environment и не загружает `.env`.
+
+Callback атомарно расходует десятиминутный state до обработки provider error или
+отсутствующего code. GitHub `/user/emails` вызывается всегда, принимается только
+verified email. Существующая identity ищется только по
+`(provider, provider_user_id)`, её provider metadata обновляются и создаётся
+обычная session. Если verified email новой identity уже принадлежит local
+account, linking и merge не выполняются.
+
+Новая identity получает одноразовый registration flow на 30 минут. GET
+возвращает только безопасный preview. Completion принимает имя, фамилию, дату
+рождения, optional nickname/about и optional avatar, но не email и не password.
+User, identity, avatar metadata и session создаются в одной transaction; rollback
+сохраняет flow и удаляет staged/finalized avatar. Случайный сгенерированный
+password хранится только как bcrypt hash. GitHub access token и avatar не
+сохраняются.
 
 ## 👤 Profiles и follows
 
@@ -579,8 +613,10 @@ Hub хранит только `SHA-256(raw session token)`. Logout, unfollow и 
 - `404`: absent или intentionally hidden resource;
 - `405`: wrong method с `Allow`;
 - `409`: stale/conflicting transition;
+- `410`: expired OAuth registration flow;
 - `413`: oversized body/file;
 - `415`: unsupported content type;
+- `429`: rate limit OAuth start/completion;
 - `500`: storage/unexpected failure;
 - unknown `/api/*`: JSON `404`.
 - local frontend files выдаются напрямую; отсутствующие extensionless client
@@ -618,6 +654,7 @@ backend/
 │   ├── config/
 │   ├── domain/
 │   ├── http/
+│   ├── oauth/
 │   ├── platform/
 │   ├── realtime/ws/
 │   ├── repo/sqlite/{migrations,seedmigrations}/

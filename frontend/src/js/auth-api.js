@@ -104,6 +104,28 @@
           expectedStatus: 200
         });
       },
+      oauthProviders: function () {
+        return request('/api/auth/oauth/providers', {
+          method: 'GET',
+          expectedStatus: 200
+        });
+      },
+      oauthFlow: function (token) {
+        return request('/api/auth/oauth/flows/' + encodeURIComponent(String(token)), {
+          method: 'GET',
+          expectedStatus: 200
+        });
+      },
+      completeOAuthRegistration: function (token, formData) {
+        return request(
+          '/api/auth/oauth/flows/' + encodeURIComponent(String(token)) + '/complete',
+          {
+            method: 'POST',
+            body: formData,
+            expectedStatus: 201
+          }
+        );
+      },
       updateProfile: function (profile) {
         return request('/api/profile', {
           method: 'PATCH',

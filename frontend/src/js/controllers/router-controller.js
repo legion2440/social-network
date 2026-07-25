@@ -12,9 +12,20 @@
     return Number.isInteger(id) && id > 0 ? id : null;
   }
 
-  function parsePath(pathname) {
+  function queryValue(search, name) {
+    var query = new URLSearchParams(String(search || '').replace(/^\?/, ''));
+    return query.get(name) || '';
+  }
+
+  function parsePath(pathname, search) {
     var path = String(pathname || '/').replace(/\/+$/, '') || '/';
     if (path === '/') return { kind: 'home' };
+    if (path === '/login') {
+      return { kind: 'login', oauthError: queryValue(search, 'oauth_error') };
+    }
+    if (path === '/oauth/complete') {
+      return { kind: 'oauth-complete', flow: queryValue(search, 'flow') };
+    }
     if (path === '/groups') return { kind: 'groups' };
     if (path === '/notifications') return { kind: 'notifications' };
     if (path === '/messages') return { kind: 'messages' };
@@ -71,7 +82,19 @@
     function apply(route) {
       applying = true;
       try {
-        if (route.kind === 'home') applyScreen('feed');
+        if (
+          (route.kind === 'oauth-complete' || route.kind === 'login') &&
+          context.state.authStatus === 'authenticated'
+        ) {
+          replace('/');
+          applyScreen('feed');
+        } else if (route.kind === 'oauth-complete') {
+          context.showOAuthCompletion(route.flow);
+        } else if (route.kind === 'login') {
+          context.showLoginOAuthError(route.oauthError);
+        } else if (context.state.authStatus !== 'authenticated') {
+          context.showLoginOAuthError('');
+        } else if (route.kind === 'home') applyScreen('feed');
         else if (route.kind === 'groups') applyScreen('groups');
         else if (route.kind === 'notifications') applyScreen('notifications');
         else if (route.kind === 'messages') applyScreen('chat');
@@ -90,19 +113,21 @@
 
     function applyCurrent() {
       var pathname = environment && environment.location ? environment.location.pathname : '/';
-      apply(parsePath(pathname));
+      var search = environment && environment.location ? environment.location.search : '';
+      apply(parsePath(pathname, search));
     }
 
     function navigate(path, replaceCurrent) {
+      var target = new URL(String(path || '/'), 'http://router.local');
       if (!environment || !environment.history) {
-        apply(parsePath(path));
+        apply(parsePath(target.pathname, target.search));
         return;
       }
       if (replaceCurrent) environment.history.replaceState({}, '', path);
       else if (!environment.location || environment.location.pathname !== path) {
         environment.history.pushState({}, '', path);
       }
-      apply(parsePath(path));
+      apply(parsePath(target.pathname, target.search));
     }
 
     function go(screen) {

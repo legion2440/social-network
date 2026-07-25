@@ -67,6 +67,32 @@ test('login sends JSON credentials and returns the authenticated user', async ()
   });
 });
 
+test('OAuth clients load providers and flow preview, then submit original FormData', async () => {
+  const calls = [];
+  const formData = { kind: 'oauth-form-data-test-double' };
+  const api = createAuthAPI(async (path, options) => {
+    calls.push({ path, options });
+    if (path === '/api/auth/oauth/providers') {
+      return jsonResponse(200, { providers: [{ name: 'github', label: 'GitHub' }] });
+    }
+    if (options.method === 'POST') return jsonResponse(201, { id: 17 });
+    return jsonResponse(200, { provider: 'github', email: 'verified@example.com' });
+  });
+
+  assert.equal((await api.oauthProviders()).providers[0].name, 'github');
+  assert.equal((await api.oauthFlow('flow + token')).email, 'verified@example.com');
+  assert.deepEqual(
+    await api.completeOAuthRegistration('flow + token', formData),
+    { id: 17 }
+  );
+  assert.equal(calls[0].path, '/api/auth/oauth/providers');
+  assert.equal(calls[1].path, '/api/auth/oauth/flows/flow%20%2B%20token');
+  assert.equal(calls[2].path, '/api/auth/oauth/flows/flow%20%2B%20token/complete');
+  assert.equal(calls[2].options.method, 'POST');
+  assert.equal(calls[2].options.body, formData);
+  assert.equal(calls[2].options.headers['Content-Type'], undefined);
+});
+
 test('logout accepts only the backend 204 contract', async () => {
   const calls = [];
   const api = createAuthAPI(async (path, options) => {

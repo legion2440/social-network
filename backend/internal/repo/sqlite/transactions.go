@@ -35,6 +35,8 @@ func (m *TransactionManager) WithinTransaction(ctx context.Context, fn func(repo
 	repositories := &transactionRepositories{
 		users:         &UserRepo{db: tx},
 		sessions:      &SessionRepo{db: tx},
+		authIdentities: &AuthIdentityRepo{db: tx},
+		authFlows:      &AuthFlowRepo{db: tx},
 		media:         &MediaRepo{db: tx},
 		follows:       &FollowRepo{db: tx},
 		posts:         &PostRepo{db: tx},
@@ -61,6 +63,8 @@ func (m *TransactionManager) WithinTransaction(ctx context.Context, fn func(repo
 type transactionRepositories struct {
 	users         *UserRepo
 	sessions      *SessionRepo
+	authIdentities *AuthIdentityRepo
+	authFlows      *AuthFlowRepo
 	media         *MediaRepo
 	follows       *FollowRepo
 	posts         *PostRepo
@@ -77,6 +81,14 @@ func (r *transactionRepositories) Users() repo.UserRepo {
 
 func (r *transactionRepositories) Sessions() repo.SessionRepo {
 	return r.sessions
+}
+
+func (r *transactionRepositories) AuthIdentities() repo.AuthIdentityRepo {
+	return r.authIdentities
+}
+
+func (r *transactionRepositories) AuthFlows() repo.AuthFlowRepo {
+	return r.authFlows
 }
 
 func (r *transactionRepositories) Media() repo.MediaRepo {

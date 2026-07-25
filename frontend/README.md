@@ -296,6 +296,7 @@ Network failures use status `0`.
 The client covers:
 
 - registration, login, logout, session restore;
+- OAuth provider discovery, safe registration-flow preview, and multipart completion;
 - profile update and avatar replacement;
 - users, relationships, followers, follow requests;
 - feed, profile posts, group posts, media comments;
@@ -410,6 +411,19 @@ Possible results:
 
 Registration uses `FormData`. Login uses JSON.
 
+When the backend advertises GitHub, the auth screen shows `Continue with GitHub`.
+The action uses `window.location.assign()` for a real browser navigation to the
+backend start endpoint; it is not a `fetch` request. Callback errors arrive on
+`/login?oauth_error=...` and are mapped from stable backend codes to user-facing
+messages.
+
+A new GitHub identity is redirected to `/oauth/complete?flow=...`. The auth
+controller loads the safe preview into `oauthFlow`, displays the verified email
+read-only, and submits first name, last name, birth date, optional nickname/about,
+and optional local avatar as `FormData`. Email is never added to completion
+`FormData`, and the GitHub avatar is not copied. On success the normal authenticated
+bootstrap runs and history is replaced with `/`.
+
 After authentication:
 
 - the returned user becomes `USERS.me`;
@@ -443,6 +457,8 @@ The router owns URL parsing and History API synchronization:
 /messages                 chat list
 /messages/user/:id        direct chat
 /messages/group/:id       group chat
+/oauth/complete?flow=...  GitHub registration completion
+/login?oauth_error=...    OAuth error mapped to local login
 ```
 
 It uses `pushState`, `replaceState`, and `popstate`, restores deep links after refresh and login, supports Back/Forward, and replaces malformed routes with `/`. Closed resources resolve to controlled profile/group/chat error state.

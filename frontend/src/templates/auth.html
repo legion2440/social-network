@@ -32,6 +32,7 @@
       <span class="ui-004">loop</span>
     </div>
     <p class="ui-011">Your people, without the noise.</p>
+    <sc-if value="{{authIsStandard}}" hint-placeholder-val="{{true}}">
     <div class="ui-012">
       <sc-for list="{{authTabs}}" as="t" hint-placeholder-count="2">
         <button class="ui-013" type="button" onclick="{{t.pick}}" style="background:{{t.bg}};color:{{t.color}};box-shadow:{{t.sh}}">{{t.label}}</button>
@@ -83,6 +84,60 @@
     </sc-if>
     <button class="ui-027" type="submit" disabled="{{authDisabled}}" style="cursor:{{authButtonCursor}};opacity:{{authButtonOpacity}}" style-hover="transform:translateY(-1px);filter:brightness(1.05)" style-active="transform:scale(.98)">{{authCta}}</button>
     </form>
+    <sc-if value="{{oauthHasError}}" hint-placeholder-val="{{false}}">
+      <div class="ui-026" role="alert">{{oauthError}}</div>
+    </sc-if>
+    <sc-if value="{{oauthHasGitHub}}" hint-placeholder-val="{{false}}">
+      <button class="ui-008 oauth-github-button" type="button" onclick="{{startGitHubOAuth}}">
+        Continue with GitHub
+      </button>
+    </sc-if>
+    </sc-if>
+
+    <sc-if value="{{oauthIsCompletion}}" hint-placeholder-val="{{false}}">
+      <sc-if value="{{oauthFlowLoading}}" hint-placeholder-val="{{false}}">
+        <p class="ui-007">Loading your verified GitHub account…</p>
+      </sc-if>
+      <sc-if value="{{oauthFlowReady}}" hint-placeholder-val="{{false}}">
+        <h1 class="ui-006">Complete your account</h1>
+        <p class="ui-007">Signed in with {{oauthProviderLabel}} as {{oauthGitHubUsername}}</p>
+        <form onsubmit="{{completeOAuthRegistration}}">
+          <div class="ui-014">
+            <div class="ui-016">
+              <input class="ui-017" id="oauth-registration-avatar" type="file" accept="image/jpeg,image/png,image/gif,image/webp" onchange="{{onOAuthAvatar}}">
+              <button class="ui-018" type="button" onclick="{{pickOAuthAvatar}}" title="Optional JPEG, PNG, GIF or WebP avatar (max 20 MB)">
+                <sc-if value="{{oauthAvatarHasPreview}}" hint-placeholder-val="{{false}}">
+                  <img class="ui-019" src="{{oauthAvatarPreviewURL}}" alt="Selected avatar preview">
+                </sc-if>
+                <sc-if value="{{oauthAvatarMissingPreview}}" hint-placeholder-val="{{true}}">
+                  <span class="ui-020">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Zm8 9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path></svg>
+                    <span class="ui-021">{{oauthAvatarButtonLabel}}</span>
+                  </span>
+                </sc-if>
+              </button>
+            </div>
+            <input class="ui-015" type="email" autocomplete="email" readonly value="{{oauthEmail}}" aria-label="Verified GitHub email">
+            <div class="responsive-grid ui-022">
+              <input class="ui-023" autocomplete="given-name" required placeholder="First name" value="{{oauthFirstName}}" onchange="{{onOAuthFirstName}}">
+              <input class="ui-023" autocomplete="family-name" required placeholder="Last name" value="{{oauthLastName}}" onchange="{{onOAuthLastName}}">
+            </div>
+            <label class="ui-024">Date of birth</label>
+            <input class="ui-025" type="text" inputmode="numeric" autocomplete="bday" required maxlength="10" pattern="[0-9]{2}-[0-9]{2}-[0-9]{4}" placeholder="DD-MM-YYYY" title="Use DD-MM-YYYY format" aria-describedby="oauth-date-of-birth-help" value="{{oauthDateOfBirth}}" onchange="{{onOAuthDateOfBirth}}">
+            <div id="oauth-date-of-birth-help" class="date-input-help">DD-MM-YYYY, for example 02-02-1986</div>
+            <input class="ui-015" placeholder="Nickname (optional)" value="{{oauthNickname}}" onchange="{{onOAuthNickname}}">
+            <textarea class="ui-015" placeholder="About me (optional)" rows="2" value="{{oauthAboutMe}}" onchange="{{onOAuthAboutMe}}"></textarea>
+          </div>
+          <sc-if value="{{oauthCompletionHasError}}" hint-placeholder-val="{{false}}">
+            <div class="ui-026" role="alert">{{oauthCompletionError}}</div>
+          </sc-if>
+          <button class="ui-027" type="submit" disabled="{{oauthCompletionDisabled}}">{{oauthCompletionCta}}</button>
+        </form>
+      </sc-if>
+      <sc-if value="{{oauthFlowUnavailable}}" hint-placeholder-val="{{false}}">
+        <div class="ui-026" role="alert">{{oauthCompletionError}}</div>
+      </sc-if>
+    </sc-if>
   </div>
 </div>
 </sc-if>

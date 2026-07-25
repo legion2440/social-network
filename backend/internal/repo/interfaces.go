@@ -22,6 +22,18 @@ type SessionRepo interface {
 	DeleteByToken(ctx context.Context, token string) error
 }
 
+type AuthIdentityRepo interface {
+	Create(ctx context.Context, identity *domain.AuthIdentity) (int64, error)
+	GetByProviderUserID(ctx context.Context, provider, providerUserID string) (*domain.AuthIdentity, error)
+	UpdateMetadata(ctx context.Context, identity *domain.AuthIdentity) error
+}
+
+type AuthFlowRepo interface {
+	Create(ctx context.Context, flow *domain.AuthFlow) error
+	GetByToken(ctx context.Context, token string) (*domain.AuthFlow, error)
+	TakeByToken(ctx context.Context, token string) (*domain.AuthFlow, error)
+}
+
 type MediaRepo interface {
 	Create(ctx context.Context, ownerUserID int64, mime string, size int64, storageKey, originalName string, createdAt time.Time) (int64, error)
 	GetByID(ctx context.Context, id int64) (*domain.Media, error)
@@ -130,6 +142,8 @@ type ChatRepo interface {
 type TransactionRepositories interface {
 	Users() UserRepo
 	Sessions() SessionRepo
+	AuthIdentities() AuthIdentityRepo
+	AuthFlows() AuthFlowRepo
 	Media() MediaRepo
 	Follows() FollowRepo
 	Posts() PostRepo

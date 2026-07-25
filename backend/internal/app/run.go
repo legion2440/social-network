@@ -15,6 +15,7 @@ import (
 
 	"social-network/backend/internal/config"
 	httpserver "social-network/backend/internal/http"
+	"social-network/backend/internal/oauth"
 	"social-network/backend/internal/platform/clock"
 	"social-network/backend/internal/platform/id"
 	realtimews "social-network/backend/internal/realtime/ws"
@@ -113,6 +114,24 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("post media storage init: %w", err)
 	}
+	var oauthProviders []oauth.Provider
+	if cfg.GitHubOAuth.Enabled {
+		githubProvider, err := oauth.NewGitHubProvider(oauth.GitHubConfig{
+			ClientID:     cfg.GitHubOAuth.ClientID,
+			ClientSecret: cfg.GitHubOAuth.ClientSecret,
+			RedirectURL:  cfg.GitHubOAuth.RedirectURL,
+		}, nil)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("GitHub OAuth provider init: %w", err)
+		}
+		oauthProviders = append(oauthProviders, githubProvider)
+	}
+	oauthRegistry, err := oauth.NewRegistry(oauthProviders...)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("OAuth provider registry init: %w", err)
+	}
 	auth := service.NewAuthService(
 		users,
 		transactions,
@@ -120,6 +139,12 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		service.BcryptHasher{},
 		appClock,
 		avatarStager,
+		service.WithOAuth(
+			oauthRegistry,
+			sqlite.NewAuthIdentityRepo(db),
+			sqlite.NewAuthFlowRepo(db),
+			ids,
+		),
 	)
 	profile := service.NewProfileService(transactions, appClock, avatarStager, log.Default())
 	follows := service.NewFollowService(users, sqlite.NewFollowRepo(db), transactions, appClock)

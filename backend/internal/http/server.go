@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"social-network/backend/internal/config"
 	realtimews "social-network/backend/internal/realtime/ws"
@@ -17,28 +18,30 @@ import (
 )
 
 type Handler struct {
-	db                 *sql.DB
-	sessions           *service.SessionService
-	auth               *service.AuthService
-	profile            *service.ProfileService
-	follows            *service.FollowService
-	users              *service.UserService
-	avatars            *service.AvatarDeliveryService
-	posts              *service.PostService
-	postMedia          *service.PostMediaDeliveryService
-	comments           *service.CommentService
-	commentMedia       *service.CommentMediaDeliveryService
-	groups             *service.GroupService
-	groupEvents        *service.GroupEventService
-	notifications      *service.NotificationService
-	chats              *service.ChatService
-	hub                *realtimews.Hub
-	groupAccessChanged func(groupID, userID int64, active bool)
-	admission          atomic.Bool
-	sessionToken       SessionTokenExtractor
-	cookieSecure       bool
-	frontend           http.Handler
-	logger             *log.Logger
+	db                   *sql.DB
+	sessions             *service.SessionService
+	auth                 *service.AuthService
+	profile              *service.ProfileService
+	follows              *service.FollowService
+	users                *service.UserService
+	avatars              *service.AvatarDeliveryService
+	posts                *service.PostService
+	postMedia            *service.PostMediaDeliveryService
+	comments             *service.CommentService
+	commentMedia         *service.CommentMediaDeliveryService
+	groups               *service.GroupService
+	groupEvents          *service.GroupEventService
+	notifications        *service.NotificationService
+	chats                *service.ChatService
+	hub                  *realtimews.Hub
+	groupAccessChanged   func(groupID, userID int64, active bool)
+	admission            atomic.Bool
+	sessionToken         SessionTokenExtractor
+	cookieSecure         bool
+	frontend             http.Handler
+	logger               *log.Logger
+	oauthStartLimiter    *requestRateLimiter
+	oauthCompleteLimiter *requestRateLimiter
 }
 
 func NewHandler(
@@ -69,25 +72,27 @@ func NewHandler(
 		sessionToken = NewCookieSessionTokenExtractor(config.SessionCookieName)
 	}
 	handler := &Handler{
-		db:            db,
-		sessions:      sessions,
-		auth:          auth,
-		profile:       profile,
-		follows:       follows,
-		users:         users,
-		avatars:       avatars,
-		posts:         posts,
-		postMedia:     postMedia,
-		comments:      comments,
-		commentMedia:  commentMedia,
-		groups:        groups,
-		groupEvents:   groupEvents,
-		notifications: notifications,
-		chats:         chats,
-		sessionToken:  sessionToken,
-		cookieSecure:  cookieSecure,
-		frontend:      newFrontendHandler(frontendDir),
-		logger:        logger,
+		db:                   db,
+		sessions:             sessions,
+		auth:                 auth,
+		profile:              profile,
+		follows:              follows,
+		users:                users,
+		avatars:              avatars,
+		posts:                posts,
+		postMedia:            postMedia,
+		comments:             comments,
+		commentMedia:         commentMedia,
+		groups:               groups,
+		groupEvents:          groupEvents,
+		notifications:        notifications,
+		chats:                chats,
+		sessionToken:         sessionToken,
+		cookieSecure:         cookieSecure,
+		frontend:             newFrontendHandler(frontendDir),
+		logger:               logger,
+		oauthStartLimiter:    newRequestRateLimiter(20, time.Minute),
+		oauthCompleteLimiter: newRequestRateLimiter(10, time.Minute),
 	}
 	handler.admission.Store(true)
 	return handler
@@ -164,6 +169,11 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("/api/auth/register", h.handleRegister)
 	mux.HandleFunc("/api/auth/login", h.handleLogin)
 	mux.HandleFunc("/api/auth/logout", h.handleLogout)
+	mux.HandleFunc("/api/auth/oauth/providers", h.handleOAuthProviders)
+	mux.HandleFunc("/api/auth/oauth/github/start", h.handleOAuthStart)
+	mux.HandleFunc("/api/auth/oauth/github/callback", h.handleOAuthCallback)
+	mux.HandleFunc("/api/auth/oauth/flows/{token}", h.handleOAuthRegistrationFlow)
+	mux.HandleFunc("/api/auth/oauth/flows/{token}/complete", h.handleOAuthRegistrationComplete)
 	mux.Handle("/api/auth/me", protected(h.handleMe))
 	mux.Handle("/api/profile", protected(h.handleProfile))
 	mux.Handle("/api/profile/avatar", protected(h.handleProfileAvatar))

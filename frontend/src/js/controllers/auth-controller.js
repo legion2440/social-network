@@ -9,6 +9,7 @@
     var USERS = dependencies.session.users;
     var emptyCurrentUser = dependencies.helpers.emptyCurrentUser;
     var emptyRegistrationForm = dependencies.helpers.emptyRegistrationForm;
+    var emptyOAuthState = dependencies.helpers.emptyOAuthState;
     var emptyProfileEditor = dependencies.helpers.emptyProfileEditor;
     var emptyConfirmationState = dependencies.helpers.emptyConfirmationState;
     var emptyGroupPostState = dependencies.helpers.emptyGroupPostState;
@@ -18,6 +19,31 @@
     var requestErrorMessage = dependencies.helpers.requestErrorMessage;
     var parseDateOfBirth = dependencies.helpers.parseDateOfBirth;
     var formatDateOfBirthInput = dependencies.helpers.formatDateOfBirthInput;
+    var environment = dependencies.environment ||
+      (typeof window !== 'undefined' ? window : null);
+
+  context.oauthResetState = function () {
+    var reset = emptyOAuthState();
+    reset.oauthProviders = context.state.oauthProviders || [];
+    reset.oauthProvidersLoading = false;
+    return reset;
+  };
+
+  context.oauthErrorMessage = function (code) {
+    var messages = {
+      oauth_provider_unavailable: 'GitHub sign-in is not available right now.',
+      oauth_provider_error: 'GitHub sign-in was cancelled or could not be completed.',
+      oauth_state_invalid: 'This GitHub sign-in link is invalid or has already been used. Please try again.',
+      oauth_code_missing: 'GitHub did not return an authorization code. Please try again.',
+      oauth_token_exchange_failed: 'GitHub sign-in could not be completed. Please try again.',
+      oauth_identity_fetch_failed: 'Your GitHub account details could not be loaded.',
+      oauth_verified_email_unavailable: 'GitHub must provide a verified email address to continue.',
+      oauth_email_already_registered: 'This verified email already has a local account. Sign in with email and password.',
+      oauth_flow_expired: 'This GitHub registration link has expired. Please start again.',
+      oauth_identity_conflict: 'This GitHub account is already connected. Please start sign-in again.'
+    };
+    return messages[code] || (code ? 'GitHub sign-in could not be completed. Please try again.' : '');
+  };
 
   context.revokeRegistrationAvatarPreview = function (previewURL) {
     if (
@@ -55,12 +81,102 @@
       if (!context.authGate.isCurrent(authGeneration)) return;
       if (error && error.status === 401) {
         USERS.me = emptyCurrentUser();
-        context.setState({ authStatus: 'anonymous', screen: 'auth', bootstrapError: '' });
+        context.setState(
+          { authStatus: 'anonymous', screen: 'auth', bootstrapError: '' },
+          function () {
+            if (dependencies.navigation) dependencies.navigation.applyCurrent();
+          }
+        );
         return;
       }
       context.setState({
         authStatus: 'error',
         bootstrapError: requestErrorMessage(error, 'Could not load your session. Please try again.')
+      });
+    }
+  };
+
+  context.loadOAuthProviders = async () => {
+    context.setState({ oauthProvidersLoading: true });
+    try {
+      const response = await AuthAPI.oauthProviders();
+      context.setState({
+        oauthProviders: response && Array.isArray(response.providers) ? response.providers : [],
+        oauthProvidersLoading: false
+      });
+    } catch (error) {
+      context.setState({
+        oauthProviders: [],
+        oauthProvidersLoading: false
+      });
+    }
+  };
+
+  context.startGitHubOAuth = () => {
+    if (
+      environment &&
+      environment.location &&
+      typeof environment.location.assign === 'function'
+    ) {
+      environment.location.assign('/api/auth/oauth/github/start?next=/');
+      return;
+    }
+    context.setState({ oauthError: 'GitHub sign-in could not be started.' });
+  };
+
+  context.showOAuthCompletion = token => {
+    context.revokeRegistrationAvatarPreview(context.state.oauthAvatarPreviewURL);
+    context.setState(Object.assign(context.oauthResetState(), {
+      authStatus: 'anonymous',
+      screen: 'auth',
+      oauthCompletionActive: true,
+      oauthFlowToken: String(token || ''),
+      oauthFlowLoading: true
+    }), () => context.loadOAuthFlow(token));
+  };
+
+  context.showLoginOAuthError = code => {
+    context.revokeRegistrationAvatarPreview(context.state.oauthAvatarPreviewURL);
+    context.setState(Object.assign(context.oauthResetState(), {
+      authStatus: 'anonymous',
+      screen: 'auth',
+      authMode: 'login',
+      oauthError: context.oauthErrorMessage(String(code || ''))
+    }));
+  };
+
+  context.loadOAuthFlow = async token => {
+    token = String(token || '').trim();
+    if (!token) {
+      context.setState({
+        oauthFlowLoading: false,
+        oauthCompletionError: context.oauthErrorMessage('oauth_flow_expired')
+      });
+      return;
+    }
+    context.setState({
+      oauthFlowToken: token,
+      oauthFlowLoading: true,
+      oauthCompletionError: ''
+    });
+    try {
+      const flow = await AuthAPI.oauthFlow(token);
+      if (context.state.oauthFlowToken !== token) return;
+      context.setState({
+        oauthFlow: flow,
+        oauthFlowLoading: false,
+        oauthFirstName: flow.suggested_first_name || '',
+        oauthLastName: flow.suggested_last_name || '',
+        oauthNickname: flow.suggested_nickname || ''
+      });
+    } catch (error) {
+      if (context.state.oauthFlowToken !== token) return;
+      context.setState({
+        oauthFlow: null,
+        oauthFlowLoading: false,
+        oauthCompletionError: context.oauthErrorMessage(
+          error && error.message ? error.message : 'oauth_flow_expired'
+        )
       });
     }
   };
@@ -84,6 +200,20 @@
     });
   };
 
+  context.updateOAuthRegistrationField = (field, value) => {
+    const allowed = {
+      oauthFirstName: true,
+      oauthLastName: true,
+      oauthDateOfBirth: true,
+      oauthNickname: true,
+      oauthAboutMe: true
+    };
+    if (!allowed[field]) return;
+    context.setState({
+      [field]: field === 'oauthDateOfBirth' ? formatDateOfBirthInput(value) : value
+    });
+  };
+
   context.pickRegistrationAvatar = () => {
     const input = document.getElementById('registration-avatar');
     if (input) input.click();
@@ -102,6 +232,27 @@
       regAvatar: file,
       regAvatarName: file ? file.name : '',
       regAvatarPreviewURL: previewURL
+    });
+  };
+
+  context.pickOAuthAvatar = () => {
+    const input = document.getElementById('oauth-registration-avatar');
+    if (input) input.click();
+  };
+
+  context.onOAuthAvatar = event => {
+    const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+    context.revokeRegistrationAvatarPreview(context.state.oauthAvatarPreviewURL);
+    const previewURL = (
+      file &&
+      typeof URL !== 'undefined' &&
+      URL &&
+      typeof URL.createObjectURL === 'function'
+    ) ? URL.createObjectURL(file) : '';
+    context.setState({
+      oauthAvatar: file,
+      oauthAvatarName: file ? file.name : '',
+      oauthAvatarPreviewURL: previewURL
     });
   };
 
@@ -143,6 +294,7 @@
         myPrivacy: user.is_private === true ? 'private' : 'public',
         profilePrivacyPending: false, profilePrivacyError: ''
       };
+      Object.assign(authenticatedState, context.oauthResetState());
       Object.assign(authenticatedState, emptyNotificationState());
       const registrationAvatarPreviewURL = s.authMode === 'register' ? s.regAvatarPreviewURL : '';
       if (s.authMode === 'register') Object.assign(authenticatedState, emptyRegistrationForm());
@@ -161,6 +313,66 @@
       context.setState({
         authPending: false,
         authError: requestErrorMessage(error, 'Authentication failed. Please try again.')
+      });
+    }
+  };
+
+  context.completeOAuthRegistration = async event => {
+    if (event) event.preventDefault();
+    const s = context.state;
+    if (s.oauthCompletionPending || !s.oauthFlow) return;
+    if (!parseDateOfBirth(s.oauthDateOfBirth.trim())) {
+      context.setState({
+        oauthCompletionError: 'Enter a real calendar date as DD-MM-YYYY.'
+      });
+      return;
+    }
+    const authGeneration = context.authGate.begin();
+    context.setState({ oauthCompletionPending: true, oauthCompletionError: '' });
+    try {
+      const form = new FormData();
+      form.append('first_name', s.oauthFirstName.trim());
+      form.append('last_name', s.oauthLastName.trim());
+      form.append('date_of_birth', s.oauthDateOfBirth.trim());
+      if (s.oauthNickname.trim()) form.append('nickname', s.oauthNickname.trim());
+      if (s.oauthAboutMe.trim()) form.append('about_me', s.oauthAboutMe.trim());
+      if (s.oauthAvatar) form.append('avatar', s.oauthAvatar, s.oauthAvatar.name);
+      const user = await AuthAPI.completeOAuthRegistration(s.oauthFlowToken, form);
+      if (!context.authGate.isCurrent(authGeneration)) return;
+      const apiUsersByID = context.applyAuthUser(user);
+      const avatarPreviewURL = s.oauthAvatarPreviewURL;
+      const authenticatedState = {
+        authStatus: 'authenticated',
+        authPending: false,
+        authError: '',
+        screen: 'feed',
+        apiUsersByID,
+        myPrivacy: user.is_private === true ? 'private' : 'public',
+        profilePrivacyPending: false,
+        profilePrivacyError: ''
+      };
+      Object.assign(authenticatedState, emptyNotificationState());
+      Object.assign(authenticatedState, emptyProfileEditor());
+      Object.assign(authenticatedState, context.oauthResetState());
+      context.setState(authenticatedState, () => {
+        context.revokeRegistrationAvatarPreview(avatarPreviewURL);
+        if (environment && environment.history) {
+          environment.history.replaceState({}, '', '/');
+        }
+        context.startAuthenticatedRealtime(authGeneration);
+        if (dependencies.navigation) dependencies.navigation.applyCurrent();
+      });
+      context.loadFeed(true);
+      context.loadPostFollowers();
+      context.loadDirectory();
+      context.loadNotifications(true);
+    } catch (error) {
+      if (!context.authGate.isCurrent(authGeneration)) return;
+      context.setState({
+        oauthCompletionPending: false,
+        oauthCompletionError: context.oauthErrorMessage(
+          error && error.message ? error.message : ''
+        ) || requestErrorMessage(error, 'GitHub registration failed. Please try again.')
       });
     }
   };
@@ -211,6 +423,7 @@
       context.revokedGroupAccessIDs.clear();
       context.stopRealtime();
       context.revokeRegistrationAvatarPreview(context.state.regAvatarPreviewURL);
+      context.revokeRegistrationAvatarPreview(context.state.oauthAvatarPreviewURL);
       context.disposeAllCommentPreviews();
       Object.keys(context.groupGenerationsByID).forEach(key => context.groupGenerationsByID[key].begin());
       context.groupGenerationsByID = {};
@@ -244,7 +457,7 @@
         createOpen: false, ngName: '', ngDesc: '', groupCreatePending: false, groupCreateError: '',
         composerText: '', composerFile: null, composerFileName: '', composerError: '', composerPending: false,
 		privacy: 'public', privacyOpen: false
-	  }, emptyGroupPostState(), emptyGroupEventState(), emptyNotificationState(), emptyChatState(), emptyRegistrationForm(), emptyProfileEditor(), emptyConfirmationState()));
+	  }, emptyGroupPostState(), emptyGroupEventState(), emptyNotificationState(), emptyChatState(), emptyRegistrationForm(), context.oauthResetState(), emptyProfileEditor(), emptyConfirmationState()));
     } catch (error) {
       if (!context.authGate.isCurrent(authGeneration)) return;
       context.setState({
@@ -257,11 +470,20 @@
     return createController('auth', dependencies, {
       revokeRegistrationAvatarPreview: context.revokeRegistrationAvatarPreview,
       loadCurrentUser: context.loadCurrentUser,
+      loadOAuthProviders: context.loadOAuthProviders,
+      startGitHubOAuth: context.startGitHubOAuth,
+      showOAuthCompletion: context.showOAuthCompletion,
+      showLoginOAuthError: context.showLoginOAuthError,
+      loadOAuthFlow: context.loadOAuthFlow,
       setAuthMode: context.setAuthMode,
       updateField: context.updateField,
+      updateOAuthRegistrationField: context.updateOAuthRegistrationField,
       pickRegistrationAvatar: context.pickRegistrationAvatar,
       onRegistrationAvatar: context.onRegistrationAvatar,
+      pickOAuthAvatar: context.pickOAuthAvatar,
+      onOAuthAvatar: context.onOAuthAvatar,
       submitAuth: context.submitAuth,
+      completeOAuthRegistration: context.completeOAuthRegistration,
       logout: context.logout
     }, function (state) {
       const authTabs = [
@@ -275,6 +497,17 @@
         pick: () => context.setAuthMode(tab.key)
       }));
       return {
+        authIsStandard: !state.oauthCompletionActive,
+        oauthIsCompletion: !!state.oauthCompletionActive,
+        oauthFlowLoading: !!state.oauthFlowLoading,
+        oauthFlowReady: !!state.oauthFlow && !state.oauthFlowLoading,
+        oauthFlowUnavailable: !state.oauthFlow && !state.oauthFlowLoading &&
+          !!state.oauthCompletionError,
+        oauthHasGitHub: (state.oauthProviders || []).some(provider => provider.name === 'github'),
+        oauthProvidersLoading: !!state.oauthProvidersLoading,
+        oauthHasError: !!state.oauthError,
+        oauthError: state.oauthError,
+        startGitHubOAuth: context.startGitHubOAuth,
         authTabs,
         authIsLogin: state.authMode === 'login',
         authIsReg: state.authMode === 'register',
@@ -309,10 +542,39 @@
         registrationAvatarPreviewURL: state.regAvatarPreviewURL,
         pickRegistrationAvatar: context.pickRegistrationAvatar,
         onRegistrationAvatar: context.onRegistrationAvatar,
+        oauthProviderLabel: state.oauthFlow ? state.oauthFlow.provider : 'github',
+        oauthEmail: state.oauthFlow ? state.oauthFlow.email : '',
+        oauthGitHubUsername: state.oauthFlow ? state.oauthFlow.github_username : '',
+        oauthFirstName: state.oauthFirstName,
+        onOAuthFirstName: event => context.updateOAuthRegistrationField('oauthFirstName', event.target.value),
+        oauthLastName: state.oauthLastName,
+        onOAuthLastName: event => context.updateOAuthRegistrationField('oauthLastName', event.target.value),
+        oauthDateOfBirth: state.oauthDateOfBirth,
+        onOAuthDateOfBirth: event => context.updateOAuthRegistrationField('oauthDateOfBirth', event.target.value),
+        oauthNickname: state.oauthNickname,
+        onOAuthNickname: event => context.updateOAuthRegistrationField('oauthNickname', event.target.value),
+        oauthAboutMe: state.oauthAboutMe,
+        onOAuthAboutMe: event => context.updateOAuthRegistrationField('oauthAboutMe', event.target.value),
+        oauthAvatarButtonLabel: state.oauthAvatarName || 'avatar',
+        oauthAvatarHasPreview: !!state.oauthAvatarPreviewURL,
+        oauthAvatarMissingPreview: !state.oauthAvatarPreviewURL,
+        oauthAvatarPreviewURL: state.oauthAvatarPreviewURL,
+        pickOAuthAvatar: context.pickOAuthAvatar,
+        onOAuthAvatar: context.onOAuthAvatar,
+        oauthCompletionHasError: !!state.oauthCompletionError,
+        oauthCompletionError: state.oauthCompletionError,
+        oauthCompletionDisabled: state.oauthCompletionPending || !state.oauthFlow,
+        oauthCompletionCta: state.oauthCompletionPending ? 'Please wait…' : 'Create account',
+        completeOAuthRegistration: context.completeOAuthRegistration,
         submitAuth: context.submitAuth,
         goLogout: context.logout,
         logoutDisabled: state.logoutPending
       };
-    }, { start: context.loadCurrentUser });
+    }, {
+      start: function () {
+        context.loadOAuthProviders();
+        context.loadCurrentUser();
+      }
+    });
   };
 });

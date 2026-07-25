@@ -5,13 +5,18 @@ import (
 	"errors"
 	"net/mail"
 	"strings"
+	"time"
 
 	"social-network/backend/internal/domain"
+	"social-network/backend/internal/oauth"
 	"social-network/backend/internal/platform/clock"
+	"social-network/backend/internal/platform/id"
 	"social-network/backend/internal/repo"
 )
 
 const MaxPasswordBytes = 72
+
+var errUserEmailConflict = errors.New("user email conflict")
 
 type RegisterInput struct {
 	Email       string
@@ -36,12 +41,32 @@ type AuthResult struct {
 }
 
 type AuthService struct {
-	users        repo.UserRepo
-	transactions repo.TransactionManager
-	sessions     *SessionService
-	passwords    PasswordHasher
-	clock        clock.Clock
-	avatars      *MediaStager
+	users          repo.UserRepo
+	transactions   repo.TransactionManager
+	sessions       *SessionService
+	passwords      PasswordHasher
+	clock          clock.Clock
+	avatars        *MediaStager
+	oauthRegistry  *oauth.Registry
+	authIdentities repo.AuthIdentityRepo
+	authFlows      repo.AuthFlowRepo
+	ids            id.Generator
+}
+
+type AuthOption func(*AuthService)
+
+func WithOAuth(
+	registry *oauth.Registry,
+	identities repo.AuthIdentityRepo,
+	flows repo.AuthFlowRepo,
+	ids id.Generator,
+) AuthOption {
+	return func(service *AuthService) {
+		service.oauthRegistry = registry
+		service.authIdentities = identities
+		service.authFlows = flows
+		service.ids = ids
+	}
 }
 
 func NewAuthService(
@@ -51,8 +76,9 @@ func NewAuthService(
 	passwords PasswordHasher,
 	appClock clock.Clock,
 	avatars *MediaStager,
+	options ...AuthOption,
 ) *AuthService {
-	return &AuthService{
+	service := &AuthService{
 		users:        users,
 		transactions: transactions,
 		sessions:     sessions,
@@ -60,6 +86,12 @@ func NewAuthService(
 		clock:        appClock,
 		avatars:      avatars,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(service)
+		}
+	}
+	return service
 }
 
 func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthResult, error) {
@@ -108,51 +140,18 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthR
 	}
 	var session *domain.Session
 	err = s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
-		userID, err := repositories.Users().Create(ctx, user)
-		if errors.Is(err, repo.ErrConflict) {
-			return ErrEmailTaken
+		if err := s.createUserRecords(ctx, repositories, user, stagedAvatar, now); err != nil {
+			if errors.Is(err, errUserEmailConflict) {
+				return ErrEmailTaken
+			}
+			return err
 		}
+		session, err = s.createSessionRecord(ctx, repositories, user.ID)
 		if err != nil {
 			return err
 		}
-		user.ID = userID
-		if err := repositories.Notifications().EnsureUserState(ctx, user.ID); err != nil {
-			return err
-		}
-		if err := repositories.Chats().EnsureUserState(ctx, user.ID); err != nil {
-			return err
-		}
-
 		if stagedAvatar != nil {
-			mediaID, err := repositories.Media().Create(
-				ctx,
-				user.ID,
-				stagedAvatar.MIME,
-				stagedAvatar.Size,
-				stagedAvatar.StorageKey,
-				stagedAvatar.OriginalName,
-				now,
-			)
-			if err != nil {
-				return err
-			}
-			if err := repositories.Users().SetAvatarMediaID(ctx, user.ID, &mediaID, now); err != nil {
-				return err
-			}
-			user.AvatarMediaID = &mediaID
-		}
-
-		session, err = s.sessions.New(user.ID)
-		if err != nil {
-			return err
-		}
-		if err := repositories.Sessions().Create(ctx, session); err != nil {
-			return err
-		}
-		if stagedAvatar != nil {
-			if err := stagedAvatar.Finalize(); err != nil {
-				return err
-			}
+			return stagedAvatar.Finalize()
 		}
 		return nil
 	})
@@ -163,6 +162,64 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthR
 		stagedAvatar.Keep()
 	}
 	return &AuthResult{User: user, Session: session}, nil
+}
+
+func (s *AuthService) createUserRecords(
+	ctx context.Context,
+	repositories repo.TransactionRepositories,
+	user *domain.User,
+	stagedAvatar *StagedMedia,
+	now time.Time,
+) error {
+	userID, err := repositories.Users().Create(ctx, user)
+	if errors.Is(err, repo.ErrConflict) {
+		return errUserEmailConflict
+	}
+	if err != nil {
+		return err
+	}
+	user.ID = userID
+	if err := repositories.Notifications().EnsureUserState(ctx, user.ID); err != nil {
+		return err
+	}
+	if err := repositories.Chats().EnsureUserState(ctx, user.ID); err != nil {
+		return err
+	}
+	if stagedAvatar == nil {
+		return nil
+	}
+	mediaID, err := repositories.Media().Create(
+		ctx,
+		user.ID,
+		stagedAvatar.MIME,
+		stagedAvatar.Size,
+		stagedAvatar.StorageKey,
+		stagedAvatar.OriginalName,
+		now,
+	)
+	if err != nil {
+		return err
+	}
+	if err := repositories.Users().SetAvatarMediaID(ctx, user.ID, &mediaID, now); err != nil {
+		return err
+	}
+	user.AvatarMediaID = &mediaID
+	return nil
+}
+
+func (s *AuthService) createSessionRecord(
+	ctx context.Context,
+	repositories repo.TransactionRepositories,
+	userID int64,
+) (*domain.Session, error) {
+	session, err := s.sessions.New(userID)
+	if err != nil {
+		return nil, err
+	}
+	if err := repositories.Sessions().Create(ctx, session); err != nil {
+		return nil, err
+	}
+	return session, nil
 }
 
 func (s *AuthService) Login(ctx context.Context, input LoginInput) (*AuthResult, error) {

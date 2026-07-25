@@ -45,7 +45,7 @@ func TestMigrationsRunAllTheWayDownAndBackUp(t *testing.T) {
 	if err := migrateDown(db); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
-	for _, table := range []string{"group_chat_read_states", "direct_chat_read_states", "chat_user_states", "notification_user_states", "notifications", "group_event_responses", "group_events", "chat_messages", "direct_conversations", "group_memberships", "groups", "post_comments", "post_selected_users", "posts", "follows", "sessions", "media", "users"} {
+	for _, table := range []string{"auth_flows", "auth_identities", "group_chat_read_states", "direct_chat_read_states", "chat_user_states", "notification_user_states", "notifications", "group_event_responses", "group_events", "chat_messages", "direct_conversations", "group_memberships", "groups", "post_comments", "post_selected_users", "posts", "follows", "sessions", "media", "users"} {
 		if tableExists(t, db, table) {
 			t.Fatalf("table %s still exists after down migrations", table)
 		}
@@ -69,7 +69,7 @@ func TestMigration16PreservesPostGraphAndGuardsMediaOnlyDown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new version 15 migrator: %v", err)
 	}
-	if err := migrator.Steps(-1); err != nil {
+	if err := migrator.Migrate(15); err != nil {
 		t.Fatalf("migrate to version 15: %v", err)
 	}
 	_ = sourceDriver.Close()
@@ -283,7 +283,7 @@ func TestOpenRejectsDisposableLegacyBootstrapDatabase(t *testing.T) {
 func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 
-	for _, table := range []string{"users", "media", "sessions", "follows", "posts", "post_selected_users", "post_comments", "groups", "group_memberships", "group_events", "group_event_responses", "direct_conversations", "chat_messages", "notifications", "notification_user_states", "chat_user_states", "direct_chat_read_states", "group_chat_read_states", "schema_migrations"} {
+	for _, table := range []string{"users", "media", "sessions", "auth_identities", "auth_flows", "follows", "posts", "post_selected_users", "post_comments", "groups", "group_memberships", "group_events", "group_event_responses", "direct_conversations", "chat_messages", "notifications", "notification_user_states", "chat_user_states", "direct_chat_read_states", "group_chat_read_states", "schema_migrations"} {
 		if !tableExists(t, db, table) {
 			t.Fatalf("expected table %s", table)
 		}
@@ -336,6 +336,10 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 		{table: "media", column: "created_at"},
 		{table: "sessions", column: "expires_at"},
 		{table: "sessions", column: "created_at"},
+		{table: "auth_identities", column: "linked_at"},
+		{table: "auth_identities", column: "last_login_at"},
+		{table: "auth_flows", column: "created_at"},
+		{table: "auth_flows", column: "expires_at"},
 		{table: "follows", column: "created_at"},
 		{table: "follows", column: "updated_at"},
 		{table: "groups", column: "created_at"},
@@ -362,7 +366,6 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 		"comments",
 		"reactions",
 		"moderation_reports",
-		"auth_identities",
 	} {
 		if tableExists(t, db, table) {
 			t.Fatalf("forum-specific table %s must not be created", table)
@@ -386,6 +389,7 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "media", "owner_user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "users", "avatar_media_id", "media", "id", "SET NULL")
 	assertForeignKey(t, db, "sessions", "user_id", "users", "id", "CASCADE")
+	assertForeignKey(t, db, "auth_identities", "user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "follows", "follower_user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "follows", "followed_user_id", "users", "id", "CASCADE")
 	assertForeignKey(t, db, "posts", "author_user_id", "users", "id", "CASCADE")
@@ -417,6 +421,11 @@ func assertMigratedSchema(t *testing.T, db *sql.DB) {
 	assertForeignKey(t, db, "chat_messages", "sender_user_id", "users", "id", "CASCADE")
 	if !schemaObjectExists(t, db, "index", "idx_post_comments_media") {
 		t.Fatal("expected unique comment media index")
+	}
+	for _, index := range []string{"idx_auth_identities_provider_email", "idx_auth_flows_expires_at"} {
+		if !schemaObjectExists(t, db, "index", index) {
+			t.Fatalf("expected OAuth index %s", index)
+		}
 	}
 }
 
@@ -957,7 +966,7 @@ func TestMigration15DownRefusesCommentAttachmentsWithoutDirtyState(t *testing.T)
 	if err := migrateDown(db); err == nil {
 		t.Fatal("expected down migration refusal")
 	}
-	assertMigrationVersion(t, db, 16, false)
+	assertMigrationVersion(t, db, int(latestMigrationVersion), false)
 	var gotMediaID int64
 	if err := db.QueryRow(`SELECT media_id FROM post_comments WHERE id = 1`).Scan(&gotMediaID); err != nil || gotMediaID != mediaID {
 		t.Fatalf("comment attachment changed after refused down: media=%d err=%v", gotMediaID, err)

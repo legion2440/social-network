@@ -18,6 +18,14 @@ type Config struct {
 	CookieSecure    bool
 	SessionTTL      time.Duration
 	ShutdownTimeout time.Duration
+	GitHubOAuth     GitHubOAuthConfig
+}
+
+type GitHubOAuthConfig struct {
+	Enabled      bool
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
 }
 
 func Load() (Config, error) {
@@ -35,6 +43,31 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.CookieSecure = secure
+
+	githubValues := []string{
+		strings.TrimSpace(os.Getenv("SOCIAL_NETWORK_GITHUB_CLIENT_ID")),
+		strings.TrimSpace(os.Getenv("SOCIAL_NETWORK_GITHUB_CLIENT_SECRET")),
+		strings.TrimSpace(os.Getenv("SOCIAL_NETWORK_GITHUB_REDIRECT_URL")),
+	}
+	configured := 0
+	for _, value := range githubValues {
+		if value != "" {
+			configured++
+		}
+	}
+	if configured != 0 && configured != len(githubValues) {
+		return Config{}, fmt.Errorf(
+			"SOCIAL_NETWORK_GITHUB_CLIENT_ID, SOCIAL_NETWORK_GITHUB_CLIENT_SECRET and SOCIAL_NETWORK_GITHUB_REDIRECT_URL must be set together",
+		)
+	}
+	if configured == len(githubValues) {
+		cfg.GitHubOAuth = GitHubOAuthConfig{
+			Enabled:      true,
+			ClientID:     githubValues[0],
+			ClientSecret: githubValues[1],
+			RedirectURL:  githubValues[2],
+		}
+	}
 
 	return cfg, nil
 }

@@ -70,6 +70,7 @@ internal/app
 | `internal/config` | environment parsing and defaults |
 | `internal/domain` | entities and enums |
 | `internal/http` | routing, auth middleware, strict parsing, responses |
+| `internal/oauth` | provider registry and GitHub OAuth HTTP client |
 | `internal/service` | business rules, authorization, transactions |
 | `internal/repo` | repository and transaction interfaces |
 | `internal/repo/sqlite` | SQLite implementations and embedded migrations |
@@ -131,6 +132,8 @@ Current versions:
 000014_create_chat_read_states
 000015_add_comment_media
 000016_allow_media_only_content
+000017_create_auth_identities
+000018_create_auth_flows
 ```
 
 Inspect the local migration state:
@@ -143,7 +146,7 @@ sqlite3 var/social-network.db \
 Expected:
 
 ```text
-16 | 0
+18 | 0
 ```
 
 Migration `000011` preserves post/comment IDs, timestamps, selected audiences, media links, and real `sqlite_sequence` high-water values while rebuilding `posts`. Its down migration is rejected while group posts exist.
@@ -253,6 +256,37 @@ social_network_session
 ```
 
 Multiple sessions per user are allowed. Logout removes only the current session and synchronously revokes its Hub access. Expired sessions are deleted when read. WebSocket operations recheck the raw session token against SQLite.
+
+Optional GitHub OAuth:
+
+```text
+GET  /api/auth/oauth/providers
+GET  /api/auth/oauth/github/start?next=/
+GET  /api/auth/oauth/github/callback
+GET  /api/auth/oauth/flows/{token}
+POST /api/auth/oauth/flows/{token}/complete
+```
+
+All three `SOCIAL_NETWORK_GITHUB_CLIENT_ID`,
+`SOCIAL_NETWORK_GITHUB_CLIENT_SECRET`, and
+`SOCIAL_NETWORK_GITHUB_REDIRECT_URL` variables must be set together. With none
+set, OAuth is disabled; a partial configuration is a startup error. The Go
+application reads process environment only and does not load `.env`.
+
+The callback atomically consumes a ten-minute state before handling provider
+errors or a missing code. GitHub `/user/emails` is always queried and only a
+verified email is accepted. An existing identity is found solely by
+`(provider, provider_user_id)` and receives a normal session after its provider
+metadata is refreshed. A new identity whose verified email already belongs to a
+local account is rejected without linking or merging.
+
+New identities receive a thirty-minute one-time registration flow. Its GET
+endpoint returns only a safe preview. Completion accepts the normal name, birth
+date, optional nickname/about, and optional avatar fields, but never an email or
+password. User, identity, avatar metadata, and session are created in one
+transaction; rollback leaves the flow available and removes a staged/finalized
+avatar. A random generated password is stored only as a bcrypt hash. GitHub
+access tokens and avatars are not persisted.
 
 ## 👤 Profiles and followers
 
@@ -581,8 +615,10 @@ The Hub stores only `SHA-256(raw session token)`. Logout, unfollow, and group le
 - `404`: absent or intentionally hidden resource;
 - `405`: wrong method with `Allow`;
 - `409`: stale or conflicting transition;
+- `410`: expired OAuth registration flow;
 - `413`: oversized body or file;
 - `415`: unsupported content type;
+- `429`: OAuth start or completion rate limit;
 - `500`: storage or unexpected failure;
 - unknown `/api/*`: JSON `404`.
 - local frontend files are served directly; missing extensionless client routes
@@ -619,6 +655,7 @@ backend/
 │   ├── config/
 │   ├── domain/
 │   ├── http/
+│   ├── oauth/
 │   ├── platform/
 │   ├── realtime/ws/
 │   ├── repo/sqlite/{migrations,seedmigrations}/
