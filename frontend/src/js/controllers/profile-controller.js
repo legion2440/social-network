@@ -8,9 +8,15 @@
     var AuthAPI = dependencies.api;
     var USERS = dependencies.session.users;
     var UserModel = dependencies.models.users;
+    var NotificationModel = dependencies.models.notifications;
     var emptyProfileEditor = dependencies.helpers.emptyProfileEditor;
     var requestErrorMessage = dependencies.helpers.requestErrorMessage;
     var parseDateOfBirth = dependencies.helpers.parseDateOfBirth;
+    var formatDateOfBirthInput = dependencies.helpers.formatDateOfBirthInput;
+    var cover = dependencies.helpers.cover;
+    var num = dependencies.helpers.num;
+    var IC = dependencies.values.IC;
+    var presentPost = dependencies.presenters.post;
 
   context.loadDirectory = async (reset = true) => {
     const authGeneration = context.authGate.current();
@@ -509,6 +515,26 @@
     return { label: model.label, bg: 'var(--accent)', color: '#fff', bd: 'transparent', disabled: model.disabled };
   };
 
+  context.selectTab = tab => {
+    if (['posts', 'followers', 'following'].indexOf(tab) < 0) return;
+    context.setState({ profileTab: tab });
+  };
+
+  context.updateEditorField = (field, value) => {
+    const allowed = {
+      editFirstName: true,
+      editLastName: true,
+      editDateOfBirth: true,
+      editGender: true,
+      editNickname: true,
+      editAboutMe: true
+    };
+    if (!allowed[field]) return;
+    context.setState({
+      [field]: field === 'editDateOfBirth' ? formatDateOfBirthInput(value) : value
+    });
+  };
+
     return createController('profile', dependencies, {
       loadDirectory: context.loadDirectory,
       loadFollowRequests: context.loadFollowRequests,
@@ -526,9 +552,269 @@
       toggleFollow: context.toggleFollow,
       acceptFollowRequest: context.acceptFollowRequest,
       rejectFollowRequest: context.rejectFollowRequest,
-      followBtn: context.followBtn
+      followBtn: context.followBtn,
+      selectTab: context.selectTab,
+      updateEditorField: context.updateEditorField
     }, function (state) {
-      return { userID: state && state.profileId ? Number(state.profileId) : null, ready: !!(state && state.profileReady) };
+      var me = USERS.me;
+      var profileID = Number(state.profileId || me.apiId);
+      var user = context.apiUser(profileID);
+      var isMe = profileID === Number(me.apiId);
+      var canView = state.profileReady && user.canViewProfile !== false;
+
+      function followButton(userID) {
+        var target = context.apiUser(userID);
+        var model = UserModel.followButton(
+          target,
+          state.followPendingByID[String(userID)]
+        );
+        if (model.tone === 'muted') {
+          return {
+            label: model.label,
+            bg: 'var(--surface2)',
+            color: 'var(--text2)',
+            bd: 'transparent',
+            disabled: model.disabled
+          };
+        }
+        if (model.tone === 'soft') {
+          return {
+            label: model.label,
+            bg: 'var(--soft)',
+            color: 'var(--accent)',
+            bd: 'transparent',
+            disabled: model.disabled
+          };
+        }
+        return {
+          label: model.label,
+          bg: 'var(--accent)',
+          color: '#fff',
+          bd: 'transparent',
+          disabled: model.disabled
+        };
+      }
+
+      function userRow(userID) {
+        var rowUser = context.apiUser(userID);
+        var button = followButton(userID);
+        return {
+          user: rowUser,
+          showBtn: Number(userID) !== Number(me.apiId),
+          btnLabel: button.label,
+          btnBg: button.bg,
+          btnColor: button.color,
+          btnBd: button.bd,
+          btnDisabled: button.disabled,
+          onBtn: function (event) {
+            return context.toggleFollow(userID, false, event && event.currentTarget);
+          },
+          message: function () { return context.openDirectChat(userID); },
+          goProfile: function () { return context.openProfile(userID); }
+        };
+      }
+
+      var profileTabs = [
+        { key: 'posts', label: 'Posts' },
+        { key: 'followers', label: 'Followers · ' + (user.followersCount || 0) },
+        { key: 'following', label: 'Following · ' + (user.followingCount || 0) }
+      ].map(function (tab) {
+        var selected = state.profileTab === tab.key;
+        return {
+          label: tab.label,
+          color: selected ? 'var(--text)' : 'var(--text3)',
+          bd: selected ? 'var(--accent)' : 'transparent',
+          pick: function () { return context.selectTab(tab.key); }
+        };
+      });
+      var privacySegments = [
+        { key: 'public', label: 'Public', icon: IC.globe },
+        { key: 'private', label: 'Private', icon: IC.lock }
+      ].map(function (option) {
+        var selected = state.myPrivacy === option.key;
+        var disabled = state.profilePrivacyPending ||
+          state.profileEditPending || state.profileAvatarPending;
+        return {
+          label: option.label,
+          icon: option.icon,
+          bg: selected ? 'var(--surface)' : 'transparent',
+          color: selected ? 'var(--text)' : 'var(--text3)',
+          disabled: disabled,
+          opacity: disabled ? '0.6' : '1',
+          cursor: state.profilePrivacyPending
+            ? 'wait'
+            : (state.profileEditPending || state.profileAvatarPending ? 'not-allowed' : 'pointer'),
+          pick: function (event) {
+            return context.setProfilePrivacy(
+              option.key,
+              false,
+              event && event.currentTarget
+            );
+          }
+        };
+      });
+      var follow = followButton(profileID);
+      var pendingRequestActorIDs = {};
+      state.notifications.forEach(function (notification) {
+        if (
+          notification.type === 'follow_request' &&
+          NotificationModel.isActionable(notification)
+        ) {
+          pendingRequestActorIDs[String(Number(notification.actorID))] = true;
+        }
+      });
+      var suggestions = state.directoryUserIDs
+        .map(function (userID) { return context.apiUser(userID); })
+        .filter(function (suggestion) {
+          return !suggestion.relationship ||
+            suggestion.relationship.status !== 'accepted';
+        })
+        .filter(function (suggestion) {
+          return !pendingRequestActorIDs[String(Number(suggestion.apiId))];
+        })
+        .map(function (suggestion) {
+          var button = followButton(suggestion.apiId);
+          var relationship = suggestion.relationship;
+          return {
+            user: suggestion,
+            isPrivate: suggestion.private,
+            btnLabel: button.label,
+            btnBg: button.bg,
+            btnColor: button.color,
+            btnBd: button.bd,
+            btnDisabled: button.disabled,
+            onBtn: function (event) {
+              return context.toggleFollow(
+                suggestion.apiId,
+                false,
+                event && event.currentTarget
+              );
+            },
+            canMessage: relationship &&
+              (relationship.status === 'accepted' || relationship.follows_me),
+            message: function () { return context.openDirectChat(suggestion.apiId); },
+            goProfile: function () { return context.openProfile(suggestion.apiId); }
+          };
+        });
+
+      return {
+        profileError: state.profileError,
+        retryProfile: function () { return context.openProfile(state.profileId); },
+        pUser: user,
+        pIsMe: isMe,
+        pOther: !isMe,
+        pCover: cover(user.color),
+        pShowLock: user.private || (isMe && state.myPrivacy === 'private'),
+        pCanView: canView,
+        pLocked: !canView,
+        pShowEmail: canView && !!user.email,
+        pShowGender: canView && !!user.gender,
+        pGenderLabel: user.gender === 'male'
+          ? 'Male'
+          : (user.gender === 'female' ? 'Female' : ''),
+        pStatPosts: num(user.postsCount || 0),
+        pStatFollowers: num(user.followersCount || 0),
+        pStatFollowing: num(user.followingCount || 0),
+        pTabs: profileTabs,
+        pTabPosts: state.profileTab === 'posts',
+        pTabFollowers: state.profileTab === 'followers',
+        pTabFollowing: state.profileTab === 'following',
+        pPosts: state.profilePosts.map(function (post) {
+          return presentPost(state, post);
+        }),
+        pNoPosts: !state.profilePostsLoading &&
+          !state.profilePostsError && state.profilePosts.length === 0,
+        pPostsLoading: state.profilePostsLoading,
+        pPostsHasError: !!state.profilePostsError,
+        pPostsError: state.profilePostsError,
+        retryProfilePosts: function () {
+          return context.loadProfilePosts(state.profileId, true);
+        },
+        pPostsHasMore: !!state.profilePostsNextCursor,
+        loadMoreProfilePosts: function () {
+          return context.loadProfilePosts(state.profileId, false);
+        },
+        profileLoadMoreLabel: state.profilePostsPending &&
+          !state.profilePostsLoading ? 'Loading…' : 'Load more',
+        profileLoadMoreDisabled: state.profilePostsPending,
+        pFollowers: state.profileFollowers.map(userRow),
+        pFollowing: state.profileFollowing.map(userRow),
+        pListsLoading: state.profileListsLoading,
+        pListsHasError: !!state.profileListsError,
+        pListsError: state.profileListsError,
+        followLabel: follow.label,
+        followBg: follow.bg,
+        followColor: follow.color,
+        followBd: follow.bd,
+        followDisabled: follow.disabled,
+        followHasError: !!state.followErrorByID[String(state.profileId)],
+        followError: state.followErrorByID[String(state.profileId)] || '',
+        onFollow: function (event) {
+          return context.toggleFollow(
+            state.profileId,
+            false,
+            event && event.currentTarget
+          );
+        },
+        msgProfile: function () { return context.openDirectChat(state.profileId); },
+        privacySeg: privacySegments,
+        profilePrivacyHasError: isMe && !!state.profilePrivacyError,
+        profilePrivacyError: state.profilePrivacyError,
+        showProfileEdit: isMe && state.profileEditOpen,
+        openProfileEdit: context.openProfileEdit,
+        cancelProfileEdit: context.cancelProfileEdit,
+        saveProfile: context.saveProfile,
+        profileEditPending: state.profileEditPending ||
+          state.profileAvatarPending || state.profilePrivacyPending,
+        profileSaveLabel: state.profileEditPending ? 'Saving…' : 'Save changes',
+        profileEditHasError: !!state.profileEditError,
+        profileEditError: state.profileEditError,
+        editFirstName: state.editFirstName,
+        onEditFirstName: function (event) {
+          return context.updateEditorField('editFirstName', event.target.value);
+        },
+        editLastName: state.editLastName,
+        onEditLastName: function (event) {
+          return context.updateEditorField('editLastName', event.target.value);
+        },
+        editDateOfBirth: state.editDateOfBirth,
+        onEditDateOfBirth: function (event) {
+          return context.updateEditorField('editDateOfBirth', event.target.value);
+        },
+        editGender: state.editGender,
+        onEditGender: function (event) {
+          return context.updateEditorField('editGender', event.target.value);
+        },
+        editNickname: state.editNickname,
+        onEditNickname: function (event) {
+          return context.updateEditorField('editNickname', event.target.value);
+        },
+        editAboutMe: state.editAboutMe,
+        onEditAboutMe: function (event) {
+          return context.updateEditorField('editAboutMe', event.target.value);
+        },
+        profileAvatarLabel: state.editAvatarName || 'Choose image',
+        profileAvatarPending: state.profileAvatarPending ||
+          state.profileEditPending || state.profilePrivacyPending,
+        profileAvatarUploadDisabled: state.profileAvatarPending ||
+          state.profileEditPending || state.profilePrivacyPending || !state.editAvatar,
+        profileAvatarUploadOpacity: state.profileAvatarPending ||
+          state.profileEditPending || state.profilePrivacyPending || !state.editAvatar
+          ? '0.55'
+          : '1',
+        profileAvatarUploadLabel: state.profileAvatarPending ? 'Working…' : 'Upload',
+        profileHasCustomAvatar: me.hasCustomAvatar,
+        pickProfileAvatar: context.pickProfileAvatar,
+        onProfileAvatar: context.onProfileAvatar,
+        replaceProfileAvatar: context.replaceProfileAvatar,
+        deleteProfileAvatar: context.deleteProfileAvatar,
+        suggestions: suggestions,
+        suggestionsLoading: state.directoryLoading,
+        suggestionsHasError: !!state.directoryError,
+        suggestionsError: state.directoryError,
+        suggestionsHasMore: !!state.directoryNextCursor,
+        loadMoreSuggestions: function () { return context.loadDirectory(false); }
+      };
     }, {});
   };
 });

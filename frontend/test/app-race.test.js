@@ -39,6 +39,8 @@ global.createNotificationController = require('../src/js/controllers/notificatio
 global.createRealtimeController = require('../src/js/controllers/realtime-controller.js');
 global.createRouterController = require('../src/js/controllers/router-controller.js');
 global.createFeatureControllers = require('../src/js/controllers/feature-controllers.js');
+global.createPostPresenter = require('../src/js/presenters/post-presenter.js');
+global.mergeViewModels = require('../src/js/presenters/view-model-merge.js');
 
 const {
   Component,
@@ -1000,8 +1002,15 @@ test('personal and group posts use the same backend comment mutation', async () 
     '8': Object.assign(emptyCommentStateForTest(), { draft: 'group comment' })
   };
 
-  await component.controllers.feed.actions.mapPost(component.mapAPIPost(rawPost(7, 2))).onSendComment();
-  await component.controllers.feed.actions.mapPost(component.mapAPIPost(rawGroupPost(8, 3, 2))).onSendComment();
+  component.state.posts = [component.mapAPIPost(rawPost(7, 2))];
+  component.state.groupPosts = [
+    component.mapAPIPost(rawGroupPost(8, 3, 2))
+  ];
+  const personalPost = component.controllers.feed.derived(component.state).posts[0];
+  const groupPost = component.controllers.groups.derived(component.state).gPosts[0];
+
+  await personalPost.onSendComment();
+  await groupPost.onSendComment();
 
   assert.deepEqual(calls, [7, 8]);
 });
@@ -1018,6 +1027,56 @@ test('production runtime has no prototype identities or seeded post state', () =
   }
   assert.deepEqual(component.state.openComments, {});
   assert.equal(Object.prototype.hasOwnProperty.call(component.state, 'drafts'), false);
+});
+
+test('renderVals is shell-only and merges feature view models in the fixed order', () => {
+  const component = createComponent();
+  const source = Component.prototype.renderVals.toString();
+  const view = component.renderVals();
+
+  assert.doesNotMatch(source, /state\.(?:posts|profilePosts|groupPosts|groupEvents|notifications)\.map/);
+  assert.doesNotMatch(source, /\bsetState\s*\(/);
+  assert.match(source, /name:\s*'shell'[\s\S]*name:\s*'auth'[\s\S]*name:\s*'feed'[\s\S]*name:\s*'profile'[\s\S]*name:\s*'groups'[\s\S]*name:\s*'events'[\s\S]*name:\s*'chat'[\s\S]*name:\s*'notifications'[\s\S]*name:\s*'realtime'/);
+  assert.match(source, /mergeViewModels\([\s\S]*\],\s*\{\}\)/);
+  assert.equal(Array.isArray(view.posts), true);
+  assert.equal(Array.isArray(view.pPosts), true);
+  assert.equal(Array.isArray(view.gPosts), true);
+  assert.equal(Array.isArray(view.gEvents), true);
+  assert.equal(Array.isArray(view.convos), true);
+  assert.equal(Array.isArray(view.notifItems), true);
+  assert.equal(typeof view.submitAuth, 'function');
+  assert.equal(view.realtimeStatus, component.state.wsStatus);
+});
+
+test('feature derived functions are pure and share one post presenter', () => {
+  const component = createComponent();
+  const dependencies = component.controllerDependencies();
+  const presenter = dependencies.feed.presenters.post;
+  const before = JSON.stringify(component.state);
+
+  assert.equal(dependencies.profile.presenters.post, presenter);
+  assert.equal(dependencies.groups.presenters.post, presenter);
+  [
+    'auth', 'feed', 'profile', 'groups', 'events',
+    'chat', 'notification', 'realtime'
+  ].forEach(name => {
+    component.controllers[name].derived(component.state);
+  });
+  assert.equal(JSON.stringify(component.state), before);
+});
+
+test('view model merge rejects every undeclared duplicate owner', () => {
+  assert.deepEqual(global.mergeViewModels([
+    { name: 'shell', values: { isApp: true } },
+    { name: 'feed', values: { posts: [] } }
+  ], {}), {
+    isApp: true,
+    posts: []
+  });
+  assert.throws(() => global.mergeViewModels([
+    { name: 'feed', values: { posts: [] } },
+    { name: 'profile', values: { posts: [] } }
+  ], {}), /owned by both "feed" and "profile"/);
 });
 
 test('group mutation invalidates an older directory response', async () => {

@@ -10,6 +10,8 @@
     var GroupEventModel = dependencies.models.events;
     var requestErrorMessage = dependencies.helpers.requestErrorMessage;
     var parseLocalDateTime = dependencies.helpers.parseLocalDateTime;
+    var formatDateTimeInput = dependencies.helpers.formatDateTimeInput;
+    var num = dependencies.helpers.num;
 
   context.groupEventResponseGate = function (eventID) {
     const key = String(Number(eventID));
@@ -182,14 +184,123 @@
     }
   };
 
+  context.toggleComposer = () => context.setState({
+    groupEventComposerOpen: !context.state.groupEventComposerOpen,
+    groupEventCreateError: ''
+  });
+
+  context.updateComposerField = (field, value) => {
+    const stateField = {
+      title: 'groupEventTitle',
+      description: 'groupEventDescription',
+      startsAt: 'groupEventStartsAt'
+    }[field];
+    if (!stateField) return;
+    context.setState({
+      [stateField]: field === 'startsAt' ? formatDateTimeInput(value) : value,
+      groupEventCreateError: ''
+    });
+  };
+
     return createController('events', dependencies, {
       groupEventResponseGate: context.groupEventResponseGate,
       invalidateGroupEventResponses: context.invalidateGroupEventResponses,
       loadGroupEvents: context.loadGroupEvents,
       createGroupEvent: context.createGroupEvent,
-      respondToGroupEvent: context.respondToGroupEvent
+      respondToGroupEvent: context.respondToGroupEvent,
+      toggleComposer: context.toggleComposer,
+      updateComposerField: context.updateComposerField
     }, function (state) {
-      return { eventCount: state && state.groupEvents ? state.groupEvents.length : 0 };
+      var groupID = Number(state.groupId);
+      var events = state.groupEvents.map(function (event, index) {
+        var eventID = String(event.id);
+        var startsAt = new Date(event.startsAt);
+        var pending = !!state.groupEventResponsePendingByID[eventID];
+        return {
+          id: event.id,
+          title: event.title,
+          description: event.description,
+          startsAt: Number.isNaN(startsAt.getTime())
+            ? event.startsAt
+            : startsAt.toLocaleString([], {
+              dateStyle: 'medium',
+              timeStyle: 'short'
+            }),
+          creator: context.apiUser(event.creatorID),
+          goingCount: num(event.goingCount),
+          notGoingCount: num(event.notGoingCount),
+          goingSelected: event.viewerResponse === 'going',
+          notGoingSelected: event.viewerResponse === 'not_going',
+          goingBg: event.viewerResponse === 'going'
+            ? 'var(--accent)'
+            : 'transparent',
+          goingColor: event.viewerResponse === 'going'
+            ? '#fff'
+            : 'var(--text2)',
+          notGoingBg: event.viewerResponse === 'not_going'
+            ? 'var(--surface2)'
+            : 'transparent',
+          notGoingColor: event.viewerResponse === 'not_going'
+            ? 'var(--text)'
+            : 'var(--text2)',
+          pending: pending,
+          error: state.groupEventResponseErrorByID[eventID] || '',
+          hasError: !!state.groupEventResponseErrorByID[eventID],
+          delay: (index * 0.05).toFixed(2) + 's',
+          goProfile: function () { return context.openProfile(event.creatorID); },
+          going: function () {
+            return context.respondToGroupEvent(event.id, 'going');
+          },
+          notGoing: function () {
+            return context.respondToGroupEvent(event.id, 'not_going');
+          }
+        };
+      });
+      var startsAt = parseLocalDateTime(state.groupEventStartsAt);
+      var createDisabled = state.groupEventCreatePending ||
+        !state.groupEventTitle.trim() ||
+        !state.groupEventDescription.trim() ||
+        !startsAt;
+
+      return {
+        gEvents: events,
+        groupEventsLoading: state.groupEventsLoading,
+        groupEventsHasError: !!state.groupEventsError,
+        groupEventsError: state.groupEventsError,
+        groupEventsEmpty: !state.groupEventsLoading &&
+          !state.groupEventsError && events.length === 0,
+        groupEventsHasMore: !!state.groupEventsNextCursor,
+        groupEventsLoadMoreDisabled: state.groupEventsPending,
+        retryGroupEvents: function () {
+          return context.loadGroupEvents(groupID, true);
+        },
+        loadMoreGroupEvents: function () {
+          return context.loadGroupEvents(groupID, false);
+        },
+        groupEventComposerOpen: state.groupEventComposerOpen,
+        toggleGroupEventComposer: context.toggleComposer,
+        groupEventTitle: state.groupEventTitle,
+        onGroupEventTitle: function (event) {
+          return context.updateComposerField('title', event.target.value);
+        },
+        groupEventDescription: state.groupEventDescription,
+        onGroupEventDescription: function (event) {
+          return context.updateComposerField('description', event.target.value);
+        },
+        groupEventStartsAt: state.groupEventStartsAt,
+        onGroupEventStartsAt: function (event) {
+          return context.updateComposerField('startsAt', event.target.value);
+        },
+        groupEventCreatePending: state.groupEventCreatePending,
+        groupEventCreateHasError: !!state.groupEventCreateError,
+        groupEventCreateError: state.groupEventCreateError,
+        groupEventCreateDisabled: createDisabled,
+        groupEventCreateButtonLabel: state.groupEventCreatePending
+          ? 'Creating…'
+          : 'Create event',
+        createGroupEvent: context.createGroupEvent,
+        railEvents: []
+      };
     }, {});
   };
 });

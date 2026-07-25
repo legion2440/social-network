@@ -218,7 +218,7 @@ Caddy проксирует точные и вложенные маршруты:
 | Static server / reverse proxy | Caddy                                  |
 | Контейнеры                    | Docker и Docker Compose                |
 
-Browser-приложение не организовано как обычное React component tree. Application framework `dc-runtime` обрабатывает собранный build-time шаблон `<x-dc>`, а React и ReactDOM используются только как rendering layer. Root владеет единым shared state и lifecycle приложения; feature controllers содержат actions и используют узкие state/API/model/gate/helper/callback dependencies без доступа к root component. Production source находится в `frontend/src` и генерируется в ignored-каталог `frontend/dist`.
+Browser-приложение не организовано как обычное React component tree. Application framework `dc-runtime` обрабатывает собранный build-time шаблон `<x-dc>`, а React и ReactDOM используются только как rendering layer. Root владеет единым shared state и lifecycle приложения; feature controllers содержат actions и готовые чистые template view models, используя узкие state/API/model/gate/helper/callback dependencies без доступа к root component. Posts в Home, profile и group используют единый чистый presenter, а root объединяет controller view models в фиксированном порядке с обнаружением дублирующихся ключей. Production source находится в `frontend/src` и генерируется в ignored-каталог `frontend/dist`.
 
 ## 🔐 Безопасность и контроль доступа
 

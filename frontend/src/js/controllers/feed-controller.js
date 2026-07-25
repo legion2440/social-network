@@ -12,8 +12,8 @@
     var CommentModel = dependencies.models.comments;
     var emptyCommentState = dependencies.helpers.emptyCommentState;
     var requestErrorMessage = dependencies.helpers.requestErrorMessage;
-    var num = dependencies.helpers.num;
     var IC = dependencies.values.IC;
+    var presentPost = dependencies.presenters.post;
 
   context.commentState = function (postID) {
     return context.state.commentsByPostID[String(Number(postID))] || emptyCommentState();
@@ -334,6 +334,33 @@
     context.setState({ composerFile: null, composerFileName: '', composerError: '' });
   };
 
+  context.updateComposer = value => context.setState({ composerText: value, composerError: '' });
+
+  context.togglePrivacy = () => context.setState({ privacyOpen: !context.state.privacyOpen });
+
+  context.selectPrivacy = privacy => {
+    if (['public', 'followers', 'selected'].indexOf(privacy) < 0) return;
+    context.setState({ privacy, privacyOpen: false });
+    if (privacy === 'selected') context.loadPostFollowers();
+  };
+
+  context.toggleSelectedFollower = userID => {
+    const key = String(Number(userID));
+    if (key === 'NaN') return;
+    context.setState(state => ({
+      selectedFollowers: Object.assign({}, state.selectedFollowers, {
+        [key]: !state.selectedFollowers[key]
+      })
+    }));
+  };
+
+  context.chooseCommentMedia = postID => {
+    const comment = context.commentState(postID);
+    if (comment.createPending || typeof document === 'undefined') return;
+    const input = document.getElementById(context.commentMediaInputID(postID));
+    if (input) input.click();
+  };
+
   context.sendPost = async () => {
     const s = context.state;
     if (s.composerPending || (!s.composerText.trim() && !s.composerFile)) return;
@@ -376,68 +403,6 @@
     }
   };
 
-  context.mapPost = function (p) {
-    const s = context.state;
-    const key = p.id;
-    const privacyMeta = { public: { icon: IC.globe, label: 'Public' }, followers: { icon: IC.users, label: 'Followers' }, selected: { icon: IC.lock, label: 'Selected' } };
-    const pm = privacyMeta[p.privacy] || privacyMeta.public;
-    const commentState = context.commentState(p.id);
-    const comments = commentState.comments;
-    const user = context.apiUser(p.apiAuthorID);
-    return Object.assign({}, p, {
-      user,
-      hasText: !!String(p.text || '').trim(),
-      privacyIcon: pm.icon, privacyLabel: pm.label,
-      hasGroup: Number.isInteger(Number(p.groupID)) && Number(p.groupID) > 0,
-      groupTitle: p.groupTitle || '',
-      hasImage: !!p.mediaUrl,
-      mediaUrl: p.mediaUrl || '',
-      commentCount: num(p.commentsCount || 0),
-      showComments: !!s.openComments[key],
-      comments: comments.map(c => Object.assign({}, c, {
-        user: context.apiUser(c.apiAuthorID),
-        time: context.formatPostTime(c.createdAt),
-        hasText: !!String(c.text || '').trim(),
-        hasMedia: !!c.mediaUrl
-      })),
-      draft: commentState.draft,
-      commentsLoading: commentState.loading,
-      commentsPending: commentState.pending,
-      commentsHasError: !!commentState.error,
-      commentsError: commentState.error,
-      commentsHasMore: !!commentState.nextCursor,
-      commentCreatePending: commentState.createPending,
-      commentCreateHasError: !!commentState.createError,
-      commentCreateError: commentState.createError,
-      commentSendDisabled: commentState.createPending || (!commentState.draft.trim() && !commentState.mediaFile),
-      commentMediaInputID: context.commentMediaInputID(p.id),
-      commentHasMedia: !!commentState.mediaFile,
-      commentMediaFileName: commentState.mediaFileName,
-      commentMediaPreviewURL: commentState.mediaPreviewURL,
-      commentMediaControlsDisabled: commentState.createPending,
-      commentSendLabel: commentState.createPending ? '…' : 'Send',
-      onToggleComments: () => context.togglePostComments(p.id),
-      onDraft: (e) => context.setCommentDraft(p.id, e.target.value),
-      onKey: (e) => {
-        if (e.key !== 'Enter') return;
-        e.preventDefault();
-        context.createComment(p.id);
-      },
-      onSendComment: () => context.createComment(p.id),
-      onCommentMedia: (e) => context.selectCommentMedia(p.id, e),
-      onChooseCommentMedia: () => {
-        if (commentState.createPending || typeof document === 'undefined') return;
-        const input = document.getElementById(context.commentMediaInputID(p.id));
-        if (input) input.click();
-      },
-      onRemoveCommentMedia: () => context.removeCommentMedia(p.id),
-      loadMoreComments: () => context.loadComments(p.id, false),
-      retryComments: () => context.loadComments(p.id, true),
-      goProfile: () => context.openProfile(p.apiAuthorID),
-      goGroup: () => context.openGroup(p.groupID)
-    });
-  };
-
     return createController('feed', dependencies, {
       commentState: context.commentState,
       commentAccessGate: context.commentAccessGate,
@@ -461,10 +426,91 @@
       pickComposerMedia: context.pickComposerMedia,
       onComposerMedia: context.onComposerMedia,
       removeComposerMedia: context.removeComposerMedia,
-      sendPost: context.sendPost,
-      mapPost: context.mapPost
+      updateComposer: context.updateComposer,
+      togglePrivacy: context.togglePrivacy,
+      selectPrivacy: context.selectPrivacy,
+      toggleSelectedFollower: context.toggleSelectedFollower,
+      chooseCommentMedia: context.chooseCommentMedia,
+      sendPost: context.sendPost
     }, function (state) {
-      return { postCount: state && state.posts ? state.posts.length : 0, posts: state && state.posts ? state.posts.map(context.mapPost) : [] };
+      var privacyMeta = {
+        public: { icon: IC.globe, label: 'Public' },
+        followers: { icon: IC.users, label: 'Followers' },
+        selected: { icon: IC.lock, label: 'Selected' }
+      };
+      var privacyOptions = [
+        { key: 'public', label: 'Public', desc: 'Anyone on loop can see this', icon: IC.globe },
+        { key: 'followers', label: 'Followers only', desc: 'People who follow you', icon: IC.users },
+        { key: 'selected', label: 'Selected followers', desc: 'Choose exactly who sees it', icon: IC.lock }
+      ].map(function (option) {
+        var selected = state.privacy === option.key;
+        return {
+          label: option.label,
+          desc: option.desc,
+          icon: option.icon,
+          isOn: selected,
+          bg: selected ? 'var(--soft)' : 'transparent',
+          pick: function () { return context.selectPrivacy(option.key); }
+        };
+      });
+      var followerChips = state.postFollowers.map(function (user) {
+        var userID = String(user.apiId);
+        var selected = !!state.selectedFollowers[userID];
+        return {
+          name: user.name.split(' ')[0],
+          initials: user.initials,
+          color: user.color,
+          bg: selected ? 'var(--soft)' : 'transparent',
+          bd: selected ? 'var(--accent)' : 'var(--border)',
+          tc: selected ? 'var(--accent)' : 'var(--text2)',
+          toggle: function () { return context.toggleSelectedFollower(userID); }
+        };
+      });
+      var audienceReady = state.privacy !== 'selected' ||
+        Object.keys(state.selectedFollowers).some(function (id) {
+          return state.selectedFollowers[id];
+        });
+      var hasContent = !!state.composerText.trim() || !!state.composerFile;
+      var canPost = hasContent && audienceReady && !state.composerPending;
+      var privacy = privacyMeta[state.privacy] || privacyMeta.public;
+
+      return {
+        feedLoading: state.feedLoading,
+        feedReady: !state.feedLoading,
+        feedHasError: !!state.feedError,
+        feedError: state.feedError,
+        retryFeed: function () { return context.loadFeed(true); },
+        feedHasMore: !!state.feedNextCursor,
+        feedLoadMore: function () { return context.loadFeed(false); },
+        feedLoadMoreLabel: state.feedPending && !state.feedLoading ? 'Loading…' : 'Load more',
+        feedLoadMoreDisabled: state.feedPending,
+        posts: state.posts.map(function (post, index) {
+          return presentPost(state, post, { delay: (index * 0.06).toFixed(2) + 's' });
+        }),
+        composerText: state.composerText,
+        onComposer: function (event) { return context.updateComposer(event.target.value); },
+        composerHasMedia: !!state.composerFile,
+        composerMediaName: state.composerFileName,
+        pickComposerMedia: context.pickComposerMedia,
+        onComposerMedia: context.onComposerMedia,
+        removeComposerMedia: context.removeComposerMedia,
+        composerHasError: !!state.composerError,
+        composerError: state.composerError,
+        privacyOpen: state.privacyOpen,
+        togglePrivacy: context.togglePrivacy,
+        privacyIcon: privacy.icon,
+        privacyLabel: privacy.label,
+        privacyOptions: privacyOptions,
+        privacyIsSelected: state.privacy === 'selected',
+        followerChips: followerChips,
+        selectedFollowersEmpty: state.postFollowers.length === 0 && !state.postFollowersLoading,
+        postBtnDisabled: state.composerPending || !hasContent || !audienceReady,
+        postBtnBg: canPost ? 'var(--accent)' : 'var(--surface2)',
+        postBtnColor: canPost ? '#fff' : 'var(--text3)',
+        postBtnCursor: state.composerPending ? 'wait' : (hasContent && audienceReady ? 'pointer' : 'not-allowed'),
+        postButtonLabel: state.composerPending ? 'Posting…' : 'Post',
+        sendPost: context.sendPost
+      };
     }, { stop: context.disposeAllCommentPreviews });
   };
 });

@@ -17,6 +17,7 @@
     var emptyChatState = dependencies.helpers.emptyChatState;
     var requestErrorMessage = dependencies.helpers.requestErrorMessage;
     var parseDateOfBirth = dependencies.helpers.parseDateOfBirth;
+    var formatDateOfBirthInput = dependencies.helpers.formatDateOfBirthInput;
 
   context.revokeRegistrationAvatarPreview = function (previewURL) {
     if (
@@ -65,6 +66,23 @@
   };
 
   context.setAuthMode = (mode) => context.setState({ authMode: mode, authError: '' });
+
+  context.updateField = (field, value) => {
+    const allowed = {
+      authEmail: true,
+      authPassword: true,
+      regFirstName: true,
+      regLastName: true,
+      regDateOfBirth: true,
+      regGender: true,
+      regNickname: true,
+      regAboutMe: true
+    };
+    if (!allowed[field]) return;
+    context.setState({
+      [field]: field === 'regDateOfBirth' ? formatDateOfBirthInput(value) : value
+    });
+  };
 
   context.pickRegistrationAvatar = () => {
     const input = document.getElementById('registration-avatar');
@@ -240,12 +258,61 @@
       revokeRegistrationAvatarPreview: context.revokeRegistrationAvatarPreview,
       loadCurrentUser: context.loadCurrentUser,
       setAuthMode: context.setAuthMode,
+      updateField: context.updateField,
       pickRegistrationAvatar: context.pickRegistrationAvatar,
       onRegistrationAvatar: context.onRegistrationAvatar,
       submitAuth: context.submitAuth,
       logout: context.logout
     }, function (state) {
-      return { authenticated: state && state.authStatus === 'authenticated', checking: !state || state.authStatus === 'checking' };
+      const authTabs = [
+        { key: 'login', label: 'Sign in' },
+        { key: 'register', label: 'Create account' }
+      ].map(tab => ({
+        label: tab.label,
+        bg: state.authMode === tab.key ? 'var(--surface)' : 'transparent',
+        color: state.authMode === tab.key ? 'var(--text)' : 'var(--text3)',
+        sh: state.authMode === tab.key ? 'var(--shadow)' : 'none',
+        pick: () => context.setAuthMode(tab.key)
+      }));
+      return {
+        authTabs,
+        authIsLogin: state.authMode === 'login',
+        authIsReg: state.authMode === 'register',
+        authCta: state.authPending ? 'Please wait…' :
+          (state.authMode === 'login' ? 'Sign in' : 'Create account'),
+        authDisabled: state.authPending,
+        authButtonOpacity: state.authPending ? '0.65' : '1',
+        authButtonCursor: state.authPending ? 'wait' : 'pointer',
+        authHasError: !!state.authError,
+        authError: state.authError,
+        bootstrapError: state.bootstrapError,
+        retryAuthBootstrap: context.loadCurrentUser,
+        authEmail: state.authEmail,
+        onAuthEmail: event => context.updateField('authEmail', event.target.value),
+        authPassword: state.authPassword,
+        onAuthPassword: event => context.updateField('authPassword', event.target.value),
+        regFirstName: state.regFirstName,
+        onRegFirstName: event => context.updateField('regFirstName', event.target.value),
+        regLastName: state.regLastName,
+        onRegLastName: event => context.updateField('regLastName', event.target.value),
+        regDateOfBirth: state.regDateOfBirth,
+        onRegDateOfBirth: event => context.updateField('regDateOfBirth', event.target.value),
+        regGender: state.regGender,
+        onRegGender: event => context.updateField('regGender', event.target.value),
+        regNickname: state.regNickname,
+        onRegNickname: event => context.updateField('regNickname', event.target.value),
+        regAboutMe: state.regAboutMe,
+        onRegAboutMe: event => context.updateField('regAboutMe', event.target.value),
+        avatarButtonLabel: state.regAvatarName || 'avatar',
+        registrationAvatarHasPreview: !!state.regAvatarPreviewURL,
+        registrationAvatarMissingPreview: !state.regAvatarPreviewURL,
+        registrationAvatarPreviewURL: state.regAvatarPreviewURL,
+        pickRegistrationAvatar: context.pickRegistrationAvatar,
+        onRegistrationAvatar: context.onRegistrationAvatar,
+        submitAuth: context.submitAuth,
+        goLogout: context.logout,
+        logoutDisabled: state.logoutPending
+      };
     }, { start: context.loadCurrentUser });
   };
 });

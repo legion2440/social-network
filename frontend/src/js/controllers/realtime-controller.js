@@ -186,7 +186,9 @@
       stopRealtime: context.stopRealtime,
       handleRealtimeEvent: context.handleRealtimeEvent
     }, function (state) {
-      return { status: state ? state.wsStatus : 'disconnected' };
+      return {
+        realtimeStatus: state ? state.wsStatus : 'disconnected'
+      };
     }, { stop: context.stopRealtime });
   };
 });

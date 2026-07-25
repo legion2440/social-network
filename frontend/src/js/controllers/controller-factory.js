@@ -26,7 +26,8 @@
         refs: Object.freeze(Object.keys(dependencies.refs || {})),
         navigation: Object.freeze(Object.keys(dependencies.navigation || {})),
         session: Object.freeze(Object.keys(dependencies.session || {})),
-        values: Object.freeze(Object.keys(dependencies.values || {}))
+        values: Object.freeze(Object.keys(dependencies.values || {})),
+        presenters: Object.freeze(Object.keys(dependencies.presenters || {}))
       }),
       actions: Object.freeze(actions || {}),
       derived: typeof derived === 'function' ? derived : function () { return {}; },

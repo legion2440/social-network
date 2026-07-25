@@ -9,10 +9,14 @@
     var UserModel = dependencies.models.users;
     var PostModel = dependencies.models.posts;
     var ChatModel = dependencies.models.chats;
+    var USERS = dependencies.session.users;
     var emptyGroupPostState = dependencies.helpers.emptyGroupPostState;
     var emptyGroupEventState = dependencies.helpers.emptyGroupEventState;
     var requestErrorMessage = dependencies.helpers.requestErrorMessage;
+    var cover = dependencies.helpers.cover;
+    var num = dependencies.helpers.num;
     var GROUP_COLORS = dependencies.values.GROUP_COLORS;
+    var presentPost = dependencies.presenters.post;
 
   context.groupAccessIsRevoked = function (groupID) {
     return context.revokedGroupAccessIDs.has(String(Number(groupID)));
@@ -583,6 +587,32 @@
     });
   };
 
+  context.toggleCreate = () => context.setState({ createOpen: !context.state.createOpen });
+
+  context.updateCreateField = (field, value) => {
+    if (field !== 'ngName' && field !== 'ngDesc') return;
+    context.setState({ [field]: value });
+  };
+
+  context.selectTab = tab => {
+    if (['posts', 'events', 'members'].indexOf(tab) < 0) return;
+    context.setState({ groupTab: tab });
+  };
+
+  context.selectInviteCandidate = userID => {
+    context.setState({ groupInviteUserID: String(Number(userID)) });
+  };
+
+  context.updatePostComposer = value => {
+    context.setState({ groupPostComposerText: value, groupPostComposerError: '' });
+  };
+
+  context.toggleInvite = () => {
+    const opening = !context.state.inviteOpen;
+    context.setState({ inviteOpen: opening });
+    if (opening && !context.state.directoryUserIDs.length) context.loadDirectory(true);
+  };
+
     return createController('groups', dependencies, {
       groupAccessIsRevoked: context.groupAccessIsRevoked,
       revokeGroupAccess: context.revokeGroupAccess,
@@ -612,9 +642,297 @@
       acceptGroupRequest: context.acceptGroupRequest,
       rejectGroupRequest: context.rejectGroupRequest,
       createGroup: context.createGroup,
-      inviteSelectedUser: context.inviteSelectedUser
+      inviteSelectedUser: context.inviteSelectedUser,
+      toggleCreate: context.toggleCreate,
+      updateCreateField: context.updateCreateField,
+      selectTab: context.selectTab,
+      selectInviteCandidate: context.selectInviteCandidate,
+      updatePostComposer: context.updatePostComposer,
+      toggleInvite: context.toggleInvite
     }, function (state) {
-      return { groupID: state && state.groupId ? Number(state.groupId) : null, groupCount: state && state.groupIDs ? state.groupIDs.length : 0 };
+      var me = USERS.me;
+      var groupCards = state.groupIDs
+        .map(function (groupID) {
+          return state.apiGroupsByID[String(groupID)];
+        })
+        .filter(Boolean)
+        .map(function (group, index) {
+          var pending = !!state.groupMutationPendingByID[String(group.id)];
+          var accessRevoked = context.groupAccessIsRevoked(group.id);
+          return {
+            name: group.name,
+            desc: group.desc,
+            membersLabel: num(group.members),
+            cover: cover(group.color),
+            owner: context.apiUser(group.ownerID),
+            delay: (index * 0.05).toFixed(2) + 's',
+            pending: pending,
+            error: state.groupMutationErrorByID[String(group.id)] || '',
+            hasError: !!state.groupMutationErrorByID[String(group.id)],
+            isJoined: !accessRevoked &&
+              (group.state === 'member' || group.state === 'owner'),
+            isOwner: !accessRevoked && group.state === 'owner',
+            isMember: !accessRevoked && group.state === 'member',
+            isNone: group.state === 'none',
+            isRequested: group.state === 'requested',
+            isInvited: group.state === 'invited',
+            open: function () { return context.openGroup(group.id); },
+            join: function () { return context.requestGroupJoin(group.id); },
+            leave: function () { return context.leaveGroup(group.id); },
+            acceptInvite: function () {
+              return context.acceptGroupInvitation(group.id);
+            },
+            declineInvite: function () {
+              return context.declineGroupInvitation(group.id);
+            }
+          };
+        });
+      var groupInboxCards = state.groupInvitationInbox.map(function (item) {
+        var group = state.apiGroupsByID[String(item.group.id)] || item.group;
+        var pending = !!state.groupMutationPendingByID[String(group.id)];
+        return {
+          name: group.name,
+          owner: context.apiUser(group.ownerID),
+          pending: pending,
+          accept: function () {
+            return context.acceptGroupInvitation(group.id);
+          },
+          decline: function () {
+            return context.declineGroupInvitation(group.id);
+          },
+          open: function () { return context.openGroup(group.id); }
+        };
+      });
+      var group = state.apiGroupsByID[String(Number(state.groupId))] || {
+        id: Number(state.groupId) || 0,
+        name: '',
+        desc: '',
+        members: 0,
+        state: 'none',
+        ownerID: 0,
+        color: GROUP_COLORS[0]
+      };
+      var accessRevoked = context.groupAccessIsRevoked(group.id);
+      var isOwner = !accessRevoked && group.state === 'owner';
+      var canChat = !accessRevoked &&
+        (group.state === 'owner' || group.state === 'member');
+      var mutationPending =
+        !!state.groupMutationPendingByID[String(group.id)];
+      var mutationError =
+        state.groupMutationErrorByID[String(group.id)] || '';
+      var tabs = [
+        { key: 'posts', label: 'Posts' },
+        { key: 'events', label: 'Events' },
+        { key: 'members', label: 'Members' }
+      ].map(function (tab) {
+        var selected = state.groupTab === tab.key;
+        return {
+          label: tab.label,
+          color: selected ? 'var(--text)' : 'var(--text3)',
+          bd: selected ? 'var(--accent)' : 'transparent',
+          pick: function () { return context.selectTab(tab.key); }
+        };
+      });
+      var members = state.groupMembers.map(function (member) {
+        return {
+          user: context.apiUser(member.userID),
+          isOwner: member.status === 'owner',
+          goProfile: function () { return context.openProfile(member.userID); }
+        };
+      });
+      var requests = (isOwner ? state.groupRequests : []).map(function (request) {
+        return {
+          user: context.apiUser(request.userID),
+          disabled: mutationPending,
+          pending: true,
+          done: false,
+          doneLabel: '',
+          accept: function () {
+            return context.acceptGroupRequest(group.id, request.userID);
+          },
+          decline: function () {
+            return context.rejectGroupRequest(group.id, request.userID);
+          }
+        };
+      });
+      var invitations = (isOwner ? state.groupInvitations : []).map(function (invitation) {
+        return { user: context.apiUser(invitation.userID) };
+      });
+      var excludedInviteIDs = {};
+      state.groupMembers.forEach(function (item) {
+        excludedInviteIDs[String(item.userID)] = true;
+      });
+      state.groupRequests.forEach(function (item) {
+        excludedInviteIDs[String(item.userID)] = true;
+      });
+      state.groupInvitations.forEach(function (item) {
+        excludedInviteIDs[String(item.userID)] = true;
+      });
+      if (me.apiId) excludedInviteIDs[String(me.apiId)] = true;
+      var inviteCandidatesReady = !state.groupMembersLoading &&
+        !state.groupRequestsLoading && !state.groupInvitationsLoading;
+      var inviteCandidates = (inviteCandidatesReady
+        ? state.directoryUserIDs
+        : [])
+        .filter(function (userID) {
+          return !excludedInviteIDs[String(userID)];
+        })
+        .map(function (userID) {
+          var user = context.apiUser(userID);
+          var selected = String(state.groupInviteUserID) === String(userID);
+          return {
+            user: user,
+            selected: selected,
+            label: user.name,
+            initials: user.initials,
+            color: user.color,
+            bg: selected ? 'var(--soft)' : 'transparent',
+            bd: selected ? 'var(--accent)' : 'var(--border)',
+            tc: selected ? 'var(--accent)' : 'var(--text2)',
+            pick: function () { return context.selectInviteCandidate(userID); }
+          };
+        });
+      var posts = state.groupPosts.map(function (post, index) {
+        return presentPost(state, post, {
+          delay: (index * 0.05).toFixed(2) + 's'
+        });
+      });
+
+      return {
+        createOpen: state.createOpen,
+        toggleCreate: context.toggleCreate,
+        ngName: state.ngName,
+        onNgName: function (event) {
+          return context.updateCreateField('ngName', event.target.value);
+        },
+        ngDesc: state.ngDesc,
+        onNgDesc: function (event) {
+          return context.updateCreateField('ngDesc', event.target.value);
+        },
+        createGroup: context.createGroup,
+        groupCreatePending: state.groupCreatePending,
+        groupCreateHasError: !!state.groupCreateError,
+        groupCreateError: state.groupCreateError,
+        groupCards: groupCards,
+        groupsLoading: state.groupsLoading,
+        groupsReady: !state.groupsLoading,
+        groupsHasError: !!state.groupsError,
+        groupsError: state.groupsError,
+        retryGroups: function () { return context.loadGroups(true); },
+        groupsHasMore: !!state.groupsNextCursor,
+        loadMoreGroups: function () { return context.loadGroups(false); },
+        groupsLoadMoreLabel: state.groupsPending &&
+          !state.groupsLoading ? 'Loading…' : 'Load more',
+        groupInboxCards: groupInboxCards,
+        groupInboxLoading: state.groupInvitationInboxLoading,
+        groupInboxHasError: !!state.groupInvitationInboxError,
+        groupInboxError: state.groupInvitationInboxError,
+        groupInboxHasItems: groupInboxCards.length > 0,
+        groupInboxHasMore: !!state.groupInvitationInboxNextCursor,
+        loadMoreGroupInbox: function () {
+          return context.loadGroupInvitationInbox(false);
+        },
+        groupLoading: state.groupLoading,
+        groupHasError: !!state.groupError,
+        groupError: state.groupError,
+        retryGroup: function () { return context.openGroup(group.id); },
+        gName: group.name,
+        gDesc: group.desc,
+        gMembersLabel: num(group.members),
+        gCover: cover(group.color),
+        gIsOwner: isOwner,
+        gOwner: context.apiUser(group.ownerID),
+        gMutationPending: mutationPending,
+        gMutationHasError: !!mutationError,
+        gMutationError: mutationError,
+        gIsNone: group.state === 'none',
+        gIsRequested: group.state === 'requested',
+        gIsInvited: group.state === 'invited',
+        gIsMember: !accessRevoked && group.state === 'member',
+        gCanChat: canChat,
+        gCanContent: canChat,
+        gContentLocked: !canChat,
+        gOpenChat: function () { return context.openGroupChat(group.id); },
+        gRequestJoin: function () { return context.requestGroupJoin(group.id); },
+        gAcceptInvitation: function () {
+          return context.acceptGroupInvitation(group.id);
+        },
+        gDeclineInvitation: function () {
+          return context.declineGroupInvitation(group.id);
+        },
+        gLeave: function () { return context.leaveGroup(group.id); },
+        gBack: context.goGroups,
+        gTabs: tabs,
+        gTabPosts: state.groupTab === 'posts',
+        gTabEvents: state.groupTab === 'events',
+        gTabMembers: state.groupTab === 'members',
+        gPosts: posts,
+        groupPostsLoading: state.groupPostsLoading,
+        groupPostsHasError: !!state.groupPostsError,
+        groupPostsError: state.groupPostsError,
+        groupPostsEmpty: !state.groupPostsLoading &&
+          !state.groupPostsError && posts.length === 0,
+        groupPostsHasMore: !!state.groupPostsNextCursor,
+        groupPostsLoadMoreDisabled: state.groupPostsPending,
+        retryGroupPosts: function () {
+          return context.loadGroupPosts(group.id, true);
+        },
+        loadMoreGroupPosts: function () {
+          return context.loadGroupPosts(group.id, false);
+        },
+        groupPostComposerText: state.groupPostComposerText,
+        onGroupPostComposerText: function (event) {
+          return context.updatePostComposer(event.target.value);
+        },
+        groupPostComposerFileName: state.groupPostComposerFileName,
+        groupPostComposerHasFile: !!state.groupPostComposerFile,
+        groupPostComposerPending: state.groupPostComposerPending,
+        groupPostComposerHasError: !!state.groupPostComposerError,
+        groupPostComposerError: state.groupPostComposerError,
+        groupPostComposerDisabled: state.groupPostComposerPending ||
+          (!state.groupPostComposerText.trim() && !state.groupPostComposerFile),
+        groupPostComposerButtonLabel: state.groupPostComposerPending
+          ? 'Posting…'
+          : 'Post',
+        pickGroupPostMedia: context.pickGroupPostMedia,
+        onGroupPostMedia: context.onGroupPostMedia,
+        removeGroupPostMedia: context.removeGroupPostMedia,
+        sendGroupPost: context.sendGroupPost,
+        gMembers: members,
+        gRequests: requests,
+        gInvitations: invitations,
+        gHasRequests: requests.length > 0,
+        gHasInvitations: invitations.length > 0,
+        groupMembersLoading: state.groupMembersLoading,
+        groupMembersHasError: !!state.groupMembersError,
+        groupMembersError: state.groupMembersError,
+        groupMembersHasMore: !!state.groupMembersNextCursor,
+        loadMoreGroupMembers: function () {
+          return context.loadGroupMembers(group.id, false);
+        },
+        groupRequestsLoading: state.groupRequestsLoading,
+        groupRequestsHasError: !!state.groupRequestsError,
+        groupRequestsError: state.groupRequestsError,
+        groupRequestsHasMore: !!state.groupRequestsNextCursor,
+        loadMoreGroupRequests: function () {
+          return context.loadGroupRequests(group.id, false);
+        },
+        groupInvitationsLoading: state.groupInvitationsLoading,
+        groupInvitationsHasError: !!state.groupInvitationsError,
+        groupInvitationsError: state.groupInvitationsError,
+        groupInvitationsHasMore: !!state.groupInvitationsNextCursor,
+        loadMoreGroupInvitations: function () {
+          return context.loadGroupInvitations(group.id, false);
+        },
+        inviteOpen: state.inviteOpen && canChat,
+        toggleInvite: context.toggleInvite,
+        inviteCandidates: inviteCandidates,
+        inviteSendDisabled: mutationPending || !state.groupInviteUserID,
+        inviteSelectedUser: context.inviteSelectedUser,
+        inviteLoadMore: function () { return context.loadDirectory(false); },
+        inviteHasMore: !!state.directoryNextCursor,
+        inviteDirectoryLoading: state.directoryLoading
+      };
     }, {});
   };
 });

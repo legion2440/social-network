@@ -79,7 +79,7 @@ src/index.html + src/templates/
 
 The `<x-dc>` element contains the application template. `dc-runtime` parses it, replaces `<x-dc>` with `#dc-root`, compiles directives and interpolations, creates React elements, and mounts through ReactDOM.
 
-The UI is not split into conventional `.jsx` React components. The root `Component extends DCLogic` owns shared state, application lifecycle, controller wiring, shared request gates, and view-model aggregation. Feature controller factories contain the feature actions and expose derived values and lifecycle hooks through narrow injected dependencies.
+The UI is not split into conventional `.jsx` React components. The root `Component extends DCLogic` owns shared state, application lifecycle, controller wiring, shared request gates, the navigation/screen/theme/confirmation shell, and strict view-model aggregation. Feature controller factories contain the feature actions and expose complete pure template view models and lifecycle hooks through narrow injected dependencies.
 
 ## 🧭 Frontend framework model
 
@@ -94,7 +94,7 @@ The UI is not split into conventional `.jsx` React components. The root `Compone
 - event/action resolution;
 - composition.
 
-Feature controllers are not separate framework instances and do not own a hidden second global state. They receive a `state.get()`/`state.set()` adapter, feature-specific API/model/gate dependencies, shared helpers, and named cross-feature callbacks; they never receive the root component. Realtime delivery reaches chat, notifications, and groups through those callbacks. At build time, separate source templates are composed into one production `<x-dc>`.
+Feature controllers are not separate framework instances and do not own a hidden second global state. They receive a `state.get()`/`state.set()` adapter, feature-specific API/model/gate dependencies, shared helpers, and named cross-feature callbacks; they never receive the root component. Their `derived(state)` functions build complete template fields without network requests or state mutation. Feed, profile, and groups use the same pure post presenter. The root merges shell → auth → feed → profile → groups → events → chat → notifications → realtime; undeclared duplicate fields throw instead of being overwritten. Realtime delivery reaches chat, notifications, and groups through named callbacks. At build time, separate source templates are composed into one production `<x-dc>`.
 
 ## ⚙️ dc-runtime
 
@@ -200,7 +200,9 @@ Values are resolved from the component scope.
 | `src/templates/*.html` | build-time-composed screen and shared modal fragments |
 | `src/js/runtime.js` | generated `dc-runtime` bundle |
 | `src/js/app.js` | root state, lifecycle, and cross-feature coordination |
-| `src/js/controllers/*.js` | explicit controller factories, actions, derived values, and hooks |
+| `src/js/controllers/*.js` | explicit controller factories, actions, complete pure template view models, and hooks |
+| `src/js/presenters/post-presenter.js` | shared pure post/comment view model for feed, profile, and groups |
+| `src/js/presenters/view-model-merge.js` | owner-aware view-model merge with duplicate-key detection |
 | `src/js/auth-api.js` | same-origin HTTP client and `APIError` |
 | `src/js/*-model.js` | normalization, merge, privacy cleanup, and request gates |
 | `src/css/base.css` | bundled font declarations |
@@ -805,7 +807,8 @@ frontend/
 │   │   ├── layout.css
 │   │   └── responsive.css
 │   ├── js/
-│   │   ├── controllers/ (feature actions, context adapter, derived values)
+│   │   ├── controllers/ (feature actions, context adapter, template view models)
+│   │   ├── presenters/ (shared post view model and strict merge)
 │   │   ├── vendor/
 │   │   └── ...
 │   ├── templates/

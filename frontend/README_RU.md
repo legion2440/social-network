@@ -79,7 +79,7 @@ src/index.html + src/templates/
 
 `<x-dc>` содержит application template. `dc-runtime` парсит его, заменяет `<x-dc>` на `#dc-root`, компилирует directives и interpolations, создаёт React elements и монтирует их через ReactDOM.
 
-UI не разбит на обычные `.jsx` React components. Root `Component extends DCLogic` владеет shared state, lifecycle приложения, подключением controllers, общими request gates и сборкой view model. Feature controller factories содержат feature actions и через узкие явные dependencies предоставляют derived values и lifecycle hooks.
+UI не разбит на обычные `.jsx` React components. Root `Component extends DCLogic` владеет shared state, lifecycle приложения, подключением controllers, общими request gates, navigation/screen/theme/confirmation shell и строгой сборкой view models. Feature controller factories содержат feature actions и через узкие явные dependencies предоставляют готовые чистые template view models и lifecycle hooks.
 
 ## 🧭 Модель frontend framework
 
@@ -94,7 +94,7 @@ UI не разбит на обычные `.jsx` React components. Root `Componen
 - event/action resolution;
 - composition.
 
-Feature controllers не являются отдельными framework instances и не создают скрытый второй global state. Они получают adapter `state.get()`/`state.set()`, feature-specific API/model/gate dependencies, shared helpers и именованные cross-feature callbacks; root component им не передаётся. Realtime передаёт события в chat, notifications и groups через эти callbacks. При build отдельные source templates собираются в единый production `<x-dc>`.
+Feature controllers не являются отдельными framework instances и не создают скрытый второй global state. Они получают adapter `state.get()`/`state.set()`, feature-specific API/model/gate dependencies, shared helpers и именованные cross-feature callbacks; root component им не передаётся. Их `derived(state)` формируют готовые template fields без network requests и state mutations. Feed, profile и groups используют единый чистый post presenter. Root объединяет shell → auth → feed → profile → groups → events → chat → notifications → realtime; необъявленные дубли полей вызывают ошибку, а не молча перезаписываются. Realtime передаёт события в chat, notifications и groups через именованные callbacks. При build отдельные source templates собираются в единый production `<x-dc>`.
 
 ## ⚙️ dc-runtime
 
@@ -200,7 +200,9 @@ Values разрешаются из component scope.
 | `src/templates/*.html` | screen fragments и shared modal для build-time composition |
 | `src/js/runtime.js` | generated bundle `dc-runtime` |
 | `src/js/app.js` | root state, lifecycle и cross-feature coordination |
-| `src/js/controllers/*.js` | explicit controller factories, actions, derived values и hooks |
+| `src/js/controllers/*.js` | explicit controller factories, actions, готовые чистые template view models и hooks |
+| `src/js/presenters/post-presenter.js` | единый чистый post/comment view model для feed, profile и groups |
+| `src/js/presenters/view-model-merge.js` | owner-aware merge view models с обнаружением дублирующихся ключей |
 | `src/js/auth-api.js` | same-origin HTTP client и `APIError` |
 | `src/js/*-model.js` | normalization, merge, privacy cleanup и request gates |
 | `src/css/base.css` | bundled font declarations |
@@ -811,7 +813,8 @@ frontend/
 │   │   ├── layout.css
 │   │   └── responsive.css
 │   ├── js/
-│   │   ├── controllers/ (feature actions, context adapter, derived values)
+│   │   ├── controllers/ (feature actions, context adapter, template view models)
+│   │   ├── presenters/ (общий post view model и строгий merge)
 │   │   ├── vendor/
 │   │   └── ...
 │   ├── templates/

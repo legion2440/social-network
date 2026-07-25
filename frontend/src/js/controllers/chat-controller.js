@@ -12,6 +12,11 @@
     var emptyChatMessages = dependencies.helpers.emptyChatMessages;
     var createClientMessageID = dependencies.helpers.createClientMessageID;
     var requestErrorMessage = dependencies.helpers.requestErrorMessage;
+    var decorateUser = dependencies.helpers.decorateUser;
+    var formatPostTime = dependencies.helpers.formatPostTime;
+    var num = dependencies.helpers.num;
+    var GROUP_COLORS = dependencies.values.GROUP_COLORS;
+    var EMOJIS = dependencies.values.EMOJIS;
 
   context.chatHistoryGate = function (key) {
     if (!context.chatHistoryGatesByKey[key]) context.chatHistoryGatesByKey[key] = UserModel.createRequestGate();
@@ -737,6 +742,10 @@
     context.sendPendingMessage(found);
   };
 
+  context.toggleEmoji = () => context.setState({ emojiOpen: !context.state.emojiOpen });
+
+  context.setMessageElement = element => { context.msgEl = element; };
+
     return createController('chat', dependencies, {
       chatHistoryGate: context.chatHistoryGate,
       chatAccessGate: context.chatAccessGate,
@@ -767,9 +776,233 @@
       armPendingMessageTimeout: context.armPendingMessageTimeout,
       sendPendingMessage: context.sendPendingMessage,
       sendMsg: context.sendMsg,
-      retryMessage: context.retryMessage
+      retryMessage: context.retryMessage,
+      toggleEmoji: context.toggleEmoji,
+      setMessageElement: context.setMessageElement
     }, function (state) {
-      return { activeKey: state ? state.activeChatKey : null, unread: state ? Number(state.chatUnreadCount) || 0 : 0 };
+      var me = USERS.me;
+
+      function chatMeta(chat) {
+        if (!chat) {
+          return {
+            title: 'Select a conversation',
+            initials: '…',
+            color: 'var(--text3)',
+            sub: '',
+            avatarUrl: '',
+            hasAvatar: false,
+            noAvatar: true,
+            online: false
+          };
+        }
+        if (chat.kind === 'direct') {
+          var user = context.apiUser(chat.userID || chat.targetID);
+          var online = !!state.onlineUserIDs[String(user.apiId)];
+          return {
+            title: user.name,
+            initials: user.initials,
+            color: user.color,
+            sub: online ? 'Online now' : 'Offline',
+            online: online,
+            avatarUrl: user.avatarUrl,
+            hasAvatar: user.hasAvatar,
+            noAvatar: user.noAvatar
+          };
+        }
+        var group = state.apiGroupsByID[
+          String(chat.groupID || chat.targetID)
+        ] || {
+          name: 'Group ' + chat.targetID,
+          members: 0,
+          color: GROUP_COLORS[
+            Math.abs(chat.targetID) % GROUP_COLORS.length
+          ]
+        };
+        return {
+          title: group.name,
+          initials: String(group.name || 'G').slice(0, 2).toUpperCase(),
+          color: group.color,
+          sub: num(group.members || 0) + ' members',
+          online: false,
+          avatarUrl: '',
+          hasAvatar: false,
+          noAvatar: true
+        };
+      }
+
+      var conversations = state.chatKeys.map(function (key) {
+        var chat = state.chatsByKey[key];
+        var meta = chatMeta(chat);
+        var last = chat.lastMessage;
+        var unread = Math.max(
+          0,
+          Number(
+            state.chatUnreadByKey[key] !== undefined
+              ? state.chatUnreadByKey[key]
+              : chat.unreadCount
+          ) || 0
+        );
+        return {
+          title: meta.title,
+          initials: meta.initials,
+          color: meta.color,
+          avatarUrl: meta.avatarUrl,
+          hasAvatar: meta.hasAvatar,
+          noAvatar: meta.noAvatar,
+          preview: last
+            ? (Number(last.senderID) === Number(me.apiId) ? 'You: ' : '') +
+              last.body
+            : 'No messages yet',
+          previewColor: unread > 0 ? 'var(--text)' : 'var(--text3)',
+          previewW: unread > 0 ? '750' : '500',
+          hasUnread: unread > 0,
+          unread: num(unread > 99 ? '99+' : unread),
+          time: last ? formatPostTime(last.createdAt) : '',
+          online: meta.online,
+          bg: key === state.activeChatKey ? 'var(--soft)' : 'transparent',
+          open: function () {
+            var target = ChatModel.parseChatKey(key);
+            if (target && target.kind === 'direct') {
+              return context.openDirectChat(target.target_id);
+            }
+            if (target && target.kind === 'group') {
+              return context.openGroupChat(target.target_id);
+            }
+          }
+        };
+      });
+      var active = state.activeChatKey
+        ? state.chatsByKey[state.activeChatKey]
+        : null;
+      var activeMeta = chatMeta(active);
+      var activeHistory = state.activeChatKey
+        ? (state.messagesByChatKey[state.activeChatKey] || emptyChatMessages())
+        : emptyChatMessages();
+      var activeMessages = activeHistory.messages || [];
+      var messages = activeMessages.map(function (message, index) {
+        var previous = activeMessages[index - 1];
+        var user = context.apiUser(message.senderID);
+        if (
+          (!user || user.name.indexOf('User ') === 0) &&
+          message.senderName
+        ) {
+          user = decorateUser({
+            id: String(message.senderID),
+            apiId: message.senderID,
+            name: message.senderName,
+            initials: message.senderName
+              .split(/\s+/)
+              .map(function (part) { return part.charAt(0); })
+              .join('')
+              .slice(0, 2)
+              .toUpperCase() || '?',
+            color: GROUP_COLORS[
+              Math.abs(message.senderID) % GROUP_COLORS.length
+            ],
+            avatarUrl: message.senderAvatarURL ||
+              '/static/avatars/neutral.svg'
+          });
+        }
+        return {
+          text: message.body,
+          time: formatPostTime(message.createdAt),
+          mine: Number(message.senderID) === Number(me.apiId),
+          theirs: Number(message.senderID) !== Number(me.apiId),
+          user: user,
+          showName: active && active.kind === 'group' &&
+            Number(message.senderID) !== Number(me.apiId) &&
+            (!previous ||
+              Number(previous.senderID) !== Number(message.senderID)),
+          pending: !!message.pending,
+          failed: !!message.failed,
+          error: message.error || '',
+          hasStatus: !!message.pending || !!message.failed,
+          statusLabel: message.failed
+            ? 'Failed'
+            : (message.pending ? 'Sending…' : ''),
+          retry: function () {
+            return context.retryMessage(message.clientMessageID);
+          }
+        };
+      });
+      var typingUsers = Object.values(
+        state.typingByChatKey[state.activeChatKey] || {}
+      );
+      var typingLabel = typingUsers.length > 1
+        ? typingUsers.map(function (user) { return user.name; }).join(', ') +
+          ' are typing'
+        : (typingUsers[0] ? typingUsers[0].name + ' is typing' : '');
+      var emojis = EMOJIS.map(function (character) {
+        return {
+          ch: character,
+          add: function () {
+            return context.onChatDraft(state.chatDraft + character);
+          }
+        };
+      });
+
+      return {
+        convos: conversations,
+        messages: messages,
+        activeTitle: activeMeta.title,
+        activeSub: activeMeta.sub,
+        activeInitials: activeMeta.initials,
+        activeColor: activeMeta.color,
+        activeAvatarUrl: activeMeta.avatarUrl,
+        activeHasAvatar: activeMeta.hasAvatar,
+        activeNoAvatar: activeMeta.noAvatar,
+        chatHasActive: !!active,
+        chatHasNoActive: !active && !state.chatsLoading,
+        chatLayoutClass: active ? 'chat-active' : '',
+        backToChats: context.goChat,
+        chatsLoading: state.chatsLoading,
+        chatsHasError: !!state.chatsError,
+        chatsError: state.chatsError,
+        retryChats: function () { return context.loadChats(true); },
+        chatsHasMore: !!state.chatsNextCursor,
+        loadMoreChats: function () { return context.loadChats(false); },
+        chatsLoadMoreDisabled: state.chatsPending,
+        historyLoading: activeHistory.loading,
+        historyHasError: !!activeHistory.error,
+        historyError: activeHistory.error,
+        retryHistory: function () {
+          return state.activeChatKey &&
+            context.loadChatHistory(state.activeChatKey, true, 'user-open');
+        },
+        historyHasMore: !!activeHistory.nextCursor,
+        loadMoreHistory: function () {
+          return state.activeChatKey &&
+            context.loadChatHistory(state.activeChatKey, false);
+        },
+        historyLoadMoreDisabled: activeHistory.pending,
+        typing: typingUsers.length > 0,
+        typingLabel: typingLabel,
+        chatDraft: state.chatDraft,
+        onChatDraft: function (event) {
+          return context.onChatDraft(event.target.value);
+        },
+        onChatBlur: context.stopTyping,
+        onChatKey: function (event) {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          return context.sendMsg();
+        },
+        sendMsg: context.sendMsg,
+        chatSendDisabled: !active ||
+          state.wsStatus !== 'connected' || !state.chatDraft.trim(),
+        chatInputDisabled: !active || state.wsStatus !== 'connected',
+        chatStatus: state.wsStatus === 'connected'
+          ? 'Live'
+          : (state.wsStatus === 'reconnecting'
+            ? 'Reconnecting…'
+            : 'Connecting…'),
+        chatHasError: !!state.chatError,
+        chatError: state.chatError,
+        emojiOpen: state.emojiOpen,
+        toggleEmoji: context.toggleEmoji,
+        emojis: emojis,
+        msgRef: context.setMessageElement
+      };
     }, {});
   };
 });

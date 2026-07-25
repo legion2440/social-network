@@ -55,7 +55,8 @@ function baseDependencies(initial) {
         groupChat: () => {}
       },
       session: { users: { me: { apiId: 1 } } },
-      values: { IC: { globe: '', users: '', lock: '' }, GROUP_COLORS: ['#000'] }
+      values: { IC: { globe: '', users: '', lock: '' }, GROUP_COLORS: ['#000'] },
+      presenters: {}
     }
   };
 }
@@ -117,7 +118,6 @@ test('feed actions mutate the shared state only through the provided adapter', (
       createPending: false, createError: '', loaded: false
     }),
     requestErrorMessage: (_error, fallback) => fallback,
-    num: String,
     apiUser: id => ({ apiId: id }),
     formatPostTime: value => value,
     mapAPIPost: value => value,
@@ -128,6 +128,9 @@ test('feed actions mutate the shared state only through the provided adapter', (
     openGroup: id => opened.push(['group', id]),
     openProfile: id => opened.push(['profile', id])
   };
+  dependencies.presenters = {
+    post: (_state, post) => Object.assign({}, post)
+  };
 
   const controller = createFeedController(dependencies);
   controller.actions.setCommentDraft(7, 'hello');
@@ -137,12 +140,9 @@ test('feed actions mutate the shared state only through the provided adapter', (
   ]);
   assert.equal('root' in controller.dependencies, false);
 
-  const mapped = controller.actions.mapPost({
-    id: 9, apiAuthorID: 4, text: '', privacy: 'public', commentsCount: 0
-  });
-  mapped.goProfile();
-  assert.deepEqual(opened, [['profile', 4]]);
-  assert.equal(mapped.hasText, false);
+  controller.actions.updateComposer('draft');
+  assert.equal(store.state.composerText, 'draft');
+  assert.deepEqual(opened, []);
 });
 
 test('derived contracts use the real shared state field names', () => {
@@ -160,6 +160,7 @@ test('derived contracts use the real shared state field names', () => {
     emptyNotificationState: () => ({}),
     emptyChatState: () => ({}),
     requestErrorMessage: (_error, fallback) => fallback,
+    formatDateOfBirthInput: value => value,
     parseDateOfBirth: () => true,
     applyAuthUser: () => ({})
   };
@@ -200,27 +201,20 @@ test('derived contracts use the real shared state field names', () => {
     };
   });
   const auth = createAuthController(authBase.dependencies);
-  assert.deepEqual(auth.derived(authBase.store.state), {
-    authenticated: true,
-    checking: false
-  });
-
-  const profileBase = baseDependencies({ profileId: 17, profileReady: true });
-  profileBase.dependencies.models = { users: {} };
-  profileBase.dependencies.helpers = {
-    apiUser() {}, applyAuthUser() {}, mapAPIPost() {}, mergeAPIUsers() {},
-    openConfirmation() {}, requestErrorMessage() {}
-  };
-  profileBase.dependencies.callbacks = {
-    beginRelationshipGeneration() {}, loadFeed() {}, loadPostFollowers() {},
-    mergePostCommentsCounts() {}, purgeCommentStates() {},
-    relationshipGeneration() {}, stopTyping() {}
-  };
-  profileBase.dependencies.gates = {
-    authGate: requestGate(), directoryGate: requestGate(), profileGate: requestGate()
-  };
-  const profile = createProfileController(profileBase.dependencies);
-  assert.deepEqual(profile.derived(profileBase.store.state), { userID: 17, ready: true });
+  const viewModel = auth.derived(Object.assign({
+    authMode: 'login',
+    authPending: false,
+    authError: '',
+    bootstrapError: '',
+    regAvatarName: '',
+    regAvatarPreviewURL: '',
+    logoutPending: false
+  }, authBase.store.state));
+  assert.equal(viewModel.authIsLogin, true);
+  assert.equal(viewModel.authCta, 'Sign in');
+  assert.equal(typeof viewModel.onAuthEmail, 'function');
+  assert.equal('currentUser' in viewModel, false);
+  assert.equal('authChecking' in viewModel, false);
 });
 
 test('router parses strict routes and dispatches only named feature callbacks', () => {

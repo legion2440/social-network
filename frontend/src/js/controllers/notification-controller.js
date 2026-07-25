@@ -9,6 +9,8 @@
     var UserModel = dependencies.models.users;
     var NotificationModel = dependencies.models.notifications;
     var requestErrorMessage = dependencies.helpers.requestErrorMessage;
+    var formatPostTime = dependencies.helpers.formatPostTime;
+    var IC = dependencies.values.IC;
 
   context.notificationReadGate = function (notificationID) {
     const key = String(Number(notificationID));
@@ -284,7 +286,80 @@
       actOnNotification: context.actOnNotification,
       openNotification: context.openNotification
     }, function (state) {
-      return { unread: state ? Number(state.notificationUnreadCount) || 0 : 0, items: state && state.notifications ? state.notifications : [] };
+      var items = state.notifications.map(function (notification, index) {
+        var key = String(notification.id);
+        var actionPending =
+          !!state.notificationActionPendingByID[key];
+        var groupTitle = notification.group && notification.group.title
+          ? notification.group.title
+          : 'a group';
+        var eventTitle = notification.event && notification.event.title
+          ? notification.event.title
+          : 'an event';
+        var textByType = {
+          follow_started: 'started following you',
+          follow_request: 'requested to follow you',
+          group_invitation: 'invited you to ' + groupTitle,
+          group_join_request: 'requested to join ' + groupTitle,
+          group_event: 'created ' + eventTitle + ' in ' + groupTitle
+        };
+        return {
+          user: context.apiUser(notification.actorID),
+          icon: notification.group ? IC.users : IC.user,
+          text: textByType[notification.type] || 'updated something',
+          time: formatPostTime(notification.createdAt),
+          delay: (index * 0.04).toFixed(2) + 's',
+          bg: notification.readAt
+            ? 'var(--surface)'
+            : 'color-mix(in oklab, var(--accent) 5%, var(--surface))',
+          unreadDot: !notification.readAt,
+          pending: NotificationModel.isActionable(notification),
+          done: notification.resolution != null,
+          doneLabel: notification.resolution === 'accepted'
+            ? 'Accepted'
+            : (notification.resolution === 'declined'
+              ? 'Declined'
+              : 'Cancelled'),
+          disabled: actionPending,
+          accept: function () {
+            return context.actOnNotification(notification.id, 'accept');
+          },
+          decline: function () {
+            return context.actOnNotification(notification.id, 'decline');
+          },
+          open: function () { return context.openNotification(notification); },
+          goProfile: function (event) {
+            if (event && typeof event.stopPropagation === 'function') {
+              event.stopPropagation();
+            }
+            context.markNotificationRead(notification.id);
+            return context.openProfile(notification.actorID);
+          },
+          hasError: !!state.notificationActionErrorByID[key] ||
+            !!state.notificationReadErrorByID[key],
+          error: state.notificationActionErrorByID[key] ||
+            state.notificationReadErrorByID[key] || ''
+        };
+      });
+      return {
+        notifItems: items,
+        notificationsLoading: state.notificationsLoading,
+        notificationsEmpty: !state.notificationsLoading &&
+          !state.notificationsError && state.notifications.length === 0,
+        notificationsHasError: !!state.notificationsError,
+        notificationsError: state.notificationsError,
+        retryNotifications: function () {
+          return context.loadNotifications(true);
+        },
+        notificationsHasMore: !!state.notificationsNextCursor,
+        loadMoreNotifications: function () {
+          return context.loadNotifications(false);
+        },
+        notificationsLoadMoreDisabled: state.notificationsPending,
+        markAllRead: context.markAllNotificationsRead,
+        markAllReadDisabled: state.notificationReadAllPending ||
+          state.notificationUnreadCount <= 0
+      };
     }, {});
   };
 });

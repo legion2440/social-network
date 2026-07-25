@@ -217,7 +217,7 @@ Every other path is served from `/srv`, with `index.html` used for client-side r
 | Static server / reverse proxy | Caddy                                 |
 | Containers                    | Docker and Docker Compose             |
 
-The browser application is not organized as a conventional React component tree. The `dc-runtime` application framework processes the build-time-composed `<x-dc>` template, while React and ReactDOM provide only the rendering layer. The root owns one shared state and application lifecycle; feature controllers contain actions and use narrow state/API/model/gate/helper/callback dependencies without access to the root component. Production source lives under `frontend/src` and is generated into ignored `frontend/dist`.
+The browser application is not organized as a conventional React component tree. The `dc-runtime` application framework processes the build-time-composed `<x-dc>` template, while React and ReactDOM provide only the rendering layer. The root owns one shared state and application lifecycle; feature controllers contain actions and complete pure template view models, using narrow state/API/model/gate/helper/callback dependencies without access to the root component. Home, profile, and group posts share one pure presenter, and the root merges controller view models in a fixed order with duplicate-key detection. Production source lives under `frontend/src` and is generated into ignored `frontend/dist`.
 
 ## 🔐 Security and access control
 
