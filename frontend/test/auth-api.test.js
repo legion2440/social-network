@@ -75,7 +75,9 @@ test('OAuth clients load providers and flow preview, then submit original FormDa
     if (path === '/api/auth/oauth/providers') {
       return jsonResponse(200, { providers: [{ name: 'github', label: 'GitHub' }] });
     }
-    if (options.method === 'POST') return jsonResponse(201, { id: 17 });
+    if (options.method === 'POST') {
+      return jsonResponse(201, { user: { id: 17 }, next: '/groups' });
+    }
     return jsonResponse(200, { provider: 'github', email: 'verified@example.com' });
   });
 
@@ -83,7 +85,7 @@ test('OAuth clients load providers and flow preview, then submit original FormDa
   assert.equal((await api.oauthFlow('flow + token')).email, 'verified@example.com');
   assert.deepEqual(
     await api.completeOAuthRegistration('flow + token', formData),
-    { id: 17 }
+    { user: { id: 17 }, next: '/groups' }
   );
   assert.equal(calls[0].path, '/api/auth/oauth/providers');
   assert.equal(calls[1].path, '/api/auth/oauth/flows/flow%20%2B%20token');

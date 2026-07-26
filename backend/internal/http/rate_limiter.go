@@ -60,13 +60,48 @@ func (l *requestRateLimiter) Allow(key string, now time.Time) bool {
 	return true
 }
 
-func requestClientIP(request *http.Request) string {
+func requestClientIP(request *http.Request, trustProxy bool) string {
 	if request == nil {
 		return ""
 	}
-	host, _, err := net.SplitHostPort(strings.TrimSpace(request.RemoteAddr))
+	remoteIP := remoteRequestIP(request.RemoteAddr)
+	if !trustProxy {
+		return remoteIP
+	}
+	values := request.Header.Values("X-Forwarded-For")
+	if len(values) == 0 {
+		return remoteIP
+	}
+	first := ""
+	for _, value := range values {
+		for _, candidate := range strings.Split(value, ",") {
+			candidate = strings.TrimSpace(candidate)
+			ip := net.ParseIP(candidate)
+			if ip == nil {
+				return remoteIP
+			}
+			if first == "" {
+				first = ip.String()
+			}
+		}
+	}
+	if first == "" {
+		return remoteIP
+	}
+	return first
+}
+
+func remoteRequestIP(remoteAddress string) string {
+	remoteAddress = strings.TrimSpace(remoteAddress)
+	host, _, err := net.SplitHostPort(remoteAddress)
 	if err == nil {
+		if ip := net.ParseIP(host); ip != nil {
+			return ip.String()
+		}
 		return host
 	}
-	return strings.TrimSpace(request.RemoteAddr)
+	if ip := net.ParseIP(remoteAddress); ip != nil {
+		return ip.String()
+	}
+	return remoteAddress
 }

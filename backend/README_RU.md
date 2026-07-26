@@ -70,7 +70,7 @@ internal/app
 | `internal/config` | environment parsing и defaults |
 | `internal/domain` | entities и enums |
 | `internal/http` | routing, auth middleware, strict parsing, responses |
-| `internal/oauth` | registry providers и GitHub OAuth HTTP client |
+| `internal/oauth` | registry providers, GitHub client, browser nonce и origin helpers |
 | `internal/service` | business rules, authorization, transactions |
 | `internal/repo` | repository и transaction interfaces |
 | `internal/repo/sqlite` | SQLite implementations и embedded migrations |
@@ -273,6 +273,13 @@ POST /api/auth/oauth/flows/{token}/complete
 OAuth выключен; частичная конфигурация является startup error. Go-приложение
 читает только process environment и не загружает `.env`.
 
+`SOCIAL_NETWORK_PUBLIC_ORIGIN` необязателен и канонизируется с effective port.
+Если он задан, то должен совпадать с origin redirect URL; иначе origin выводится
+из этого URL. Redirect path должен быть строго
+`/api/auth/oauth/github/callback`. `SOCIAL_NETWORK_TRUST_PROXY` по умолчанию
+равен `false`; включайте его только когда backend недоступен иначе чем через
+доверенный reverse proxy. Compose соблюдает эту границу и включает режим.
+
 Callback атомарно расходует десятиминутный state до обработки provider error или
 отсутствующего code. GitHub `/user/emails` вызывается всегда, принимается только
 verified email. Существующая identity ищется только по
@@ -280,13 +287,23 @@ verified email. Существующая identity ищется только по
 обычная session. Если verified email новой identity уже принадлежит local
 account, linking и merge не выполняются.
 
+Каждый start создаёт host-only `social_network_oauth_nonce` HttpOnly,
+SameSite=Lax cookie, а в state payload сохраняется только её SHA-256 hash.
+Callback расходует state даже при ошибке browser binding. Успешный callback
+нового пользователя ротирует nonce в registration flow; остальные проверенные
+исходы callback очищают её. Один браузер намеренно поддерживает одну активную
+OAuth-цепочку.
+
 Новая identity получает одноразовый registration flow на 30 минут. GET
 возвращает только безопасный preview. Completion принимает имя, фамилию, дату
 рождения, optional nickname/about и optional avatar, но не email и не password.
 User, identity, avatar metadata и session создаются в одной transaction; rollback
 сохраняет flow и удаляет staged/finalized avatar. Случайный сгенерированный
 password хранится только как bcrypt hash. GitHub access token и avatar не
-сохраняются.
+сохраняются. Completion требует настроенный same origin через `Origin` и
+`Sec-Fetch-Site`, повторно проверяет browser binding до и внутри transaction,
+возвращает проверенный `next` и очищает nonce только после commit. Истёкшие flows
+удаляются opportunistically с race-safe cleanup throttle в одну минуту.
 
 ## 👤 Profiles и follows
 
@@ -609,7 +626,7 @@ Hub хранит только `SHA-256(raw session token)`. Logout, unfollow и 
 
 - `401`: invalid/missing session;
 - `400`: malformed ID или invalid input;
-- `403`: existing forbidden resource;
+- `403`: existing forbidden resource или отклонённый cross-origin OAuth completion;
 - `404`: absent или intentionally hidden resource;
 - `405`: wrong method с `Allow`;
 - `409`: stale/conflicting transition;

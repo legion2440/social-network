@@ -145,7 +145,7 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 		case <-ctx.Done():
 		}
 	})
-	handler := NewHandler(db, sessions, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, commentMedia, groups, groupEvents, notifications, chats, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", nil)
+	handler := NewHandler(db, sessions, auth, profile, follows, userProfiles, avatarDelivery, posts, postMedia, comments, commentMedia, groups, groupEvents, notifications, chats, NewCookieSessionTokenExtractor(config.SessionCookieName), false, "", false, "", nil)
 	handler.SetRealtimeHub(hub)
 
 	return &testEnvironment{
@@ -338,6 +338,8 @@ func newSessionFailureHandlerWithFrontend(store *failingSessionRepo, frontendDir
 		nil,
 		nil,
 		NewCookieSessionTokenExtractor(config.SessionCookieName),
+		false,
+		"",
 		false,
 		frontendDir,
 		nil,

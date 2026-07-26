@@ -38,6 +38,8 @@ type Handler struct {
 	admission            atomic.Bool
 	sessionToken         SessionTokenExtractor
 	cookieSecure         bool
+	oauthExpectedOrigin  string
+	trustProxy           bool
 	frontend             http.Handler
 	logger               *log.Logger
 	oauthStartLimiter    *requestRateLimiter
@@ -62,6 +64,8 @@ func NewHandler(
 	chats *service.ChatService,
 	sessionToken SessionTokenExtractor,
 	cookieSecure bool,
+	oauthExpectedOrigin string,
+	trustProxy bool,
 	frontendDir string,
 	logger *log.Logger,
 ) *Handler {
@@ -89,6 +93,8 @@ func NewHandler(
 		chats:                chats,
 		sessionToken:         sessionToken,
 		cookieSecure:         cookieSecure,
+		oauthExpectedOrigin:  oauthExpectedOrigin,
+		trustProxy:           trustProxy,
 		frontend:             newFrontendHandler(frontendDir),
 		logger:               logger,
 		oauthStartLimiter:    newRequestRateLimiter(20, time.Minute),

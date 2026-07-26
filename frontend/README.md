@@ -296,7 +296,7 @@ Network failures use status `0`.
 The client covers:
 
 - registration, login, logout, session restore;
-- OAuth provider discovery, safe registration-flow preview, and multipart completion;
+- OAuth provider discovery, browser-bound safe registration-flow preview, and multipart completion;
 - profile update and avatar replacement;
 - users, relationships, followers, follow requests;
 - feed, profile posts, group posts, media comments;
@@ -422,7 +422,7 @@ controller loads the safe preview into `oauthFlow`, displays the verified email
 read-only, and submits first name, last name, birth date, optional nickname/about,
 and optional local avatar as `FormData`. Email is never added to completion
 `FormData`, and the GitHub avatar is not copied. On success the normal authenticated
-bootstrap runs and history is replaced with `/`.
+bootstrap runs and history is replaced with the backend-validated `next` route.
 
 After authentication:
 
@@ -462,6 +462,13 @@ The router owns URL parsing and History API synchronization:
 ```
 
 It uses `pushState`, `replaceState`, and `popstate`, restores deep links after refresh and login, supports Back/Forward, and replaces malformed routes with `/`. Closed resources resolve to controlled profile/group/chat error state.
+
+GitHub completion relies on the backend's path-scoped HttpOnly browser nonce
+cookie. The client never reads or sends that nonce explicitly. A successful
+completion consumes `{ user, next }`, removes the flow token with
+`replaceState`, and applies the validated destination route instead of forcing
+`/`. Missing, expired, or foreign browser binding is shown as an unavailable
+registration flow.
 
 Unfollow and profile privacy changes use one shared confirmation dialog. No mutation is sent before confirmation; Cancel and Escape close it, focus is trapped and restored, and pending confirmation disables repeat submission.
 

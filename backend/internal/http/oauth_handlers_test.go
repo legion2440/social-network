@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"social-network/backend/internal/oauth"
 	"social-network/backend/internal/repo/sqlite"
@@ -79,6 +80,7 @@ func newOAuthHTTPEnvironment(t *testing.T) (*testEnvironment, *httpOAuthProvider
 			ids,
 		),
 	)
+	env.server.oauthExpectedOrigin = "http://example.com:80"
 	env.handler = env.server.Routes()
 	return env, provider
 }
@@ -101,15 +103,22 @@ func TestOAuthHTTPRegistrationAndExistingIdentityLogin(t *testing.T) {
 		!strings.HasPrefix(recorder.Header().Get("Location"), "https://github.test/authorize") {
 		t.Fatalf("start: status=%d location=%q body=%q", recorder.Code, recorder.Header().Get("Location"), recorder.Body.String())
 	}
+	stateCookie := oauthNonceCookieFromResponse(t, recorder, false)
 
 	provider.mu.Lock()
 	state := provider.state
 	provider.mu.Unlock()
 	recorder = httptest.NewRecorder()
 	callbackPath := "/api/auth/oauth/github/callback?state=" + url.QueryEscape(state) + "&code=valid"
-	env.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, callbackPath, nil))
+	callbackRequest := httptest.NewRequest(http.MethodGet, callbackPath, nil)
+	callbackRequest.AddCookie(stateCookie)
+	env.handler.ServeHTTP(recorder, callbackRequest)
 	if recorder.Code != http.StatusFound {
 		t.Fatalf("callback: status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+	registrationCookie := oauthNonceCookieFromResponse(t, recorder, false)
+	if registrationCookie.Value == stateCookie.Value {
+		t.Fatal("callback must rotate the browser nonce for registration")
 	}
 	completionURL := recorder.Header().Get("Location")
 	parsedCompletion, err := url.Parse(completionURL)
@@ -123,11 +132,13 @@ func TestOAuthHTTPRegistrationAndExistingIdentityLogin(t *testing.T) {
 
 	for attempt := 0; attempt < 2; attempt++ {
 		recorder = httptest.NewRecorder()
-		env.handler.ServeHTTP(recorder, httptest.NewRequest(
+		previewRequest := httptest.NewRequest(
 			http.MethodGet,
 			"/api/auth/oauth/flows/"+url.PathEscape(flowToken),
 			nil,
-		))
+		)
+		previewRequest.AddCookie(registrationCookie)
+		env.handler.ServeHTTP(recorder, previewRequest)
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("preview %d: status=%d body=%q", attempt, recorder.Code, recorder.Body.String())
 		}
@@ -143,25 +154,38 @@ func TestOAuthHTTPRegistrationAndExistingIdentityLogin(t *testing.T) {
 	invalid := newOAuthCompleteRequest(t, flowToken, map[string]string{
 		"first_name": "OAuth", "last_name": "HTTP", "date_of_birth": "01-01-1990",
 		"email": "attacker@example.com",
-	}, "", nil)
+	}, "", nil, registrationCookie)
 	invalid.RemoteAddr = "192.0.2.11:1234"
 	recorder = httptest.NewRecorder()
 	env.handler.ServeHTTP(recorder, invalid)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("email field must be rejected: status=%d body=%q", recorder.Code, recorder.Body.String())
 	}
+	assertNoOAuthNonceCookie(t, recorder)
 
 	valid := newOAuthCompleteRequest(t, flowToken, map[string]string{
 		"first_name": "OAuth", "last_name": "HTTP", "date_of_birth": "01-01-1990",
 		"nickname": "oauth-http",
-	}, "avatar.png", []byte("\x89PNG\r\n\x1a\nhttp-avatar"))
+	}, "avatar.png", []byte("\x89PNG\r\n\x1a\nhttp-avatar"), registrationCookie)
 	valid.RemoteAddr = "192.0.2.11:1234"
 	recorder = httptest.NewRecorder()
 	env.handler.ServeHTTP(recorder, valid)
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("complete: status=%d body=%q", recorder.Code, recorder.Body.String())
 	}
+	var completion struct {
+		User struct {
+			ID int64 `json:"id"`
+		} `json:"user"`
+		Next string `json:"next"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&completion); err != nil ||
+		completion.User.ID == 0 ||
+		completion.Next != "/groups" {
+		t.Fatalf("completion response=%+v err=%v", completion, err)
+	}
 	sessionCookieFromResponse(t, recorder)
+	oauthNonceCookieFromResponse(t, recorder, true)
 	assertDBRowCount(t, env.db, "users", 1)
 	assertDBRowCount(t, env.db, "auth_identities", 1)
 	assertDBRowCount(t, env.db, "auth_flows", 0)
@@ -170,19 +194,23 @@ func TestOAuthHTTPRegistrationAndExistingIdentityLogin(t *testing.T) {
 	restart := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/github/start?next=%2Fnotifications", nil)
 	restart.RemoteAddr = "192.0.2.12:1234"
 	env.handler.ServeHTTP(recorder, restart)
+	loginStateCookie := oauthNonceCookieFromResponse(t, recorder, false)
 	provider.mu.Lock()
 	state = provider.state
 	provider.mu.Unlock()
 	recorder = httptest.NewRecorder()
-	env.handler.ServeHTTP(recorder, httptest.NewRequest(
+	loginCallback := httptest.NewRequest(
 		http.MethodGet,
 		"/api/auth/oauth/github/callback?state="+url.QueryEscape(state)+"&code=valid",
 		nil,
-	))
+	)
+	loginCallback.AddCookie(loginStateCookie)
+	env.handler.ServeHTTP(recorder, loginCallback)
 	if recorder.Code != http.StatusFound || recorder.Header().Get("Location") != "/notifications" {
 		t.Fatalf("existing login: status=%d location=%q body=%q", recorder.Code, recorder.Header().Get("Location"), recorder.Body.String())
 	}
 	sessionCookieFromResponse(t, recorder)
+	oauthNonceCookieFromResponse(t, recorder, true)
 	assertDBRowCount(t, env.db, "users", 1)
 	assertDBRowCount(t, env.db, "auth_identities", 1)
 }
@@ -193,20 +221,24 @@ func TestOAuthHTTPCallbackConsumesStateAndUsesStableErrors(t *testing.T) {
 	start.RemoteAddr = "192.0.2.20:1234"
 	recorder := httptest.NewRecorder()
 	env.handler.ServeHTTP(recorder, start)
+	stateCookie := oauthNonceCookieFromResponse(t, recorder, false)
 	provider.mu.Lock()
 	state := provider.state
 	provider.mu.Unlock()
 
 	recorder = httptest.NewRecorder()
-	env.handler.ServeHTTP(recorder, httptest.NewRequest(
+	denial := httptest.NewRequest(
 		http.MethodGet,
 		"/api/auth/oauth/github/callback?state="+url.QueryEscape(state)+"&error=access_denied",
 		nil,
-	))
+	)
+	denial.AddCookie(stateCookie)
+	env.handler.ServeHTTP(recorder, denial)
 	if recorder.Code != http.StatusFound ||
 		recorder.Header().Get("Location") != "/login?oauth_error=oauth_provider_error" {
 		t.Fatalf("provider error redirect: status=%d location=%q", recorder.Code, recorder.Header().Get("Location"))
 	}
+	oauthNonceCookieFromResponse(t, recorder, true)
 
 	recorder = httptest.NewRecorder()
 	env.handler.ServeHTTP(recorder, httptest.NewRequest(
@@ -217,6 +249,191 @@ func TestOAuthHTTPCallbackConsumesStateAndUsesStableErrors(t *testing.T) {
 	if recorder.Code != http.StatusFound ||
 		recorder.Header().Get("Location") != "/login?oauth_error=oauth_state_invalid" {
 		t.Fatalf("consumed state redirect: status=%d location=%q", recorder.Code, recorder.Header().Get("Location"))
+	}
+}
+
+func TestOAuthHTTPMissingCodeAfterBrowserBindingClearsCookie(t *testing.T) {
+	env, provider := newOAuthHTTPEnvironment(t)
+	start := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/github/start", nil)
+	start.RemoteAddr = "192.0.2.21:1234"
+	recorder := httptest.NewRecorder()
+	env.handler.ServeHTTP(recorder, start)
+	stateCookie := oauthNonceCookieFromResponse(t, recorder, false)
+	provider.mu.Lock()
+	state := provider.state
+	provider.mu.Unlock()
+
+	callback := httptest.NewRequest(
+		http.MethodGet,
+		"/api/auth/oauth/github/callback?state="+url.QueryEscape(state),
+		nil,
+	)
+	callback.AddCookie(stateCookie)
+	recorder = httptest.NewRecorder()
+	env.handler.ServeHTTP(recorder, callback)
+	if recorder.Code != http.StatusFound ||
+		recorder.Header().Get("Location") != "/login?oauth_error=oauth_code_missing" {
+		t.Fatalf("missing code callback: status=%d location=%q", recorder.Code, recorder.Header().Get("Location"))
+	}
+	oauthNonceCookieFromResponse(t, recorder, true)
+}
+
+func TestOAuthHTTPBrowserBindingAllowsOnlyOneActiveBrowserFlow(t *testing.T) {
+	env, provider := newOAuthHTTPEnvironment(t)
+
+	firstStart := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/github/start", nil)
+	firstStart.RemoteAddr = "192.0.2.50:1234"
+	firstRecorder := httptest.NewRecorder()
+	env.handler.ServeHTTP(firstRecorder, firstStart)
+	firstCookie := oauthNonceCookieFromResponse(t, firstRecorder, false)
+	provider.mu.Lock()
+	firstState := provider.state
+	provider.mu.Unlock()
+	var firstPayload string
+	if err := env.db.QueryRow(`SELECT payload FROM auth_flows WHERE token = ?`, firstState).Scan(&firstPayload); err != nil {
+		t.Fatalf("read first state payload: %v", err)
+	}
+	if strings.Contains(firstPayload, firstCookie.Value) {
+		t.Fatal("raw browser nonce was persisted in OAuth state")
+	}
+
+	secondStart := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/github/start", nil)
+	secondStart.RemoteAddr = "192.0.2.50:1234"
+	secondRecorder := httptest.NewRecorder()
+	env.handler.ServeHTTP(secondRecorder, secondStart)
+	secondCookie := oauthNonceCookieFromResponse(t, secondRecorder, false)
+	provider.mu.Lock()
+	secondState := provider.state
+	provider.mu.Unlock()
+	if firstCookie.Value == secondCookie.Value {
+		t.Fatal("each OAuth start must rotate the browser nonce")
+	}
+
+	mismatchedCallback := httptest.NewRequest(
+		http.MethodGet,
+		"/api/auth/oauth/github/callback?state="+url.QueryEscape(firstState)+"&code=valid",
+		nil,
+	)
+	mismatchedCallback.AddCookie(secondCookie)
+	recorder := httptest.NewRecorder()
+	env.handler.ServeHTTP(recorder, mismatchedCallback)
+	if recorder.Code != http.StatusFound ||
+		recorder.Header().Get("Location") != "/login?oauth_error=oauth_state_invalid" {
+		t.Fatalf("mismatched callback: status=%d location=%q", recorder.Code, recorder.Header().Get("Location"))
+	}
+	assertNoOAuthNonceCookie(t, recorder)
+
+	retry := httptest.NewRequest(
+		http.MethodGet,
+		"/api/auth/oauth/github/callback?state="+url.QueryEscape(firstState)+"&code=valid",
+		nil,
+	)
+	retry.AddCookie(firstCookie)
+	recorder = httptest.NewRecorder()
+	env.handler.ServeHTTP(recorder, retry)
+	if recorder.Header().Get("Location") != "/login?oauth_error=oauth_state_invalid" {
+		t.Fatalf("mismatched state was not consumed: %q", recorder.Header().Get("Location"))
+	}
+
+	validCallback := httptest.NewRequest(
+		http.MethodGet,
+		"/api/auth/oauth/github/callback?state="+url.QueryEscape(secondState)+"&code=valid",
+		nil,
+	)
+	validCallback.AddCookie(secondCookie)
+	recorder = httptest.NewRecorder()
+	env.handler.ServeHTTP(recorder, validCallback)
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("second callback: status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+	registrationCookie := oauthNonceCookieFromResponse(t, recorder, false)
+	completionURL, err := url.Parse(recorder.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse completion URL: %v", err)
+	}
+	flowToken := completionURL.Query().Get("flow")
+	if flowToken == "" {
+		t.Fatalf("missing registration flow in %q", recorder.Header().Get("Location"))
+	}
+
+	for _, cookie := range []*http.Cookie{nil, firstCookie} {
+		preview := httptest.NewRequest(
+			http.MethodGet,
+			"/api/auth/oauth/flows/"+url.PathEscape(flowToken),
+			nil,
+		)
+		if cookie != nil {
+			preview.AddCookie(cookie)
+		}
+		recorder = httptest.NewRecorder()
+		env.handler.ServeHTTP(recorder, preview)
+		if recorder.Code != http.StatusGone {
+			t.Fatalf("foreign preview: status=%d body=%q", recorder.Code, recorder.Body.String())
+		}
+	}
+
+	preview := httptest.NewRequest(
+		http.MethodGet,
+		"/api/auth/oauth/flows/"+url.PathEscape(flowToken),
+		nil,
+	)
+	preview.AddCookie(registrationCookie)
+	recorder = httptest.NewRecorder()
+	env.handler.ServeHTTP(recorder, preview)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("valid preview after foreign attempts: status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+
+	crossSite := newOAuthCompleteRequest(t, flowToken, map[string]string{
+		"first_name": "OAuth", "last_name": "Browser", "date_of_birth": "01-01-1990",
+	}, "", nil, registrationCookie)
+	crossSite.Header.Set("Origin", "https://attacker.example")
+	crossSite.Header.Set("Sec-Fetch-Site", "cross-site")
+	recorder = httptest.NewRecorder()
+	env.handler.ServeHTTP(recorder, crossSite)
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), `"forbidden"`) {
+		t.Fatalf("cross-site completion: status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+
+	preview = httptest.NewRequest(
+		http.MethodGet,
+		"/api/auth/oauth/flows/"+url.PathEscape(flowToken),
+		nil,
+	)
+	preview.AddCookie(registrationCookie)
+	recorder = httptest.NewRecorder()
+	env.handler.ServeHTTP(recorder, preview)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("cross-site request consumed flow: status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestOAuthHTTPCallbackWithoutCookieConsumesState(t *testing.T) {
+	env, provider := newOAuthHTTPEnvironment(t)
+	start := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/github/start", nil)
+	start.RemoteAddr = "192.0.2.51:1234"
+	recorder := httptest.NewRecorder()
+	env.handler.ServeHTTP(recorder, start)
+	stateCookie := oauthNonceCookieFromResponse(t, recorder, false)
+	provider.mu.Lock()
+	state := provider.state
+	provider.mu.Unlock()
+
+	callbackPath := "/api/auth/oauth/github/callback?state=" + url.QueryEscape(state) + "&code=valid"
+	recorder = httptest.NewRecorder()
+	env.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, callbackPath, nil))
+	if recorder.Code != http.StatusFound ||
+		recorder.Header().Get("Location") != "/login?oauth_error=oauth_state_invalid" {
+		t.Fatalf("cookieless callback: status=%d location=%q", recorder.Code, recorder.Header().Get("Location"))
+	}
+	assertNoOAuthNonceCookie(t, recorder)
+
+	retry := httptest.NewRequest(http.MethodGet, callbackPath, nil)
+	retry.AddCookie(stateCookie)
+	recorder = httptest.NewRecorder()
+	env.handler.ServeHTTP(recorder, retry)
+	if recorder.Header().Get("Location") != "/login?oauth_error=oauth_state_invalid" {
+		t.Fatalf("cookieless callback did not consume state: %q", recorder.Header().Get("Location"))
 	}
 }
 
@@ -235,20 +452,24 @@ func TestOAuthHTTPEmailCollisionReturnsStableErrorWithoutLinking(t *testing.T) {
 	start.RemoteAddr = "192.0.2.30:1234"
 	recorder := httptest.NewRecorder()
 	env.handler.ServeHTTP(recorder, start)
+	stateCookie := oauthNonceCookieFromResponse(t, recorder, false)
 	provider.mu.Lock()
 	state := provider.state
 	provider.mu.Unlock()
 
 	recorder = httptest.NewRecorder()
-	env.handler.ServeHTTP(recorder, httptest.NewRequest(
+	callback := httptest.NewRequest(
 		http.MethodGet,
 		"/api/auth/oauth/github/callback?state="+url.QueryEscape(state)+"&code=valid",
 		nil,
-	))
+	)
+	callback.AddCookie(stateCookie)
+	env.handler.ServeHTTP(recorder, callback)
 	if recorder.Code != http.StatusFound ||
 		recorder.Header().Get("Location") != "/login?oauth_error=oauth_email_already_registered" {
 		t.Fatalf("collision redirect: status=%d location=%q", recorder.Code, recorder.Header().Get("Location"))
 	}
+	oauthNonceCookieFromResponse(t, recorder, true)
 	assertDBRowCount(t, env.db, "users", 1)
 	assertDBRowCount(t, env.db, "auth_identities", 0)
 }
@@ -276,6 +497,7 @@ func newOAuthCompleteRequest(
 	fields map[string]string,
 	avatarName string,
 	avatar []byte,
+	nonceCookie *http.Cookie,
 ) *http.Request {
 	t.Helper()
 	body := &bytes.Buffer{}
@@ -303,5 +525,49 @@ func newOAuthCompleteRequest(
 		body,
 	)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Origin", "http://example.com")
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
+	if nonceCookie != nil {
+		request.AddCookie(nonceCookie)
+	}
 	return request
+}
+
+func oauthNonceCookieFromResponse(
+	t *testing.T,
+	recorder *httptest.ResponseRecorder,
+	cleared bool,
+) *http.Cookie {
+	t.Helper()
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name != oauthNonceCookieName {
+			continue
+		}
+		if cookie.Path != oauthNonceCookiePath ||
+			!cookie.HttpOnly ||
+			cookie.SameSite != http.SameSiteLaxMode {
+			t.Fatalf("unexpected OAuth nonce cookie attributes: %+v", cookie)
+		}
+		if cleared {
+			if cookie.Value != "" || cookie.MaxAge != -1 || !cookie.Expires.Before(time.Now()) {
+				t.Fatalf("OAuth nonce cookie was not cleared: %+v", cookie)
+			}
+		} else {
+			if cookie.Value == "" || cookie.MaxAge != oauthNonceMaxAge {
+				t.Fatalf("OAuth nonce cookie was not set: %+v", cookie)
+			}
+		}
+		return cookie
+	}
+	t.Fatalf("response did not set OAuth nonce cookie: %+v", recorder.Result().Cookies())
+	return nil
+}
+
+func assertNoOAuthNonceCookie(t *testing.T, recorder *httptest.ResponseRecorder) {
+	t.Helper()
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == oauthNonceCookieName {
+			t.Fatalf("response unexpectedly changed OAuth nonce cookie: %+v", cookie)
+		}
+	}
 }

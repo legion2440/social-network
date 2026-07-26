@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"social-network/backend/internal/oauth"
 )
 
 const SessionCookieName = "social_network_session"
@@ -16,6 +18,8 @@ type Config struct {
 	UploadDir       string
 	FrontendDir     string
 	CookieSecure    bool
+	PublicOrigin    string
+	TrustProxy      bool
 	SessionTTL      time.Duration
 	ShutdownTimeout time.Duration
 	GitHubOAuth     GitHubOAuthConfig
@@ -44,6 +48,20 @@ func Load() (Config, error) {
 	}
 	cfg.CookieSecure = secure
 
+	trustProxy, err := boolEnv("SOCIAL_NETWORK_TRUST_PROXY", false)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.TrustProxy = trustProxy
+
+	publicOriginValue := strings.TrimSpace(os.Getenv("SOCIAL_NETWORK_PUBLIC_ORIGIN"))
+	if publicOriginValue != "" {
+		cfg.PublicOrigin, err = oauth.NormalizePublicOrigin(publicOriginValue)
+		if err != nil {
+			return Config{}, fmt.Errorf("SOCIAL_NETWORK_PUBLIC_ORIGIN: %w", err)
+		}
+	}
+
 	githubValues := []string{
 		strings.TrimSpace(os.Getenv("SOCIAL_NETWORK_GITHUB_CLIENT_ID")),
 		strings.TrimSpace(os.Getenv("SOCIAL_NETWORK_GITHUB_CLIENT_SECRET")),
@@ -61,6 +79,17 @@ func Load() (Config, error) {
 		)
 	}
 	if configured == len(githubValues) {
+		redirectOrigin, err := oauth.ValidateGitHubRedirectURL(githubValues[2])
+		if err != nil {
+			return Config{}, fmt.Errorf("SOCIAL_NETWORK_GITHUB_REDIRECT_URL: %w", err)
+		}
+		if cfg.PublicOrigin == "" {
+			cfg.PublicOrigin = redirectOrigin
+		} else if cfg.PublicOrigin != redirectOrigin {
+			return Config{}, fmt.Errorf(
+				"SOCIAL_NETWORK_PUBLIC_ORIGIN must match SOCIAL_NETWORK_GITHUB_REDIRECT_URL origin",
+			)
+		}
 		cfg.GitHubOAuth = GitHubOAuthConfig{
 			Enabled:      true,
 			ClientID:     githubValues[0],

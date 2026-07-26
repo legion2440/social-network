@@ -145,6 +145,9 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 			sqlite.NewAuthFlowRepo(db),
 			ids,
 		),
+		service.WithOAuthCleanupErrorHandler(func(err error) {
+			log.Printf("OAuth flow cleanup: %v", err)
+		}),
 	)
 	profile := service.NewProfileService(transactions, appClock, avatarStager, log.Default())
 	follows := service.NewFollowService(users, sqlite.NewFollowRepo(db), transactions, appClock)
@@ -178,6 +181,8 @@ func bootstrap(ctx context.Context, cfg config.Config) (*runtime, error) {
 		chats,
 		httpserver.NewCookieSessionTokenExtractor(config.SessionCookieName),
 		cfg.CookieSecure,
+		cfg.PublicOrigin,
+		cfg.TrustProxy,
 		cfg.FrontendDir,
 		log.Default(),
 	)

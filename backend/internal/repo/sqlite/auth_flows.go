@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	githubsqlite "github.com/mattn/go-sqlite3"
 
@@ -70,6 +71,20 @@ func (r *AuthFlowRepo) TakeByToken(ctx context.Context, token string) (*domain.A
 		return nil, err
 	}
 	return flow, nil
+}
+
+func (r *AuthFlowRepo) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
+	if r == nil || r.db == nil {
+		return 0, errors.New("auth flow repository is not configured")
+	}
+	result, err := r.db.ExecContext(ctx, `
+		DELETE FROM auth_flows
+		WHERE expires_at <= ?
+	`, timeToUnix(before))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func scanAuthFlow(row *sql.Row) (*domain.AuthFlow, error) {

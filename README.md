@@ -223,8 +223,9 @@ The browser application is not organized as a conventional React component tree.
 ## 🔐 Security and access control
 
 - passwords are stored as bcrypt hashes;
-- GitHub OAuth state and registration flows are random, server-side, one-time, and time-limited;
+- GitHub OAuth state and registration flows are random, server-side, one-time, time-limited, and bound to one browser through a separate HttpOnly nonce cookie; only its SHA-256 hash is persisted;
 - GitHub email is accepted only from `/user/emails` when verified; provider access tokens are never persisted;
+- OAuth registration completion requires exact same-origin `Origin`/Fetch Metadata and preserves only a validated relative `next` route;
 - session tokens are transported through an HttpOnly, SameSite=Lax cookie;
 - the backend is not published to the host in Docker;
 - private-profile fields and content are returned only to the owner and accepted followers; custom avatars remain visible to authenticated users;
@@ -428,6 +429,8 @@ Backend environment variables:
 | `SOCIAL_NETWORK_UPLOAD_DIR`           | `var/uploads`           | uploaded file directory                      |
 | `SOCIAL_NETWORK_FRONTEND_DIR`         | `../frontend/dist`      | generated local static frontend directory    |
 | `SOCIAL_NETWORK_COOKIE_SECURE`        | `false`                 | Secure attribute for the session cookie      |
+| `SOCIAL_NETWORK_PUBLIC_ORIGIN`        | empty                   | canonical public origin for OAuth checks      |
+| `SOCIAL_NETWORK_TRUST_PROXY`          | `false`                 | trust a validated full `X-Forwarded-For` chain |
 | `SOCIAL_NETWORK_GITHUB_CLIENT_ID`     | empty                   | GitHub OAuth App client ID                    |
 | `SOCIAL_NETWORK_GITHUB_CLIENT_SECRET` | empty                   | GitHub OAuth App client secret                |
 | `SOCIAL_NETWORK_GITHUB_REDIRECT_URL`  | empty                   | absolute GitHub OAuth callback URL            |
@@ -446,6 +449,14 @@ Compose, copy `.env.example` to `.env`, fill all three values, and configure the
 GitHub OAuth App callback to match `SOCIAL_NETWORK_GITHUB_REDIRECT_URL`. The Go
 application does not read `.env`; Compose performs the substitution. The real
 `.env` is ignored by Git.
+
+The redirect URL must point exactly to `/api/auth/oauth/github/callback`. Its
+normalized scheme, hostname, and effective port must match
+`SOCIAL_NETWORK_PUBLIC_ORIGIN`; when the latter is empty it is derived from the
+validated redirect URL. Compose enables `SOCIAL_NETWORK_TRUST_PROXY` because the
+backend is reachable only through Caddy on the private network. Do not enable it
+when clients can connect to the backend directly. If `SOCIAL_NETWORK_PORT` changes,
+update the public origin and GitHub redirect URL accordingly.
 
 ## 🧪 Local development and tests
 

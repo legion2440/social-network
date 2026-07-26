@@ -32,6 +32,7 @@ type AuthFlowRepo interface {
 	Create(ctx context.Context, flow *domain.AuthFlow) error
 	GetByToken(ctx context.Context, token string) (*domain.AuthFlow, error)
 	TakeByToken(ctx context.Context, token string) (*domain.AuthFlow, error)
+	DeleteExpired(ctx context.Context, before time.Time) (int64, error)
 }
 
 type MediaRepo interface {

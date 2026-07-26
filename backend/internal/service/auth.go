@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/mail"
 	"strings"
+	"sync"
 	"time"
 
 	"social-network/backend/internal/domain"
@@ -41,19 +42,23 @@ type AuthResult struct {
 }
 
 type AuthService struct {
-	users          repo.UserRepo
-	transactions   repo.TransactionManager
-	sessions       *SessionService
-	passwords      PasswordHasher
-	clock          clock.Clock
-	avatars        *MediaStager
-	oauthRegistry  *oauth.Registry
-	authIdentities repo.AuthIdentityRepo
-	authFlows      repo.AuthFlowRepo
-	ids            id.Generator
+	users                    repo.UserRepo
+	transactions             repo.TransactionManager
+	sessions                 *SessionService
+	passwords                PasswordHasher
+	clock                    clock.Clock
+	avatars                  *MediaStager
+	oauthRegistry            *oauth.Registry
+	authIdentities           repo.AuthIdentityRepo
+	authFlows                repo.AuthFlowRepo
+	ids                      id.Generator
+	oauthCleanupErrorHandler OAuthCleanupErrorHandler
+	oauthCleanupMu           sync.Mutex
+	oauthCleanupLastAttempt  time.Time
 }
 
 type AuthOption func(*AuthService)
+type OAuthCleanupErrorHandler func(error)
 
 func WithOAuth(
 	registry *oauth.Registry,
@@ -66,6 +71,12 @@ func WithOAuth(
 		service.authIdentities = identities
 		service.authFlows = flows
 		service.ids = ids
+	}
+}
+
+func WithOAuthCleanupErrorHandler(handler OAuthCleanupErrorHandler) AuthOption {
+	return func(service *AuthService) {
+		service.oauthCleanupErrorHandler = handler
 	}
 }
 

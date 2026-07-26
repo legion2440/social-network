@@ -269,12 +269,15 @@ test('auth controller owns GitHub provider discovery, redirect, preview and comp
     completeOAuthRegistration: async (_token, form) => {
       completedForm = form;
       return {
-        id: 8,
-        email: 'verified@example.com',
-        first_name: 'The',
-        last_name: 'Octocat',
-        date_of_birth: '01-01-1990',
-        is_private: false
+        user: {
+          id: 8,
+          email: 'verified@example.com',
+          first_name: 'The',
+          last_name: 'Octocat',
+          date_of_birth: '01-01-1990',
+          is_private: false
+        },
+        next: '/groups'
       };
     },
     login: async () => ({}),
@@ -344,7 +347,7 @@ test('auth controller owns GitHub provider discovery, redirect, preview and comp
   assert.equal(completedForm.get('date_of_birth'), '01-01-1990');
   assert.equal(completedForm.has('email'), false);
   assert.equal(store.state.authStatus, 'authenticated');
-  assert.equal(replaced, '/');
+  assert.equal(replaced, '/groups');
 });
 
 test('router parses strict routes and dispatches only named feature callbacks', () => {
@@ -408,6 +411,11 @@ test('router parses strict routes and dispatches only named feature callbacks', 
   environment.location.pathname = '/messages/group/7';
   listeners.popstate();
   assert.deepEqual(calls.at(-1), ['group-chat', 7]);
+
+  environment.location.pathname = '/groups';
+  environment.location.search = '';
+  router.actions.applyCurrent();
+  assert.equal(store.state.screen, 'groups');
 
   environment.location.pathname = '/unknown';
   listeners.popstate();

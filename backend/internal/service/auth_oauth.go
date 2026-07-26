@@ -19,19 +19,23 @@ const (
 	oauthRegistrationKind = "oauth_registration"
 	oauthStateTTL         = 10 * time.Minute
 	oauthRegistrationTTL  = 30 * time.Minute
+	oauthCleanupInterval  = time.Minute
 )
 
 type OAuthCallbackInput struct {
-	Provider      string
-	State         string
-	Code          string
-	ProviderError string
+	Provider                     string
+	State                        string
+	Code                         string
+	ProviderError                string
+	BrowserNonce                 string
+	RegistrationBrowserNonceHash string
 }
 
 type OAuthCallbackResult struct {
-	Auth              *AuthResult
-	RegistrationToken string
-	Next              string
+	Auth                   *AuthResult
+	RegistrationToken      string
+	Next                   string
+	BrowserBindingVerified bool
 }
 
 type OAuthRegistrationPreview struct {
@@ -52,17 +56,24 @@ type CompleteOAuthRegistrationInput struct {
 	Avatar      *MediaUpload
 }
 
+type OAuthRegistrationResult struct {
+	Auth *AuthResult
+	Next string
+}
+
 type oauthStatePayload struct {
-	Next string `json:"next"`
+	Next             string `json:"next"`
+	BrowserNonceHash string `json:"browser_nonce_hash"`
 }
 
 type oauthRegistrationPayload struct {
-	ProviderUserID string `json:"provider_user_id"`
-	Email          string `json:"email"`
-	EmailVerified  bool   `json:"email_verified"`
-	Username       string `json:"username"`
-	DisplayName    string `json:"display_name"`
-	Next           string `json:"next"`
+	ProviderUserID   string `json:"provider_user_id"`
+	Email            string `json:"email"`
+	EmailVerified    bool   `json:"email_verified"`
+	Username         string `json:"username"`
+	DisplayName      string `json:"display_name"`
+	Next             string `json:"next"`
+	BrowserNonceHash string `json:"browser_nonce_hash"`
 }
 
 func (s *AuthService) OAuthProviders() []oauth.ProviderInfo {
@@ -72,7 +83,10 @@ func (s *AuthService) OAuthProviders() []oauth.ProviderInfo {
 	return s.oauthRegistry.Available()
 }
 
-func (s *AuthService) StartOAuth(ctx context.Context, providerName, next string) (string, error) {
+func (s *AuthService) StartOAuth(
+	ctx context.Context,
+	providerName, next, browserNonceHash string,
+) (string, error) {
 	if !s.oauthConfigured() {
 		return "", ErrOAuthProviderUnavailable
 	}
@@ -80,7 +94,14 @@ func (s *AuthService) StartOAuth(ctx context.Context, providerName, next string)
 	if !ok {
 		return "", ErrOAuthProviderUnavailable
 	}
-	payload, err := json.Marshal(oauthStatePayload{Next: normalizeOAuthNext(next)})
+	if !oauth.ValidBrowserNonceHash(browserNonceHash) {
+		return "", ErrOAuthStateInvalid
+	}
+	s.cleanupExpiredOAuthFlows(ctx)
+	payload, err := json.Marshal(oauthStatePayload{
+		Next:             normalizeOAuthNext(next),
+		BrowserNonceHash: browserNonceHash,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -131,38 +152,45 @@ func (s *AuthService) HandleOAuthCallback(
 	if err := json.Unmarshal([]byte(stateFlow.Payload), &statePayload); err != nil {
 		return nil, ErrOAuthStateInvalid
 	}
+	if !oauth.ValidBrowserNonce(input.BrowserNonce, statePayload.BrowserNonceHash) {
+		return nil, ErrOAuthStateInvalid
+	}
 	next := normalizeOAuthNext(statePayload.Next)
+	result := &OAuthCallbackResult{
+		Next:                   next,
+		BrowserBindingVerified: true,
+	}
 
 	if strings.TrimSpace(input.ProviderError) != "" {
-		return nil, ErrOAuthProviderError
+		return result, ErrOAuthProviderError
 	}
 	input.Code = strings.TrimSpace(input.Code)
 	if input.Code == "" {
-		return nil, ErrOAuthCodeMissing
+		return result, ErrOAuthCodeMissing
 	}
 	if s.oauthRegistry == nil {
-		return nil, ErrOAuthProviderUnavailable
+		return result, ErrOAuthProviderUnavailable
 	}
 	provider, ok := s.oauthRegistry.Get(stateFlow.Provider)
 	if !ok {
-		return nil, ErrOAuthProviderUnavailable
+		return result, ErrOAuthProviderUnavailable
 	}
 	accessToken, err := provider.Exchange(ctx, input.Code)
 	if err != nil {
-		return nil, ErrOAuthTokenExchangeFailed
+		return result, ErrOAuthTokenExchangeFailed
 	}
 	providerIdentity, err := provider.Identity(ctx, accessToken)
 	if errors.Is(err, oauth.ErrVerifiedEmailUnavailable) {
-		return nil, ErrOAuthVerifiedEmailUnavailable
+		return result, ErrOAuthVerifiedEmailUnavailable
 	}
 	if err != nil {
-		return nil, ErrOAuthIdentityFetchFailed
+		return result, ErrOAuthIdentityFetchFailed
 	}
 	if providerIdentity == nil ||
 		strings.TrimSpace(providerIdentity.ProviderUserID) == "" ||
 		!providerIdentity.EmailVerified ||
 		!validEmail(strings.TrimSpace(providerIdentity.Email)) {
-		return nil, ErrOAuthIdentityFetchFailed
+		return result, ErrOAuthIdentityFetchFailed
 	}
 
 	storedIdentity, err := s.authIdentities.GetByProviderUserID(
@@ -178,29 +206,34 @@ func (s *AuthService) HandleOAuthCallback(
 			providerIdentity,
 		)
 		if loginErr != nil {
-			return nil, loginErr
+			return result, loginErr
 		}
-		return &OAuthCallbackResult{Auth: auth, Next: next}, nil
+		result.Auth = auth
+		return result, nil
 	}
 	if !errors.Is(err, repo.ErrNotFound) {
-		return nil, err
+		return result, err
 	}
 	if _, err := s.users.GetByEmail(ctx, providerIdentity.Email); err == nil {
-		return nil, ErrOAuthEmailAlreadyRegistered
+		return result, ErrOAuthEmailAlreadyRegistered
 	} else if !errors.Is(err, repo.ErrNotFound) {
-		return nil, err
+		return result, err
+	}
+	if !oauth.ValidBrowserNonceHash(input.RegistrationBrowserNonceHash) {
+		return result, ErrOAuthStateInvalid
 	}
 
 	registrationPayload, err := json.Marshal(oauthRegistrationPayload{
-		ProviderUserID: strings.TrimSpace(providerIdentity.ProviderUserID),
-		Email:          strings.TrimSpace(providerIdentity.Email),
-		EmailVerified:  providerIdentity.EmailVerified,
-		Username:       strings.TrimSpace(providerIdentity.Username),
-		DisplayName:    strings.TrimSpace(providerIdentity.DisplayName),
-		Next:           next,
+		ProviderUserID:   strings.TrimSpace(providerIdentity.ProviderUserID),
+		Email:            strings.TrimSpace(providerIdentity.Email),
+		EmailVerified:    providerIdentity.EmailVerified,
+		Username:         strings.TrimSpace(providerIdentity.Username),
+		DisplayName:      strings.TrimSpace(providerIdentity.DisplayName),
+		Next:             next,
+		BrowserNonceHash: input.RegistrationBrowserNonceHash,
 	})
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	now := s.clock.Now()
 	registrationToken, err := s.createOAuthFlow(ctx, &domain.AuthFlow{
@@ -211,21 +244,20 @@ func (s *AuthService) HandleOAuthCallback(
 		ExpiresAt: now.Add(oauthRegistrationTTL),
 	})
 	if err != nil {
-		return nil, err
+		return result, err
 	}
-	return &OAuthCallbackResult{
-		RegistrationToken: registrationToken,
-		Next:              next,
-	}, nil
+	result.RegistrationToken = registrationToken
+	return result, nil
 }
 
 func (s *AuthService) OAuthRegistrationPreview(
 	ctx context.Context,
-	token string,
+	token, browserNonce string,
 ) (*OAuthRegistrationPreview, error) {
 	if !s.oauthConfigured() {
 		return nil, ErrOAuthProviderUnavailable
 	}
+	s.cleanupExpiredOAuthFlows(ctx)
 	flow, err := s.authFlows.GetByToken(ctx, strings.TrimSpace(token))
 	if errors.Is(err, repo.ErrNotFound) {
 		return nil, ErrOAuthFlowExpired
@@ -233,7 +265,7 @@ func (s *AuthService) OAuthRegistrationPreview(
 	if err != nil {
 		return nil, err
 	}
-	payload, err := s.validateRegistrationFlow(flow)
+	payload, err := s.validateRegistrationFlow(flow, browserNonce)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +284,8 @@ func (s *AuthService) CompleteOAuthRegistration(
 	ctx context.Context,
 	token string,
 	input CompleteOAuthRegistrationInput,
-) (*AuthResult, error) {
+	browserNonce string,
+) (*OAuthRegistrationResult, error) {
 	if !s.oauthConfigured() || s.sessions == nil || s.passwords == nil || s.avatars == nil {
 		return nil, ErrOAuthProviderUnavailable
 	}
@@ -266,6 +299,18 @@ func (s *AuthService) CompleteOAuthRegistration(
 		input.LastName == "" ||
 		!domain.ValidDateOfBirth(input.DateOfBirth) {
 		return nil, ErrInvalidInput
+	}
+
+	s.cleanupExpiredOAuthFlows(ctx)
+	flow, err := s.authFlows.GetByToken(ctx, token)
+	if errors.Is(err, repo.ErrNotFound) {
+		return nil, ErrOAuthFlowExpired
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.validateRegistrationFlow(flow, browserNonce); err != nil {
+		return nil, err
 	}
 
 	generatedPassword, err := randomOAuthPassword()
@@ -288,6 +333,7 @@ func (s *AuthService) CompleteOAuthRegistration(
 
 	now := s.clock.Now()
 	var result *AuthResult
+	var resultNext string
 	err = s.transactions.WithinTransaction(ctx, func(repositories repo.TransactionRepositories) error {
 		flow, err := repositories.AuthFlows().TakeByToken(ctx, token)
 		if errors.Is(err, repo.ErrNotFound) {
@@ -296,10 +342,11 @@ func (s *AuthService) CompleteOAuthRegistration(
 		if err != nil {
 			return err
 		}
-		payload, err := s.validateRegistrationFlow(flow)
+		payload, err := s.validateRegistrationFlow(flow, browserNonce)
 		if err != nil {
 			return err
 		}
+		resultNext = normalizeOAuthNext(payload.Next)
 		if _, err := repositories.AuthIdentities().GetByProviderUserID(
 			ctx,
 			flow.Provider,
@@ -369,7 +416,7 @@ func (s *AuthService) CompleteOAuthRegistration(
 	if stagedAvatar != nil {
 		stagedAvatar.Keep()
 	}
-	return result, nil
+	return &OAuthRegistrationResult{Auth: result, Next: resultNext}, nil
 }
 
 func (s *AuthService) loginExistingOAuthIdentity(
@@ -440,6 +487,7 @@ func (s *AuthService) createOAuthFlow(
 
 func (s *AuthService) validateRegistrationFlow(
 	flow *domain.AuthFlow,
+	browserNonce string,
 ) (*oauthRegistrationPayload, error) {
 	if flow == nil ||
 		flow.Kind != oauthRegistrationKind ||
@@ -461,10 +509,33 @@ func (s *AuthService) validateRegistrationFlow(
 	payload.Username = strings.TrimSpace(payload.Username)
 	payload.DisplayName = strings.TrimSpace(payload.DisplayName)
 	payload.Next = normalizeOAuthNext(payload.Next)
-	if payload.ProviderUserID == "" || !payload.EmailVerified || !validEmail(payload.Email) {
+	if payload.ProviderUserID == "" ||
+		!payload.EmailVerified ||
+		!validEmail(payload.Email) ||
+		!oauth.ValidBrowserNonce(browserNonce, payload.BrowserNonceHash) {
 		return nil, ErrOAuthFlowExpired
 	}
 	return payload, nil
+}
+
+func (s *AuthService) cleanupExpiredOAuthFlows(ctx context.Context) {
+	if s == nil || s.authFlows == nil || s.clock == nil {
+		return
+	}
+	now := s.clock.Now()
+	s.oauthCleanupMu.Lock()
+	if !s.oauthCleanupLastAttempt.IsZero() &&
+		now.Before(s.oauthCleanupLastAttempt.Add(oauthCleanupInterval)) {
+		s.oauthCleanupMu.Unlock()
+		return
+	}
+	s.oauthCleanupLastAttempt = now
+	s.oauthCleanupMu.Unlock()
+
+	if _, err := s.authFlows.DeleteExpired(ctx, now); err != nil &&
+		s.oauthCleanupErrorHandler != nil {
+		s.oauthCleanupErrorHandler(err)
+	}
 }
 
 func (s *AuthService) oauthConfigured() bool {

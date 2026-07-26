@@ -296,7 +296,7 @@ Network failure имеет status `0`.
 Client покрывает:
 
 - registration, login, logout, session restore;
-- OAuth provider discovery, safe registration flow preview и multipart completion;
+- OAuth provider discovery, browser-bound safe registration flow preview и multipart completion;
 - profile update и avatar replacement;
 - users, relationships, followers, follow requests;
 - feed, profile posts, group posts, comments с media;
@@ -422,7 +422,8 @@ controller загружает safe preview в `oauthFlow`, показывает 
 для чтения и отправляет first name, last name, birth date, optional
 nickname/about и optional local avatar через `FormData`. Email не добавляется в
 completion `FormData`, GitHub avatar не копируется. После успеха запускается
-обычный authenticated bootstrap, а history заменяется на `/`.
+обычный authenticated bootstrap, а history заменяется на проверенный backend
+маршрут `next`.
 
 После authentication:
 
@@ -462,6 +463,13 @@ Router отвечает за parsing URL и синхронизацию History A
 ```
 
 Он использует `pushState`, `replaceState` и `popstate`, восстанавливает deep links после refresh и login, поддерживает Back/Forward и заменяет malformed routes на `/`. Закрытые resources приводят к контролируемому profile/group/chat error state.
+
+GitHub completion опирается на path-scoped HttpOnly browser nonce cookie
+backend. Client никогда не читает и не отправляет эту nonce явно. Успешный
+completion принимает `{ user, next }`, удаляет flow token через `replaceState` и
+применяет проверенный destination route вместо принудительного `/`. Отсутствующий,
+истёкший или принадлежащий другому браузеру binding показывается как недоступный
+registration flow.
 
 Unfollow и изменение profile privacy используют один shared confirmation dialog. Mutation не отправляется до confirmation; Cancel и Escape закрывают modal, focus удерживается и возвращается, pending confirmation блокирует повторный submit.
 

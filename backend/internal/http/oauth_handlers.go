@@ -30,7 +30,7 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !h.oauthStartLimiter.Allow(requestClientIP(r), time.Now()) {
+	if !h.oauthStartLimiter.Allow(requestClientIP(r, h.trustProxy), time.Now()) {
 		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
 	}
@@ -38,11 +38,23 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, service.ErrOAuthProviderUnavailable.Error())
 		return
 	}
-	target, err := h.auth.StartOAuth(r.Context(), oauth.ProviderGitHub, r.URL.Query().Get("next"))
+	browserNonce, err := oauth.NewBrowserNonce()
+	if err != nil {
+		h.logger.Printf("OAuth browser nonce: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	target, err := h.auth.StartOAuth(
+		r.Context(),
+		oauth.ProviderGitHub,
+		r.URL.Query().Get("next"),
+		oauth.HashBrowserNonce(browserNonce),
+	)
 	if err != nil {
 		h.handleOAuthAPIError(w, err)
 		return
 	}
+	setOAuthNonceCookie(w, browserNonce, h.cookieSecure)
 	http.Redirect(w, r, target, http.StatusFound)
 }
 
@@ -56,13 +68,24 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		redirectOAuthError(w, r, service.ErrOAuthProviderUnavailable)
 		return
 	}
+	registrationBrowserNonce, err := oauth.NewBrowserNonce()
+	if err != nil {
+		h.logger.Printf("OAuth registration browser nonce: %v", err)
+		redirectOAuthError(w, r, service.ErrOAuthProviderError)
+		return
+	}
 	result, err := h.auth.HandleOAuthCallback(r.Context(), service.OAuthCallbackInput{
-		Provider:      oauth.ProviderGitHub,
-		State:         r.URL.Query().Get("state"),
-		Code:          r.URL.Query().Get("code"),
-		ProviderError: r.URL.Query().Get("error"),
+		Provider:                     oauth.ProviderGitHub,
+		State:                        r.URL.Query().Get("state"),
+		Code:                         r.URL.Query().Get("code"),
+		ProviderError:                r.URL.Query().Get("error"),
+		BrowserNonce:                 readOAuthNonceCookie(r),
+		RegistrationBrowserNonceHash: oauth.HashBrowserNonce(registrationBrowserNonce),
 	})
 	if err != nil {
+		if result != nil && result.BrowserBindingVerified {
+			clearOAuthNonceCookie(w, h.cookieSecure)
+		}
 		if !isKnownOAuthError(err) {
 			h.logger.Printf("OAuth callback: %v", err)
 			err = service.ErrOAuthProviderError
@@ -70,7 +93,14 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		redirectOAuthError(w, r, err)
 		return
 	}
+	if result == nil {
+		h.logger.Printf("OAuth callback returned an empty result")
+		clearOAuthNonceCookie(w, h.cookieSecure)
+		redirectOAuthError(w, r, service.ErrOAuthProviderError)
+		return
+	}
 	if result.Auth != nil {
+		clearOAuthNonceCookie(w, h.cookieSecure)
 		SetSessionCookie(
 			w,
 			result.Auth.Session.Token,
@@ -80,6 +110,13 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, result.Next, http.StatusFound)
 		return
 	}
+	if result.RegistrationToken == "" {
+		h.logger.Printf("OAuth callback returned no authentication or registration result")
+		clearOAuthNonceCookie(w, h.cookieSecure)
+		redirectOAuthError(w, r, service.ErrOAuthProviderError)
+		return
+	}
+	setOAuthNonceCookie(w, registrationBrowserNonce, h.cookieSecure)
 	target := "/oauth/complete?flow=" + url.QueryEscape(result.RegistrationToken)
 	http.Redirect(w, r, target, http.StatusFound)
 }
@@ -94,7 +131,11 @@ func (h *Handler) handleOAuthRegistrationFlow(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusNotFound, service.ErrOAuthProviderUnavailable.Error())
 		return
 	}
-	preview, err := h.auth.OAuthRegistrationPreview(r.Context(), r.PathValue("token"))
+	preview, err := h.auth.OAuthRegistrationPreview(
+		r.Context(),
+		r.PathValue("token"),
+		readOAuthNonceCookie(r),
+	)
 	if err != nil {
 		h.handleOAuthAPIError(w, err)
 		return
@@ -108,12 +149,22 @@ func (h *Handler) handleOAuthRegistrationComplete(w http.ResponseWriter, r *http
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !h.oauthCompleteLimiter.Allow(requestClientIP(r), time.Now()) {
-		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+	if !validOAuthCompletionRequest(r, h.oauthExpectedOrigin) {
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	if h.auth == nil {
 		writeError(w, http.StatusNotFound, service.ErrOAuthProviderUnavailable.Error())
+		return
+	}
+	if !h.oauthCompleteLimiter.Allow(requestClientIP(r, h.trustProxy), time.Now()) {
+		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+		return
+	}
+	token := r.PathValue("token")
+	browserNonce := readOAuthNonceCookie(r)
+	if _, err := h.auth.OAuthRegistrationPreview(r.Context(), token, browserNonce); err != nil {
+		h.handleOAuthAPIError(w, err)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, service.MaxAvatarBodyBytes)
@@ -132,13 +183,22 @@ func (h *Handler) handleOAuthRegistrationComplete(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "invalid input")
 		return
 	}
-	result, err := h.auth.CompleteOAuthRegistration(r.Context(), r.PathValue("token"), input)
+	result, err := h.auth.CompleteOAuthRegistration(r.Context(), token, input, browserNonce)
 	if err != nil {
 		h.handleOAuthAPIError(w, err)
 		return
 	}
-	SetSessionCookie(w, result.Session.Token, result.Session.ExpiresAt, h.cookieSecure)
-	writeJSON(w, http.StatusCreated, newAuthUserResponse(result.User))
+	if result == nil || result.Auth == nil || result.Auth.User == nil || result.Auth.Session == nil {
+		h.logger.Printf("OAuth completion returned an empty result")
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	clearOAuthNonceCookie(w, h.cookieSecure)
+	SetSessionCookie(w, result.Auth.Session.Token, result.Auth.Session.ExpiresAt, h.cookieSecure)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"user": newAuthUserResponse(result.Auth.User),
+		"next": result.Next,
+	})
 }
 
 func readOAuthRegistrationInput(

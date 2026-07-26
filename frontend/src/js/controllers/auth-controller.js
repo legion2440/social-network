@@ -337,8 +337,10 @@
       if (s.oauthNickname.trim()) form.append('nickname', s.oauthNickname.trim());
       if (s.oauthAboutMe.trim()) form.append('about_me', s.oauthAboutMe.trim());
       if (s.oauthAvatar) form.append('avatar', s.oauthAvatar, s.oauthAvatar.name);
-      const user = await AuthAPI.completeOAuthRegistration(s.oauthFlowToken, form);
+      const result = await AuthAPI.completeOAuthRegistration(s.oauthFlowToken, form);
       if (!context.authGate.isCurrent(authGeneration)) return;
+      const user = result.user;
+      const next = result.next || '/';
       const apiUsersByID = context.applyAuthUser(user);
       const avatarPreviewURL = s.oauthAvatarPreviewURL;
       const authenticatedState = {
@@ -357,7 +359,7 @@
       context.setState(authenticatedState, () => {
         context.revokeRegistrationAvatarPreview(avatarPreviewURL);
         if (environment && environment.history) {
-          environment.history.replaceState({}, '', '/');
+          environment.history.replaceState({}, '', next);
         }
         context.startAuthenticatedRealtime(authGeneration);
         if (dependencies.navigation) dependencies.navigation.applyCurrent();

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -117,23 +119,35 @@ func TestOAuthStateIsConsumedBeforeProviderErrorOrMissingCode(t *testing.T) {
 		{name: "missing code", want: service.ErrOAuthCodeMissing},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			if _, err := fixture.auth.StartOAuth(ctx, "github", "/groups"); err != nil {
+			browserNonce := testOAuthBrowserNonce(testCase.name)
+			if _, err := fixture.auth.StartOAuth(
+				ctx,
+				"github",
+				"/groups",
+				oauth.HashBrowserNonce(browserNonce),
+			); err != nil {
 				t.Fatalf("start OAuth: %v", err)
 			}
 			state := fixture.provider.state
-			_, err := fixture.auth.HandleOAuthCallback(ctx, service.OAuthCallbackInput{
-				Provider:      "github",
-				State:         state,
-				Code:          testCase.code,
-				ProviderError: testCase.providerError,
+			result, err := fixture.auth.HandleOAuthCallback(ctx, service.OAuthCallbackInput{
+				Provider:                     "github",
+				State:                        state,
+				Code:                         testCase.code,
+				ProviderError:                testCase.providerError,
+				BrowserNonce:                 browserNonce,
+				RegistrationBrowserNonceHash: oauth.HashBrowserNonce(testOAuthBrowserNonce("registration")),
 			})
 			if !errors.Is(err, testCase.want) {
 				t.Fatalf("expected %v, got %v", testCase.want, err)
 			}
+			if result == nil || !result.BrowserBindingVerified {
+				t.Fatalf("verified callback error must report browser binding: %+v", result)
+			}
 			_, err = fixture.auth.HandleOAuthCallback(ctx, service.OAuthCallbackInput{
-				Provider: "github",
-				State:    state,
-				Code:     "valid-code",
+				Provider:     "github",
+				State:        state,
+				Code:         "valid-code",
+				BrowserNonce: browserNonce,
 			})
 			if !errors.Is(err, service.ErrOAuthStateInvalid) {
 				t.Fatalf("expected consumed state error, got %v", err)
@@ -142,16 +156,115 @@ func TestOAuthStateIsConsumedBeforeProviderErrorOrMissingCode(t *testing.T) {
 	}
 }
 
+func TestOAuthBrowserBindingConsumesMismatchedStateAndProtectsRegistration(t *testing.T) {
+	fixture := newOAuthFixture(t, nil)
+	ctx := context.Background()
+	stateNonce := testOAuthBrowserNonce("bound-state")
+	stateHash := oauth.HashBrowserNonce(stateNonce)
+	if _, err := fixture.auth.StartOAuth(ctx, "github", "/groups", stateHash); err != nil {
+		t.Fatalf("start OAuth: %v", err)
+	}
+	state := fixture.provider.state
+	var payload string
+	if err := fixture.db.QueryRow(`SELECT payload FROM auth_flows WHERE token = ?`, state).Scan(&payload); err != nil {
+		t.Fatalf("read state payload: %v", err)
+	}
+	if strings.Contains(payload, stateNonce) || !strings.Contains(payload, stateHash) {
+		t.Fatalf("state payload must contain only nonce hash: %q", payload)
+	}
+
+	result, err := fixture.auth.HandleOAuthCallback(ctx, service.OAuthCallbackInput{
+		Provider:                     "github",
+		State:                        state,
+		Code:                         "valid-code",
+		BrowserNonce:                 testOAuthBrowserNonce("wrong-browser"),
+		RegistrationBrowserNonceHash: oauth.HashBrowserNonce(testOAuthBrowserNonce("registration")),
+	})
+	if result != nil || !errors.Is(err, service.ErrOAuthStateInvalid) {
+		t.Fatalf("mismatched browser callback: result=%+v err=%v", result, err)
+	}
+	if _, err := sqlite.NewAuthFlowRepo(fixture.db).GetByToken(ctx, state); !errors.Is(err, repo.ErrNotFound) {
+		t.Fatalf("mismatched callback did not consume state: %v", err)
+	}
+
+	stateNonce = testOAuthBrowserNonce("second-state")
+	registrationNonce := testOAuthBrowserNonce("bound-registration")
+	if _, err := fixture.auth.StartOAuth(
+		ctx,
+		"github",
+		"/groups",
+		oauth.HashBrowserNonce(stateNonce),
+	); err != nil {
+		t.Fatalf("restart OAuth: %v", err)
+	}
+	callback, err := fixture.auth.HandleOAuthCallback(ctx, service.OAuthCallbackInput{
+		Provider:                     "github",
+		State:                        fixture.provider.state,
+		Code:                         "valid-code",
+		BrowserNonce:                 stateNonce,
+		RegistrationBrowserNonceHash: oauth.HashBrowserNonce(registrationNonce),
+	})
+	if err != nil {
+		t.Fatalf("bound callback: %v", err)
+	}
+	var registrationPayload string
+	if err := fixture.db.QueryRow(
+		`SELECT payload FROM auth_flows WHERE token = ?`,
+		callback.RegistrationToken,
+	).Scan(&registrationPayload); err != nil {
+		t.Fatalf("read registration payload: %v", err)
+	}
+	if strings.Contains(registrationPayload, registrationNonce) ||
+		!strings.Contains(registrationPayload, oauth.HashBrowserNonce(registrationNonce)) {
+		t.Fatalf("registration payload must contain only nonce hash: %q", registrationPayload)
+	}
+	if _, err := fixture.auth.OAuthRegistrationPreview(
+		ctx,
+		callback.RegistrationToken,
+		testOAuthBrowserNonce("foreign-registration"),
+	); !errors.Is(err, service.ErrOAuthFlowExpired) {
+		t.Fatalf("foreign preview error=%v", err)
+	}
+	if _, err := fixture.auth.OAuthRegistrationPreview(
+		ctx,
+		callback.RegistrationToken,
+		registrationNonce,
+	); err != nil {
+		t.Fatalf("foreign preview consumed flow: %v", err)
+	}
+	if _, err := fixture.auth.CompleteOAuthRegistration(
+		ctx,
+		callback.RegistrationToken,
+		service.CompleteOAuthRegistrationInput{
+			FirstName: "OAuth", LastName: "User", DateOfBirth: "01-01-1990",
+		},
+		testOAuthBrowserNonce("foreign-registration"),
+	); !errors.Is(err, service.ErrOAuthFlowExpired) {
+		t.Fatalf("foreign completion error=%v", err)
+	}
+	if _, err := fixture.auth.OAuthRegistrationPreview(
+		ctx,
+		callback.RegistrationToken,
+		registrationNonce,
+	); err != nil {
+		t.Fatalf("foreign completion consumed flow: %v", err)
+	}
+}
+
 func TestOAuthRegistrationCompletionAndExistingIdentityLogin(t *testing.T) {
 	fixture := newOAuthFixture(t, nil)
 	ctx := context.Background()
-	if _, err := fixture.auth.StartOAuth(ctx, "github", "/groups"); err != nil {
+	stateNonce := testOAuthBrowserNonce("state")
+	registrationNonce := testOAuthBrowserNonce("registration")
+	if _, err := fixture.auth.StartOAuth(ctx, "github", "/groups", oauth.HashBrowserNonce(stateNonce)); err != nil {
 		t.Fatalf("start OAuth: %v", err)
 	}
 	callback, err := fixture.auth.HandleOAuthCallback(ctx, service.OAuthCallbackInput{
-		Provider: "github",
-		State:    fixture.provider.state,
-		Code:     "valid-code",
+		Provider:                     "github",
+		State:                        fixture.provider.state,
+		Code:                         "valid-code",
+		BrowserNonce:                 stateNonce,
+		RegistrationBrowserNonceHash: oauth.HashBrowserNonce(registrationNonce),
 	})
 	if err != nil {
 		t.Fatalf("OAuth callback: %v", err)
@@ -160,7 +273,7 @@ func TestOAuthRegistrationCompletionAndExistingIdentityLogin(t *testing.T) {
 		t.Fatalf("unexpected callback result: %+v", callback)
 	}
 
-	preview, err := fixture.auth.OAuthRegistrationPreview(ctx, callback.RegistrationToken)
+	preview, err := fixture.auth.OAuthRegistrationPreview(ctx, callback.RegistrationToken, registrationNonce)
 	if err != nil {
 		t.Fatalf("preview flow: %v", err)
 	}
@@ -174,10 +287,11 @@ func TestOAuthRegistrationCompletionAndExistingIdentityLogin(t *testing.T) {
 		ctx,
 		callback.RegistrationToken,
 		service.CompleteOAuthRegistrationInput{FirstName: "Missing", LastName: "Date"},
+		registrationNonce,
 	); !errors.Is(err, service.ErrInvalidInput) {
 		t.Fatalf("expected validation error, got %v", err)
 	}
-	if _, err := fixture.auth.OAuthRegistrationPreview(ctx, callback.RegistrationToken); err != nil {
+	if _, err := fixture.auth.OAuthRegistrationPreview(ctx, callback.RegistrationToken, registrationNonce); err != nil {
 		t.Fatalf("validation error consumed flow: %v", err)
 	}
 
@@ -189,14 +303,15 @@ func TestOAuthRegistrationCompletionAndExistingIdentityLogin(t *testing.T) {
 			LastName:    "User",
 			DateOfBirth: "01-02-1990",
 		},
+		registrationNonce,
 	)
 	if err != nil {
 		t.Fatalf("complete OAuth registration: %v", err)
 	}
-	if result.User.Email != "github@example.com" || result.Session == nil {
+	if result.Auth.User.Email != "github@example.com" || result.Auth.Session == nil || result.Next != "/groups" {
 		t.Fatalf("unexpected auth result: %+v", result)
 	}
-	if _, err := fixture.auth.OAuthRegistrationPreview(ctx, callback.RegistrationToken); !errors.Is(err, service.ErrOAuthFlowExpired) {
+	if _, err := fixture.auth.OAuthRegistrationPreview(ctx, callback.RegistrationToken, registrationNonce); !errors.Is(err, service.ErrOAuthFlowExpired) {
 		t.Fatalf("expected consumed registration flow, got %v", err)
 	}
 
@@ -204,18 +319,20 @@ func TestOAuthRegistrationCompletionAndExistingIdentityLogin(t *testing.T) {
 	fixture.provider.identity.Email = "new-verified@example.com"
 	fixture.provider.identity.Username = "renamed"
 	fixture.provider.mu.Unlock()
-	if _, err := fixture.auth.StartOAuth(ctx, "github", "/notifications"); err != nil {
+	loginNonce := testOAuthBrowserNonce("login")
+	if _, err := fixture.auth.StartOAuth(ctx, "github", "/notifications", oauth.HashBrowserNonce(loginNonce)); err != nil {
 		t.Fatalf("restart OAuth: %v", err)
 	}
 	login, err := fixture.auth.HandleOAuthCallback(ctx, service.OAuthCallbackInput{
-		Provider: "github",
-		State:    fixture.provider.state,
-		Code:     "valid-code",
+		Provider:     "github",
+		State:        fixture.provider.state,
+		Code:         "valid-code",
+		BrowserNonce: loginNonce,
 	})
 	if err != nil {
 		t.Fatalf("existing identity callback: %v", err)
 	}
-	if login.Auth == nil || login.Auth.User.ID != result.User.ID || login.RegistrationToken != "" {
+	if login.Auth == nil || login.Auth.User.ID != result.Auth.User.ID || login.RegistrationToken != "" {
 		t.Fatalf("existing identity did not reuse user: %+v", login)
 	}
 	var providerEmail, username string
@@ -243,13 +360,15 @@ func TestOAuthEmailCollisionDoesNotLinkOrCreateUser(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("register local account: %v", err)
 	}
-	if _, err := fixture.auth.StartOAuth(ctx, "github", "/"); err != nil {
+	browserNonce := testOAuthBrowserNonce("collision")
+	if _, err := fixture.auth.StartOAuth(ctx, "github", "/", oauth.HashBrowserNonce(browserNonce)); err != nil {
 		t.Fatalf("start OAuth: %v", err)
 	}
 	_, err := fixture.auth.HandleOAuthCallback(ctx, service.OAuthCallbackInput{
-		Provider: "github",
-		State:    fixture.provider.state,
-		Code:     "valid-code",
+		Provider:     "github",
+		State:        fixture.provider.state,
+		Code:         "valid-code",
+		BrowserNonce: browserNonce,
 	})
 	if !errors.Is(err, service.ErrOAuthEmailAlreadyRegistered) {
 		t.Fatalf("expected email collision, got %v", err)
@@ -268,13 +387,17 @@ func TestOAuthEmailCollisionDoesNotLinkOrCreateUser(t *testing.T) {
 func TestOAuthCompletionRollbackRestoresFlowAndRemovesAvatar(t *testing.T) {
 	fixture := newOAuthFixture(t, nil)
 	ctx := context.Background()
-	if _, err := fixture.auth.StartOAuth(ctx, "github", "/"); err != nil {
+	stateNonce := testOAuthBrowserNonce("rollback-state")
+	registrationNonce := testOAuthBrowserNonce("rollback-registration")
+	if _, err := fixture.auth.StartOAuth(ctx, "github", "/", oauth.HashBrowserNonce(stateNonce)); err != nil {
 		t.Fatalf("start OAuth: %v", err)
 	}
 	callback, err := fixture.auth.HandleOAuthCallback(ctx, service.OAuthCallbackInput{
-		Provider: "github",
-		State:    fixture.provider.state,
-		Code:     "valid-code",
+		Provider:                     "github",
+		State:                        fixture.provider.state,
+		Code:                         "valid-code",
+		BrowserNonce:                 stateNonce,
+		RegistrationBrowserNonceHash: oauth.HashBrowserNonce(registrationNonce),
 	})
 	if err != nil {
 		t.Fatalf("OAuth callback: %v", err)
@@ -307,11 +430,12 @@ func TestOAuthCompletionRollbackRestoresFlowAndRemovesAvatar(t *testing.T) {
 				Reader:       bytes.NewReader(png),
 			},
 		},
+		registrationNonce,
 	)
 	if result != nil || !errors.Is(err, errForcedCommitFailure) {
 		t.Fatalf("expected forced rollback, result=%+v err=%v", result, err)
 	}
-	if _, err := fixture.auth.OAuthRegistrationPreview(ctx, callback.RegistrationToken); err != nil {
+	if _, err := fixture.auth.OAuthRegistrationPreview(ctx, callback.RegistrationToken, registrationNonce); err != nil {
 		t.Fatalf("rollback consumed registration flow: %v", err)
 	}
 	files, err := os.ReadDir(filepath.Join(fixture.root, "uploads"))
@@ -330,4 +454,10 @@ func mustOAuthRegistry(t *testing.T, provider oauth.Provider) *oauth.Registry {
 		t.Fatalf("new OAuth registry: %v", err)
 	}
 	return registry
+}
+
+func testOAuthBrowserNonce(seed string) string {
+	value := make([]byte, oauth.BrowserNonceBytes)
+	copy(value, []byte(seed))
+	return base64.RawURLEncoding.EncodeToString(value)
 }

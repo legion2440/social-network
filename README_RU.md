@@ -224,8 +224,9 @@ Browser-приложение не организовано как обычное
 ## 🔐 Безопасность и контроль доступа
 
 - пароли хранятся как bcrypt hashes;
-- GitHub OAuth state и registration flow случайны, хранятся на сервере, одноразовые и имеют TTL;
+- GitHub OAuth state и registration flow случайны, хранятся на сервере, одноразовые, имеют TTL и привязаны к одному браузеру отдельной HttpOnly nonce cookie; в БД сохраняется только её SHA-256 hash;
 - GitHub email принимается только из `/user/emails` с признаком verified; provider access token не сохраняется;
+- завершение OAuth registration требует точного same-origin `Origin`/Fetch Metadata и сохраняет только проверенный относительный маршрут `next`;
 - session token передаётся через HttpOnly, SameSite=Lax cookie;
 - Docker backend не публикуется на host;
 - поля и контент приватного профиля доступны только владельцу и accepted followers; custom avatar виден авторизованным пользователям;
@@ -430,6 +431,8 @@ Backend environment variables:
 | `SOCIAL_NETWORK_UPLOAD_DIR`           | `var/uploads`           | каталог uploaded files             |
 | `SOCIAL_NETWORK_FRONTEND_DIR`         | `../frontend/dist`      | generated local static frontend    |
 | `SOCIAL_NETWORK_COOKIE_SECURE`        | `false`                 | Secure-атрибут session cookie      |
+| `SOCIAL_NETWORK_PUBLIC_ORIGIN`        | пусто                   | canonical public origin для OAuth-проверок |
+| `SOCIAL_NETWORK_TRUST_PROXY`          | `false`                 | доверять полностью валидной цепочке `X-Forwarded-For` |
 | `SOCIAL_NETWORK_GITHUB_CLIENT_ID`     | пусто                   | client ID приложения GitHub OAuth  |
 | `SOCIAL_NETWORK_GITHUB_CLIENT_SECRET` | пусто                   | client secret приложения GitHub OAuth |
 | `SOCIAL_NETWORK_GITHUB_REDIRECT_URL`  | пусто                   | абсолютный callback URL GitHub OAuth |
@@ -447,6 +450,14 @@ GitHub OAuth выключен, когда пусты все три GitHub-пер
 Compose скопируйте `.env.example` в `.env`, заполните три значения и укажите тот
 же callback в GitHub OAuth App. Go-приложение само `.env` не читает:
 подстановку выполняет Compose. Реальный `.env` игнорируется Git.
+
+Redirect URL должен указывать строго на `/api/auth/oauth/github/callback`. Его
+нормализованные scheme, hostname и effective port должны совпадать с
+`SOCIAL_NETWORK_PUBLIC_ORIGIN`; если эта переменная пуста, origin выводится из
+проверенного redirect URL. Compose включает `SOCIAL_NETWORK_TRUST_PROXY`, потому
+что backend доступен только через Caddy в private network. Не включайте этот режим,
+если клиенты могут подключаться к backend напрямую. При изменении
+`SOCIAL_NETWORK_PORT` также обновите public origin и GitHub redirect URL.
 
 ## 🧪 Локальная разработка и тесты
 

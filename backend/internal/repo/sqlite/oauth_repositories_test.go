@@ -122,6 +122,43 @@ func TestAuthFlowTakeIsOneTimeAndRollbackSafe(t *testing.T) {
 	}
 }
 
+func TestAuthFlowDeleteExpiredKeepsActiveFlows(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "oauth-flow-cleanup.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+
+	repository := NewAuthFlowRepo(db)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	for _, flow := range []*domain.AuthFlow{
+		{
+			Token: "expired", Kind: "oauth_state", Provider: "github", Payload: "{}",
+			CreatedAt: now.Add(-time.Hour), ExpiresAt: now,
+		},
+		{
+			Token: "active", Kind: "oauth_registration", Provider: "github", Payload: "{}",
+			CreatedAt: now, ExpiresAt: now.Add(time.Second),
+		},
+	} {
+		if err := repository.Create(ctx, flow); err != nil {
+			t.Fatalf("create flow %q: %v", flow.Token, err)
+		}
+	}
+
+	deleted, err := repository.DeleteExpired(ctx, now)
+	if err != nil || deleted != 1 {
+		t.Fatalf("delete expired flows: deleted=%d err=%v", deleted, err)
+	}
+	if _, err := repository.GetByToken(ctx, "expired"); !errors.Is(err, repo.ErrNotFound) {
+		t.Fatalf("expired flow still exists: %v", err)
+	}
+	if _, err := repository.GetByToken(ctx, "active"); err != nil {
+		t.Fatalf("active flow was removed: %v", err)
+	}
+}
+
 func seedOAuthUser(t *testing.T, db *sql.DB, id int64, email string) {
 	t.Helper()
 	_, err := db.Exec(`

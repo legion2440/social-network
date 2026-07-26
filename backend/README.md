@@ -70,7 +70,7 @@ internal/app
 | `internal/config` | environment parsing and defaults |
 | `internal/domain` | entities and enums |
 | `internal/http` | routing, auth middleware, strict parsing, responses |
-| `internal/oauth` | provider registry and GitHub OAuth HTTP client |
+| `internal/oauth` | provider registry, GitHub client, browser nonce and origin helpers |
 | `internal/service` | business rules, authorization, transactions |
 | `internal/repo` | repository and transaction interfaces |
 | `internal/repo/sqlite` | SQLite implementations and embedded migrations |
@@ -273,6 +273,13 @@ All three `SOCIAL_NETWORK_GITHUB_CLIENT_ID`,
 set, OAuth is disabled; a partial configuration is a startup error. The Go
 application reads process environment only and does not load `.env`.
 
+`SOCIAL_NETWORK_PUBLIC_ORIGIN` is optional and canonicalized with an effective
+port. When set, it must match the redirect URL origin; otherwise it is derived
+from that URL. The redirect path must be exactly
+`/api/auth/oauth/github/callback`. `SOCIAL_NETWORK_TRUST_PROXY` defaults to
+`false`; enable it only when the backend cannot be reached except through the
+trusted reverse proxy. Compose satisfies that boundary and enables it.
+
 The callback atomically consumes a ten-minute state before handling provider
 errors or a missing code. GitHub `/user/emails` is always queried and only a
 verified email is accepted. An existing identity is found solely by
@@ -280,13 +287,23 @@ verified email is accepted. An existing identity is found solely by
 metadata is refreshed. A new identity whose verified email already belongs to a
 local account is rejected without linking or merging.
 
+Each start creates a host-only `social_network_oauth_nonce` HttpOnly,
+SameSite=Lax cookie and persists only its SHA-256 hash in the state payload. The
+callback consumes state even when browser binding fails. A successful new-user
+callback rotates the nonce into the registration flow; other verified callback
+outcomes clear it. One browser intentionally supports one active OAuth chain.
+
 New identities receive a thirty-minute one-time registration flow. Its GET
 endpoint returns only a safe preview. Completion accepts the normal name, birth
 date, optional nickname/about, and optional avatar fields, but never an email or
 password. User, identity, avatar metadata, and session are created in one
 transaction; rollback leaves the flow available and removes a staged/finalized
 avatar. A random generated password is stored only as a bcrypt hash. GitHub
-access tokens and avatars are not persisted.
+access tokens and avatars are not persisted. Completion requires the configured
+same origin through `Origin` and `Sec-Fetch-Site`, rechecks browser binding
+before and inside the transaction, returns the validated `next`, and clears the
+nonce only after commit. Expired flows are deleted opportunistically with a
+race-safe one-minute cleanup throttle.
 
 ## 👤 Profiles and followers
 
@@ -611,7 +628,7 @@ The Hub stores only `SHA-256(raw session token)`. Logout, unfollow, and group le
 
 - `401`: missing or invalid session;
 - `400`: malformed ID or invalid input;
-- `403`: existing but forbidden resource;
+- `403`: existing but forbidden resource or rejected cross-origin OAuth completion;
 - `404`: absent or intentionally hidden resource;
 - `405`: wrong method with `Allow`;
 - `409`: stale or conflicting transition;
