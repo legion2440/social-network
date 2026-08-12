@@ -1,0 +1,54 @@
+{
+  "name": "social-network-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cross-platform Electron client for the social-network project",
+  "main": "src/main.cjs",
+  "scripts": {
+    "frontend:build": "npm --prefix ../frontend run build",
+    "dev": "npm run frontend:build && electron .",
+    "start": "npm run dev",
+    "test": "node --test test/*.test.cjs",
+    "dist": "npm run frontend:build && electron-builder --publish never",
+    "dist:win": "npm run frontend:build && electron-builder --win nsis --publish never",
+    "dist:linux": "npm run frontend:build && electron-builder --linux AppImage --publish never",
+    "dist:mac": "npm run frontend:build && electron-builder --mac dmg --publish never"
+  },
+  "devDependencies": {
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.legion2440.loop",
+    "productName": "Loop",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../frontend/dist",
+        "to": "frontend-dist"
+      }
+    ],
+    "win": {
+      "target": ["nsis"],
+      "artifactName": "Loop-${version}-Setup.${ext}"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Network",
+      "artifactName": "Loop-${version}.${ext}"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.social-networking",
+      "artifactName": "Loop-${version}.${ext}"
+    }
+  }
+}
