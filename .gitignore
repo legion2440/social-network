@@ -1,3 +1,5 @@
 frontend/dist/
+desktop/node_modules/
+desktop/release/
 .env
 !.env.example

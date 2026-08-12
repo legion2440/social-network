@@ -1,0 +1,77 @@
+name: Desktop builds
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "frontend/**"
+      - ".github/workflows/desktop-build.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "desktop/**"
+      - "frontend/**"
+      - ".github/workflows/desktop-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            script: dist:win
+            artifact: loop-windows
+            artifact_path: desktop/release/*Setup.exe
+          - name: Linux
+            os: ubuntu-latest
+            script: dist:linux
+            artifact: loop-linux
+            artifact_path: desktop/release/*.AppImage
+          - name: macOS
+            os: macos-latest
+            script: dist:mac
+            artifact: loop-macos
+            artifact_path: desktop/release/*.dmg
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Test web frontend
+        working-directory: frontend
+        run: npm test
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm install --no-audit --no-fund
+
+      - name: Test desktop layer
+        working-directory: desktop
+        run: npm test
+
+      - name: Build installer
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run ${{ matrix.script }}
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
