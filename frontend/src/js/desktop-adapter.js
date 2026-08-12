@@ -4,6 +4,7 @@
   const desktop = root && root.loopDesktop;
   if (!desktop || desktop.isDesktop !== true) return;
 
+  const searchEngine = root.LoopDesktopSearch || null;
   const OFFLINE_MESSAGE = 'No internet connection. You are offline.';
   const NativeWebSocket = root.WebSocket;
   const sockets = new Set();
@@ -131,11 +132,12 @@
       '#loop-desktop-offline{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:2147483000;',
       'background:#8d2430;color:#fff;padding:8px 14px;border-radius:999px;font:600 13px/1.2 system-ui,sans-serif;',
       'box-shadow:0 8px 26px rgba(0,0,0,.18)}',
-      '#loop-desktop-search{display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border,#ddd);',
-      'background:var(--surface,#fff)}',
-      '#loop-desktop-search input{flex:1;min-width:0;border:1px solid var(--border,#d6d6de);background:var(--surface2,#f6f6f8);',
+      '#loop-desktop-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 8px;align-items:center;',
+      'padding:8px 12px;border-bottom:1px solid var(--border,#ddd);background:var(--surface,#fff)}',
+      '#loop-desktop-search input{min-width:0;border:1px solid var(--border,#d6d6de);background:var(--surface2,#f6f6f8);',
       'color:inherit;border-radius:10px;padding:8px 10px;font:inherit;outline:none}',
       '#loop-desktop-search span{font-size:12px;color:var(--muted,#777);white-space:nowrap}',
+      '#loop-desktop-search-help{grid-column:1/-1;font-size:11px;color:var(--muted,#777);line-height:1.3}',
       '#loop-desktop-toast{position:fixed;right:18px;bottom:18px;z-index:2147483000;background:#8d2430;color:#fff;',
       'max-width:340px;padding:10px 14px;border-radius:12px;font:600 13px/1.35 system-ui,sans-serif;',
       'box-shadow:0 10px 28px rgba(0,0,0,.22)}'
@@ -189,29 +191,40 @@
       const count = document.createElement('span');
       count.id = 'loop-desktop-search-count';
       count.textContent = 'Search messages';
+      const help = document.createElement('div');
+      help.id = 'loop-desktop-search-help';
+      help.textContent = 'Operators: +include  -exclude  ~fuzzy  =10  !=10  >10  <10';
       input.addEventListener('input', event => {
         searchQuery = String(event.target.value || '');
         applySearch();
       });
-      search.append(input, count);
+      search.append(input, count, help);
       chatHeader.insertAdjacentElement('afterend', search);
     }
     applySearch();
   }
 
+  function messageMatches(text, query) {
+    if (searchEngine && typeof searchEngine.matchesMessage === 'function') {
+      return searchEngine.matchesMessage(text, query);
+    }
+    const needle = String(query || '').trim().toLocaleLowerCase();
+    return !needle || String(text || '').toLocaleLowerCase().includes(needle);
+  }
+
   function applySearch() {
-    const needle = searchQuery.trim().toLocaleLowerCase();
+    const query = searchQuery.trim();
     const rows = Array.from(document.querySelectorAll('.ui-054 .ui-058, .ui-054 .ui-063'));
     let matches = 0;
     rows.forEach(row => {
       const bubble = row.querySelector('.ui-059, .ui-066');
-      const text = String(bubble && bubble.textContent || '').toLocaleLowerCase();
-      const visible = !needle || text.includes(needle);
+      const text = String(bubble && bubble.textContent || '');
+      const visible = messageMatches(text, query);
       row.style.display = visible ? '' : 'none';
-      if (needle && visible) matches += 1;
+      if (query && visible) matches += 1;
     });
     const count = document.getElementById('loop-desktop-search-count');
-    const nextText = needle ? (matches + (matches === 1 ? ' match' : ' matches')) : 'Search messages';
+    const nextText = query ? (matches + (matches === 1 ? ' match' : ' matches')) : 'Search messages';
     if (count && count.textContent !== nextText) count.textContent = nextText;
   }
 
@@ -282,9 +295,24 @@
     if (online()) refreshCurrentUser();
   });
 
+  if (typeof desktop.onOAuthComplete === 'function') {
+    desktop.onOAuthComplete(() => {
+      cachedUserID = 0;
+      currentUserID = 0;
+      root.location.reload();
+    });
+  }
+
   document.addEventListener('click', event => {
     const button = event.target && event.target.closest ? event.target.closest('button') : null;
     if (!button) return;
+
+    if (button.classList.contains('oauth-github-button') && typeof desktop.startGitHubOAuth === 'function') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      desktop.startGitHubOAuth().catch(() => {});
+      return;
+    }
 
     if (button.classList.contains('ui-013') && /register|sign\s*up|create\s+account/i.test(button.textContent || '')) {
       event.preventDefault();
