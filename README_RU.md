@@ -7,6 +7,7 @@
 · [English version](README.md) 
 · [Документация backend](backend/README_RU.md) 
 · [Документация frontend](frontend/README_RU.md)
+· [Desktop-клиент](cross-platform-appimage/README_RU.md)
 
 ## 📋 Оглавление
 
@@ -24,7 +25,7 @@
 - [📚 Документация API](#-документация-api)
 - [🧹 Очистка](#-очистка)
 - [⚠️ Примечания](#️-примечания)
-- [🧑‍💻 Автор](#-автор)
+- [🧑‍💻 Авторы](#-авторы)
 
 ## 🚀 Быстрый запуск
 
@@ -138,8 +139,8 @@ Backend намеренно остаётся приватным внутри Dock
 - follow request к приватному профилю;
 - приглашение в группу;
 - запрос на вступление в группу;
-- создание события в группе.
-- принятая подписка (`follow_started`, реализованный bonus).
+- создание события в группе;
+- принятая подписка (`follow_started`).
 
 Поддерживаются:
 
@@ -405,7 +406,7 @@ Backend runtime image содержит SQLite CLI:
 docker compose exec backend sqlite3 /data/db/social-network.db
 ```
 
-Примеры audit-команд:
+Примеры команд для проверки базы:
 
 ```sql
 .tables
@@ -418,7 +419,7 @@ FROM posts ORDER BY id;
 SELECT post_id, user_id FROM post_selected_users ORDER BY post_id, user_id;
 ```
 
-Raw session tokens намеренно не входят в документированные audit-запросы.
+Raw session tokens намеренно не входят в документированные проверочные запросы.
 
 ## ⚙️ Конфигурация
 
@@ -527,6 +528,8 @@ social-network/
 │   │   └── service/
 │   ├── Dockerfile
 │   └── README.md
+├── desktop/
+├── cross-platform-appimage/
 ├── frontend/
 │   ├── scripts/
 │   ├── src/
@@ -600,9 +603,9 @@ docker volume rm social-network-db social-network-uploads
 - Полные контракты приложения и persistence находятся в `backend/README.md`.
 
 ## 🧑‍💻 Авторы
-Nazar Yestayev (@nyestaye)
-Nurgul Ilyassova (@nilyasso)
-Sultan Yersultan (@syersult)
-Teniz Serikbayev (@tteniz)
-Aiman Zhumabayeva (@azhumaba)
-Aiymgul Gabdullina (@agabdullin)
+Nazar Yestayev (@nyestaye)  
+Nurislam Danbaev (@ndanbaev)  
+Amir Zhakyshev (@azhakysh)  
+Magzhan Tastan (@mtastan)  
+Kuanysh Karimov (@kukarimov)  
+Нұрайдар Мәмбеталы (@nmambetal)

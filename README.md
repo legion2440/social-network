@@ -7,6 +7,7 @@ The application supports public and private profiles, followers, audience-contro
 · [Русская версия](README_RU.md) 
 · [Backend documentation](backend/README.md) 
 · [Frontend documentation](frontend/README.md)
+· [Desktop client](cross-platform-appimage/README.md)
 
 ## 📋 TOC
 
@@ -24,7 +25,7 @@ The application supports public and private profiles, followers, audience-contro
 - [📚 API documentation](#-api-documentation)
 - [🧹 Cleanup](#-cleanup)
 - [⚠️ Notes](#️-notes)
-- [🧑‍💻 Author](#-author)
+- [🧑‍💻 Authors](#-authors)
 
 ## 🚀 Quick start
 
@@ -137,8 +138,8 @@ Persisted notifications are created for the required social events:
 - private-profile follow request;
 - group invitation;
 - group join request;
-- group event creation.
-- accepted follow (`follow_started`, implemented bonus).
+- group event creation;
+- accepted follow (`follow_started`).
 
 Notifications support:
 
@@ -403,7 +404,7 @@ The backend runtime image includes the SQLite CLI:
 docker compose exec backend sqlite3 /data/db/social-network.db
 ```
 
-Example audit commands:
+Example database inspection commands:
 
 ```sql
 .tables
@@ -416,7 +417,7 @@ FROM posts ORDER BY id;
 SELECT post_id, user_id FROM post_selected_users ORDER BY post_id, user_id;
 ```
 
-Raw session tokens are deliberately excluded from documented audit queries.
+Raw session tokens are deliberately excluded from documented inspection queries.
 
 ## ⚙️ Configuration
 
@@ -526,6 +527,8 @@ social-network/
 │   │   └── service/
 │   ├── Dockerfile
 │   └── README.md
+├── desktop/
+├── cross-platform-appimage/
 ├── frontend/
 │   ├── scripts/
 │   ├── src/
@@ -599,9 +602,9 @@ Do not use a global `docker system prune` for project cleanup.
 - The complete application and persistence contracts live in `backend/README.md`.
 
 ## 🧑‍💻 Authors
-Nazar Yestayev (@nyestaye)
-Nurgul Ilyassova (@nilyasso)
-Sultan Yersultan (@syersult)
-Teniz Serikbayev (@tteniz)
-Aiman Zhumabayeva (@azhumaba)
-Aiymgul Gabdullina (@agabdullin)
+Nazar Yestayev (@nyestaye)  
+Nurislam Danbaev (@ndanbaev)  
+Amir Zhakyshev (@azhakysh)  
+Magzhan Tastan (@mtastan)  
+Kuanysh Karimov (@kukarimov)  
+Нұрайдар Мәмбеталы (@nmambetal)
