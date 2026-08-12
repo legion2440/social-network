@@ -13,6 +13,7 @@
   let cachedUserID = 0;
   let searchQuery = '';
   let applyingUI = false;
+  let uiScheduled = false;
 
   function online() {
     return browserOnline && backendOnline;
@@ -150,7 +151,7 @@
       toast.setAttribute('role', 'alert');
       document.body.appendChild(toast);
     }
-    toast.textContent = OFFLINE_MESSAGE;
+    if (toast.textContent !== OFFLINE_MESSAGE) toast.textContent = OFFLINE_MESSAGE;
     clearTimeout(showOfflineToast.timer);
     showOfflineToast.timer = setTimeout(() => {
       if (toast && toast.parentNode) toast.remove();
@@ -210,7 +211,8 @@
       if (needle && visible) matches += 1;
     });
     const count = document.getElementById('loop-desktop-search-count');
-    if (count) count.textContent = needle ? (matches + (matches === 1 ? ' match' : ' matches')) : 'Search messages';
+    const nextText = needle ? (matches + (matches === 1 ? ' match' : ' matches')) : 'Search messages';
+    if (count && count.textContent !== nextText) count.textContent = nextText;
   }
 
   function applyOfflineControls() {
@@ -245,18 +247,29 @@
     }
   }
 
+  function scheduleDesktopUI() {
+    if (uiScheduled) return;
+    uiScheduled = true;
+    const run = () => {
+      uiScheduled = false;
+      applyDesktopUI();
+    };
+    if (typeof root.requestAnimationFrame === 'function') root.requestAnimationFrame(run);
+    else setTimeout(run, 0);
+  }
+
   function setBrowserOnline(value) {
     browserOnline = value === true;
     if (!browserOnline) closeRealtimeSockets();
     desktop.setConnectivity(browserOnline).then(valueFromMain => {
       backendOnline = valueFromMain !== false;
-      applyDesktopUI();
+      scheduleDesktopUI();
       if (online()) refreshCurrentUser();
     }).catch(() => {
       backendOnline = false;
-      applyDesktopUI();
+      scheduleDesktopUI();
     });
-    applyDesktopUI();
+    scheduleDesktopUI();
   }
 
   root.addEventListener('online', () => setBrowserOnline(true));
@@ -265,7 +278,7 @@
   desktop.onNetworkStatus(value => {
     backendOnline = value === true;
     if (!backendOnline) closeRealtimeSockets();
-    applyDesktopUI();
+    scheduleDesktopUI();
     if (online()) refreshCurrentUser();
   });
 
@@ -296,7 +309,7 @@
     showOfflineToast();
   }, true);
 
-  const observer = new MutationObserver(() => applyDesktopUI());
+  const observer = new MutationObserver(() => scheduleDesktopUI());
   function start() {
     observer.observe(document.documentElement, { childList: true, subtree: true });
     applyDesktopUI();
