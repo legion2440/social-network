@@ -8,13 +8,27 @@
   const OFFLINE_MESSAGE = 'No internet connection. You are offline.';
   const NativeWebSocket = root.WebSocket;
   const sockets = new Set();
+  const selectors = {
+    githubAuth: '.oauth-github-button',
+    chatHeader: '[data-loop-chat-header]',
+    messageList: '[data-loop-message-list]',
+    messageRow: '[data-loop-message-row]',
+    messageBody: '[data-loop-message-body]',
+    loadOlder: '[data-loop-load-older]',
+    chatInput: '[data-loop-chat-input]',
+    chatSend: '[data-loop-chat-send]'
+  };
   let browserOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
   let backendOnline = true;
   let currentUserID = 0;
   let cachedUserID = 0;
   let searchQuery = '';
+  let searchGeneration = 0;
+  let searchLoading = false;
   let applyingUI = false;
   let uiScheduled = false;
+  let reconnectReloadScheduled = false;
+  let sawDisconnected = false;
 
   function online() {
     return browserOnline && backendOnline;
@@ -140,7 +154,8 @@
       '#loop-desktop-search-help{grid-column:1/-1;font-size:11px;color:var(--muted,#777);line-height:1.3}',
       '#loop-desktop-toast{position:fixed;right:18px;bottom:18px;z-index:2147483000;background:#8d2430;color:#fff;',
       'max-width:340px;padding:10px 14px;border-radius:12px;font:600 13px/1.35 system-ui,sans-serif;',
-      'box-shadow:0 10px 28px rgba(0,0,0,.22)}'
+      'box-shadow:0 10px 28px rgba(0,0,0,.22)}',
+      '[data-loop-offline-guard="1"]{opacity:.68;cursor:not-allowed}'
     ].join('');
     document.head.appendChild(style);
   }
@@ -174,9 +189,109 @@
     document.body.appendChild(banner);
   }
 
+  function messageMatches(text, query) {
+    if (searchEngine && typeof searchEngine.matchesMessage === 'function') {
+      return searchEngine.matchesMessage(text, query);
+    }
+    const needle = String(query || '').trim().toLocaleLowerCase();
+    return !needle || String(text || '').toLocaleLowerCase().includes(needle);
+  }
+
+  function updateSearchCount(matches) {
+    const count = document.getElementById('loop-desktop-search-count');
+    if (!count) return;
+    const query = searchQuery.trim();
+    let nextText = 'Search messages';
+    if (query) {
+      nextText = matches + (matches === 1 ? ' match' : ' matches');
+      if (searchLoading) nextText += ' · loading history…';
+    }
+    if (count.textContent !== nextText) count.textContent = nextText;
+  }
+
+  function applySearch() {
+    const query = searchQuery.trim();
+    const rows = Array.from(document.querySelectorAll(selectors.messageRow));
+    let matches = 0;
+    rows.forEach(row => {
+      const bubble = row.querySelector(selectors.messageBody);
+      const text = String(bubble && bubble.textContent || '');
+      const visible = messageMatches(text, query);
+      row.style.display = visible ? '' : 'none';
+      if (query && visible) matches += 1;
+    });
+    updateSearchCount(matches);
+  }
+
+  function waitForHistoryPage(button, previousCount, generation) {
+    return new Promise(resolve => {
+      const deadline = Date.now() + 6000;
+      const tick = () => {
+        if (generation !== searchGeneration || !searchQuery.trim()) {
+          resolve(false);
+          return;
+        }
+        const current = document.querySelector(selectors.loadOlder);
+        const count = document.querySelectorAll(selectors.messageRow).length;
+        if (!current || count > previousCount || current !== button) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() >= deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(tick, 60);
+      };
+      setTimeout(tick, 60);
+    });
+  }
+
+  async function loadCompleteHistoryForSearch(generation) {
+    if (searchLoading || !searchQuery.trim()) return;
+    searchLoading = true;
+    applySearch();
+    try {
+      for (let page = 0; page < 100; page += 1) {
+        if (generation !== searchGeneration || !searchQuery.trim()) break;
+        const button = document.querySelector(selectors.loadOlder);
+        if (!button) break;
+        if (button.disabled) {
+          const progressed = await waitForHistoryPage(button, document.querySelectorAll(selectors.messageRow).length, generation);
+          if (!progressed) break;
+          continue;
+        }
+        const previousCount = document.querySelectorAll(selectors.messageRow).length;
+        button.click();
+        const progressed = await waitForHistoryPage(button, previousCount, generation);
+        if (!progressed) break;
+        applySearch();
+      }
+    } finally {
+      if (generation === searchGeneration) {
+        searchLoading = false;
+        applySearch();
+      }
+    }
+  }
+
+  function beginSearch(value) {
+    searchQuery = String(value || '');
+    searchGeneration += 1;
+    searchLoading = false;
+    const generation = searchGeneration;
+    applySearch();
+    if (searchQuery.trim()) loadCompleteHistoryForSearch(generation).catch(() => {
+      if (generation === searchGeneration) {
+        searchLoading = false;
+        applySearch();
+      }
+    });
+  }
+
   function ensureSearch() {
-    const chatHeader = document.querySelector('.ui-050');
-    const messageList = document.querySelector('.ui-054');
+    const chatHeader = document.querySelector(selectors.chatHeader);
+    const messageList = document.querySelector(selectors.messageList);
     if (!chatHeader || !messageList) return;
 
     let search = document.getElementById('loop-desktop-search');
@@ -194,56 +309,33 @@
       const help = document.createElement('div');
       help.id = 'loop-desktop-search-help';
       help.textContent = 'Operators: +include  -exclude  ~fuzzy  =10  !=10  >10  <10';
-      input.addEventListener('input', event => {
-        searchQuery = String(event.target.value || '');
-        applySearch();
-      });
+      input.addEventListener('input', event => beginSearch(event.target.value));
       search.append(input, count, help);
       chatHeader.insertAdjacentElement('afterend', search);
     }
     applySearch();
   }
 
-  function messageMatches(text, query) {
-    if (searchEngine && typeof searchEngine.matchesMessage === 'function') {
-      return searchEngine.matchesMessage(text, query);
-    }
-    const needle = String(query || '').trim().toLocaleLowerCase();
-    return !needle || String(text || '').toLocaleLowerCase().includes(needle);
-  }
-
-  function applySearch() {
-    const query = searchQuery.trim();
-    const rows = Array.from(document.querySelectorAll('.ui-054 .ui-058, .ui-054 .ui-063'));
-    let matches = 0;
-    rows.forEach(row => {
-      const bubble = row.querySelector('.ui-059, .ui-066');
-      const text = String(bubble && bubble.textContent || '');
-      const visible = messageMatches(text, query);
-      row.style.display = visible ? '' : 'none';
-      if (query && visible) matches += 1;
-    });
-    const count = document.getElementById('loop-desktop-search-count');
-    const nextText = query ? (matches + (matches === 1 ? ' match' : ' matches')) : 'Search messages';
-    if (count && count.textContent !== nextText) count.textContent = nextText;
-  }
-
   function applyOfflineControls() {
-    const disabled = !online();
-    document.querySelectorAll('.ui-079, .ui-080').forEach(element => {
-      if (disabled) {
-        if (!element.disabled) element.dataset.loopDesktopDisabled = '1';
-        element.setAttribute('disabled', 'disabled');
-        element.setAttribute('aria-disabled', 'true');
-        element.title = OFFLINE_MESSAGE;
+    const guarded = !online();
+    document.querySelectorAll(selectors.chatInput + ', ' + selectors.chatSend).forEach(element => {
+      if (guarded) {
+        if (element.disabled && element.getAttribute('data-loop-disabled-overridden') !== '1') {
+          element.setAttribute('data-loop-disabled-overridden', '1');
+          element.removeAttribute('disabled');
+        }
+        if (element.getAttribute('aria-disabled') !== 'true') element.setAttribute('aria-disabled', 'true');
+        if (element.getAttribute('data-loop-offline-guard') !== '1') element.setAttribute('data-loop-offline-guard', '1');
+        if (element.title !== OFFLINE_MESSAGE) element.title = OFFLINE_MESSAGE;
         return;
       }
-      element.removeAttribute('aria-disabled');
-      if (element.title === OFFLINE_MESSAGE) element.removeAttribute('title');
-      if (element.dataset.loopDesktopDisabled === '1') {
-        delete element.dataset.loopDesktopDisabled;
-        element.removeAttribute('disabled');
+      if (element.getAttribute('data-loop-disabled-overridden') === '1') {
+        element.setAttribute('disabled', 'disabled');
+        element.removeAttribute('data-loop-disabled-overridden');
       }
+      if (element.getAttribute('data-loop-offline-guard') === '1') element.removeAttribute('data-loop-offline-guard');
+      if (element.getAttribute('aria-disabled') === 'true') element.removeAttribute('aria-disabled');
+      if (element.title === OFFLINE_MESSAGE) element.removeAttribute('title');
     });
   }
 
@@ -271,29 +363,42 @@
     else setTimeout(run, 0);
   }
 
+  function scheduleReconnectReload() {
+    if (reconnectReloadScheduled || !sawDisconnected || !online()) return;
+    reconnectReloadScheduled = true;
+    sawDisconnected = false;
+    setTimeout(() => root.location.reload(), 150);
+  }
+
+  function setBackendOnline(value) {
+    backendOnline = value === true;
+    if (!backendOnline) {
+      sawDisconnected = true;
+      closeRealtimeSockets();
+    }
+    scheduleDesktopUI();
+    if (online()) {
+      refreshCurrentUser();
+      scheduleReconnectReload();
+    }
+  }
+
   function setBrowserOnline(value) {
     browserOnline = value === true;
-    if (!browserOnline) closeRealtimeSockets();
+    if (!browserOnline) {
+      sawDisconnected = true;
+      closeRealtimeSockets();
+    }
     desktop.setConnectivity(browserOnline).then(valueFromMain => {
-      backendOnline = valueFromMain !== false;
-      scheduleDesktopUI();
-      if (online()) refreshCurrentUser();
-    }).catch(() => {
-      backendOnline = false;
-      scheduleDesktopUI();
-    });
+      setBackendOnline(valueFromMain !== false);
+    }).catch(() => setBackendOnline(false));
     scheduleDesktopUI();
   }
 
   root.addEventListener('online', () => setBrowserOnline(true));
   root.addEventListener('offline', () => setBrowserOnline(false));
 
-  desktop.onNetworkStatus(value => {
-    backendOnline = value === true;
-    if (!backendOnline) closeRealtimeSockets();
-    scheduleDesktopUI();
-    if (online()) refreshCurrentUser();
-  });
+  desktop.onNetworkStatus(value => setBackendOnline(value));
 
   if (typeof desktop.onOAuthComplete === 'function') {
     desktop.onOAuthComplete(() => {
@@ -307,21 +412,21 @@
     const button = event.target && event.target.closest ? event.target.closest('button') : null;
     if (!button) return;
 
-    if (button.classList.contains('oauth-github-button') && typeof desktop.startGitHubOAuth === 'function') {
+    if (button.matches(selectors.githubAuth) && typeof desktop.startGitHubOAuth === 'function') {
       event.preventDefault();
       event.stopImmediatePropagation();
       desktop.startGitHubOAuth().catch(() => {});
       return;
     }
 
-    if (button.classList.contains('ui-013') && /register|sign\s*up|create\s+account/i.test(button.textContent || '')) {
+    if (document.querySelector('[data-screen-label="Auth"]') && /register|sign\s*up|create\s+account/i.test(button.textContent || '')) {
       event.preventDefault();
       event.stopImmediatePropagation();
       desktop.openRegistration().catch(() => {});
       return;
     }
 
-    if (!online() && button.classList.contains('ui-080')) {
+    if (!online() && button.matches(selectors.chatSend)) {
       event.preventDefault();
       event.stopImmediatePropagation();
       showOfflineToast();
@@ -331,7 +436,7 @@
   document.addEventListener('keydown', event => {
     if (online() || event.key !== 'Enter') return;
     const target = event.target;
-    if (!target || !target.classList || !target.classList.contains('ui-079')) return;
+    if (!target || !target.matches || !target.matches(selectors.chatInput)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     showOfflineToast();

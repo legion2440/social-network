@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loop server settings</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#292929;background:#f5f3ef}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:28px}.card{width:min(520px,100%);background:#fff;border:1px solid #e7e4df;border-radius:24px;padding:30px;box-shadow:0 18px 55px rgba(30,30,30,.10)}
+.brand{display:flex;align-items:center;gap:12px;font-size:27px;font-weight:750;margin-bottom:26px}.mark{position:relative;width:44px;height:28px}.mark:before,.mark:after{content:"";position:absolute;top:0;width:28px;height:28px;border-radius:50%;background:#5661d8}.mark:before{left:0;opacity:.9}.mark:after{right:0;opacity:.45}
+h1{font-size:25px;margin:0 0 8px}p{margin:0 0 22px;color:#6c6964;line-height:1.45}.label{display:block;font-size:13px;font-weight:700;margin:0 0 7px}.input{width:100%;padding:13px 14px;border:1px solid #d8d4ce;border-radius:12px;font:inherit;outline:none;background:#faf9f7}.input:focus{border-color:#7b83df;box-shadow:0 0 0 3px rgba(86,97,216,.12)}.input[readonly]{color:#777;background:#f2f0ec}.hint{font-size:12px;color:#8b8781;margin-top:7px}.status{min-height:20px;margin-top:14px;font-size:13px}.status.error{color:#a13d49}.status.ok{color:#2f7a5c}.actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}.btn{border:0;border-radius:12px;padding:11px 18px;font:700 14px/1 system-ui;cursor:pointer}.btn.primary{background:#5661d8;color:#fff}.btn.secondary{background:#efede8;color:#45413c}.btn:disabled{opacity:.55;cursor:wait}
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="brand"><span class="mark" aria-hidden="true"></span><span>loop</span></div>
+  <h1 id="title">Connect to your server</h1>
+  <p id="description">Loop needs the address of the social-network server once. You can change it later from the application menu.</p>
+  <form id="form">
+    <label class="label" for="server-url">Server address</label>
+    <input class="input" id="server-url" name="server-url" autocomplete="url" spellcheck="false" placeholder="http://192.168.1.20:8080" required>
+    <div class="hint" id="hint">Use the address that is reachable from this computer or virtual machine.</div>
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+    <div class="actions">
+      <button class="btn secondary" type="button" id="close" hidden>Close</button>
+      <button class="btn primary" type="submit" id="connect">Connect</button>
+    </div>
+  </form>
+</main>
+<script>
+(function(){
+  const api = window.loopSetup;
+  const form = document.getElementById('form');
+  const input = document.getElementById('server-url');
+  const connect = document.getElementById('connect');
+  const close = document.getElementById('close');
+  const status = document.getElementById('status');
+  const title = document.getElementById('title');
+  const description = document.getElementById('description');
+  let locked = false;
+  function setStatus(message, kind){status.textContent=message||'';status.className='status'+(kind?' '+kind:'');}
+  api.getState().then(state=>{
+    input.value = state.serverURL || 'http://127.0.0.1:8080';
+    locked = state.locked === true;
+    input.readOnly = locked;
+    if (state.reason === 'manual') {
+      title.textContent = 'Server settings';
+      description.textContent = locked
+        ? 'This server address is controlled by the SOCIAL_NETWORK_URL environment variable.'
+        : 'Change the server used by Loop. A successful change restarts the application.';
+      close.hidden = false;
+    }
+    if (state.error) setStatus(state.error, 'error');
+    if (locked) {
+      connect.hidden = true;
+      document.getElementById('hint').textContent = 'Change the environment variable and restart Loop to use another server.';
+    }
+  }).catch(()=>setStatus('Could not load server settings.', 'error'));
+  close.addEventListener('click',()=>api.close());
+  form.addEventListener('submit', async event=>{
+    event.preventDefault();
+    if (locked) return;
+    connect.disabled = true;
+    input.disabled = true;
+    setStatus('Checking connection…', '');
+    try {
+      const result = await api.connect(input.value);
+      if (!result || result.ok !== true) {
+        setStatus(result && result.error || 'Could not connect to this server.', 'error');
+        return;
+      }
+      input.value = result.serverURL || input.value;
+      setStatus('Connected.', 'ok');
+    } catch (_error) {
+      setStatus('Could not connect to this server.', 'error');
+    } finally {
+      connect.disabled = false;
+      input.disabled = false;
+      input.readOnly = locked;
+    }
+  });
+})();
+</script>
+</body>
+</html>

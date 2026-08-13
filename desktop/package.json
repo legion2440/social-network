@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Cross-platform Electron client for the social-network project",
+  "author": "Loop contributors",
   "main": "src/main.cjs",
   "scripts": {
     "frontend:build": "npm --prefix ../frontend run build",
@@ -28,6 +29,7 @@
     },
     "files": [
       "src/**/*",
+      "build/**/*",
       "package.json"
     ],
     "extraResources": [

@@ -1,23 +1,32 @@
 'use strict';
 
 const path = require('node:path');
-const { app, BrowserWindow, ipcMain, Notification, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, Notification, shell } = require('electron');
 const { createDesktopServer } = require('./proxy.cjs');
-const { isOriginURL, mirrorSessionCookies } = require('./oauth.cjs');
+const { isAllowedOAuthURL, isOriginURL, mirrorSessionCookies } = require('./oauth.cjs');
+const { loadSettings, normalizeServerURL, probeOrigin, saveSettings } = require('./settings.cjs');
 
 const DEFAULT_ORIGIN = 'http://127.0.0.1:8080';
 const DESKTOP_PARTITION = 'persist:loop';
 let mainWindow = null;
 let oauthWindow = null;
 let oauthPollTimer = null;
+let backendCheckTimer = null;
+let settingsWindow = null;
 let desktopServer = null;
 let localOrigin = '';
+let targetOrigin = '';
+let webOrigin = '';
+let serverSource = 'default';
+let setupReason = 'first-run';
+let setupError = '';
+let firstRunResolve = null;
+let firstRunReject = null;
+let quitting = false;
 
-function normalizedOrigin(value, fallback) {
+function normalizedOrigin(value, fallback = '') {
   try {
-    const parsed = new URL(value || fallback);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return fallback;
-    return parsed.origin;
+    return normalizeServerURL(value, fallback);
   } catch (_error) {
     return fallback;
   }
@@ -41,6 +50,12 @@ function sendNetworkStatus(online) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('desktop:network-status', online === true);
   }
+  if (online && serverSource !== 'env' && targetOrigin) {
+    saveSettings(app.getPath('userData'), {
+      serverURL: targetOrigin,
+      lastSuccessfulAt: new Date().toISOString()
+    }).catch(error => console.warn('desktop settings write failed:', error.message));
+  }
 }
 
 function sendOAuthComplete() {
@@ -62,10 +77,10 @@ function clearOAuthWindow() {
   oauthWindow = null;
 }
 
-async function completeDesktopOAuth(window, targetOrigin) {
+async function completeDesktopOAuth(window, origin) {
   if (!window || window.isDestroyed()) return false;
   const currentURL = window.webContents.getURL();
-  if (!isOriginURL(currentURL, targetOrigin)) return false;
+  if (!isOriginURL(currentURL, origin)) return false;
 
   let authenticated = false;
   try {
@@ -80,7 +95,7 @@ async function completeDesktopOAuth(window, targetOrigin) {
   if (!authenticated) return false;
 
   try {
-    await mirrorSessionCookies(window.webContents.session, targetOrigin, localOrigin);
+    await mirrorSessionCookies(window.webContents.session, origin, localOrigin);
   } catch (error) {
     console.error('desktop OAuth cookie handoff failed:', error);
     return false;
@@ -91,7 +106,7 @@ async function completeDesktopOAuth(window, targetOrigin) {
   return true;
 }
 
-async function startGitHubOAuth(targetOrigin) {
+async function startGitHubOAuth(origin) {
   if (oauthWindow && !oauthWindow.isDestroyed()) {
     oauthWindow.focus();
     return true;
@@ -117,10 +132,12 @@ async function startGitHubOAuth(targetOrigin) {
   oauthWindow = window;
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (isExternalHTTPURL(url)) {
-      window.loadURL(url).catch(() => {});
-    }
+    if (isAllowedOAuthURL(url, origin)) window.loadURL(url).catch(() => {});
     return { action: 'deny' };
+  });
+  window.webContents.on('will-navigate', (event, url) => {
+    if (isAllowedOAuthURL(url, origin)) return;
+    event.preventDefault();
   });
   window.once('ready-to-show', () => window.show());
   window.on('closed', clearOAuthWindow);
@@ -130,14 +147,14 @@ async function startGitHubOAuth(targetOrigin) {
     if (checking || window.isDestroyed()) return;
     checking = true;
     try {
-      await completeDesktopOAuth(window, targetOrigin);
+      await completeDesktopOAuth(window, origin);
     } finally {
       checking = false;
     }
   }, 500);
 
   try {
-    await window.loadURL(targetOrigin + '/api/auth/oauth/github/start?next=/');
+    await window.loadURL(origin + '/api/auth/oauth/github/start?next=/');
     return true;
   } catch (error) {
     if (!window.isDestroyed()) window.close();
@@ -184,11 +201,167 @@ function createWindow() {
   return window;
 }
 
+function createSettingsWindow(reason) {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    setupReason = reason || setupReason;
+    settingsWindow.focus();
+    return settingsWindow;
+  }
+  setupReason = reason || 'manual';
+  const window = new BrowserWindow({
+    width: 620,
+    height: 590,
+    minWidth: 500,
+    minHeight: 520,
+    resizable: true,
+    show: false,
+    title: 'Loop server settings',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'setup-preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true
+    }
+  });
+  settingsWindow = window;
+  window.once('ready-to-show', () => window.show());
+  window.on('closed', () => {
+    settingsWindow = null;
+    if (firstRunResolve && !quitting) {
+      const reject = firstRunReject;
+      firstRunResolve = null;
+      firstRunReject = null;
+      if (reject) reject(new Error('Server setup was cancelled'));
+    }
+  });
+  window.loadFile(path.join(__dirname, 'setup.html')).catch(error => {
+    console.error('desktop server settings failed to load:', error);
+    window.close();
+  });
+  return window;
+}
+
+async function resolveInitialServer() {
+  const envValue = String(process.env.SOCIAL_NETWORK_URL || '').trim();
+  if (envValue) {
+    const origin = normalizeServerURL(envValue);
+    serverSource = 'env';
+    return origin;
+  }
+
+  const saved = await loadSettings(app.getPath('userData'));
+  if (saved && saved.serverURL) {
+    serverSource = 'settings';
+    return saved.serverURL;
+  }
+
+  serverSource = 'settings';
+  setupReason = 'first-run';
+  setupError = '';
+  return new Promise((resolve, reject) => {
+    firstRunResolve = resolve;
+    firstRunReject = reject;
+    createSettingsWindow('first-run');
+  });
+}
+
+function installMenu() {
+  const template = [];
+  if (process.platform === 'darwin') {
+    template.push({
+      label: app.name,
+      submenu: [
+        { label: 'Server Settings…', click: () => createSettingsWindow('manual') },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    });
+  } else {
+    template.push({
+      label: 'Settings',
+      submenu: [
+        { label: 'Server…', click: () => createSettingsWindow('manual') }
+      ]
+    });
+  }
+  template.push({
+    label: 'View',
+    submenu: [
+      { role: 'reload' },
+      { role: 'togglefullscreen' }
+    ]
+  });
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function registerSettingsIPC() {
+  ipcMain.handle('desktop:server-settings:get', async () => {
+    const saved = await loadSettings(app.getPath('userData'));
+    const locked = String(process.env.SOCIAL_NETWORK_URL || '').trim() !== '';
+    return {
+      serverURL: locked
+        ? normalizedOrigin(process.env.SOCIAL_NETWORK_URL, DEFAULT_ORIGIN)
+        : (targetOrigin || saved && saved.serverURL || DEFAULT_ORIGIN),
+      locked,
+      reason: setupReason,
+      error: setupError
+    };
+  });
+
+  ipcMain.handle('desktop:server-settings:connect', async (_event, value) => {
+    if (String(process.env.SOCIAL_NETWORK_URL || '').trim()) {
+      return { ok: false, error: 'Server address is controlled by SOCIAL_NETWORK_URL.' };
+    }
+    let origin;
+    try {
+      origin = normalizeServerURL(value);
+    } catch (error) {
+      return { ok: false, error: error.message || 'Enter a valid server address.' };
+    }
+    const reachable = await probeOrigin(origin);
+    if (!reachable) {
+      setupError = 'Could not reach the social-network server at this address.';
+      return { ok: false, error: setupError };
+    }
+    setupError = '';
+    await saveSettings(app.getPath('userData'), {
+      serverURL: origin,
+      lastSuccessfulAt: new Date().toISOString()
+    });
+    if (firstRunResolve) {
+      const resolve = firstRunResolve;
+      firstRunResolve = null;
+      firstRunReject = null;
+      targetOrigin = origin;
+      if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close();
+      resolve(origin);
+      return { ok: true, serverURL: origin };
+    }
+    if (origin !== targetOrigin) {
+      app.relaunch();
+      app.exit(0);
+    } else if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.close();
+    }
+    return { ok: true, serverURL: origin };
+  });
+
+  ipcMain.handle('desktop:server-settings:close', async () => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close();
+    return true;
+  });
+}
+
 app.setAppUserModelId('com.legion2440.loop');
 
 app.whenReady().then(async () => {
-  const targetOrigin = normalizedOrigin(process.env.SOCIAL_NETWORK_URL, DEFAULT_ORIGIN);
-  const webOrigin = normalizedOrigin(process.env.SOCIAL_NETWORK_WEB_URL, targetOrigin);
+  registerSettingsIPC();
+  installMenu();
+
+  targetOrigin = await resolveInitialServer();
+  webOrigin = normalizedOrigin(process.env.SOCIAL_NETWORK_WEB_URL, targetOrigin);
 
   desktopServer = createDesktopServer({
     distDir: frontendDistPath(),
@@ -200,7 +373,9 @@ app.whenReady().then(async () => {
   localOrigin = listener.origin;
 
   ipcMain.handle('desktop:open-registration', async () => {
-    await shell.openExternal(webOrigin);
+    const url = new URL(webOrigin + '/');
+    url.searchParams.set('register', '1');
+    await shell.openExternal(url.toString());
     return true;
   });
 
@@ -214,13 +389,18 @@ app.whenReady().then(async () => {
     return true;
   });
 
-  ipcMain.handle('desktop:set-connectivity', (_event, online) => {
+  ipcMain.handle('desktop:set-connectivity', async (_event, online) => {
     desktopServer.setClientOnline(online === true);
+    if (online === true) await desktopServer.checkBackend();
     return desktopServer.isOnline();
   });
 
   mainWindow = createWindow();
   await mainWindow.loadURL(localOrigin);
+  desktopServer.checkBackend().catch(() => {});
+  backendCheckTimer = setInterval(() => {
+    if (desktopServer) desktopServer.checkBackend().catch(() => {});
+  }, 3000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -229,7 +409,7 @@ app.whenReady().then(async () => {
     }
   });
 }).catch(error => {
-  console.error(error);
+  if (!quitting) console.error(error);
   app.quit();
 });
 
@@ -238,7 +418,10 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  quitting = true;
+  if (backendCheckTimer) clearInterval(backendCheckTimer);
   if (oauthPollTimer) clearInterval(oauthPollTimer);
   if (oauthWindow && !oauthWindow.isDestroyed()) oauthWindow.destroy();
+  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.destroy();
   if (desktopServer) desktopServer.close().catch(() => {});
 });

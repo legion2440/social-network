@@ -66,8 +66,19 @@ function isOriginURL(value, origin) {
   }
 }
 
+function isAllowedOAuthURL(value, targetOrigin) {
+  try {
+    const parsed = new URL(String(value || ''));
+    if (parsed.origin === normalizedOrigin(targetOrigin)) return true;
+    return parsed.protocol === 'https:' && parsed.hostname.toLowerCase() === 'github.com';
+  } catch (_error) {
+    return false;
+  }
+}
+
 module.exports = {
   cookieForOrigin,
+  isAllowedOAuthURL,
   isOriginURL,
   mirrorSessionCookies,
   normalizedOrigin

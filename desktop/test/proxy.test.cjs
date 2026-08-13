@@ -7,7 +7,16 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { cacheKey, createDesktopServer, safeStaticPath, shouldCache } = require('../src/proxy.cjs');
+const {
+  CACHE_VERSION,
+  PersistentCache,
+  cacheKey,
+  copyResponseHeaders,
+  createDesktopServer,
+  isCacheEntryFresh,
+  safeStaticPath,
+  shouldCache
+} = require('../src/proxy.cjs');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -53,6 +62,7 @@ async function desktopFixture(targetOrigin) {
   const listener = await desktop.listen();
   return {
     desktop,
+    cacheDir,
     origin: listener.origin,
     async cleanup() {
       await desktop.close();
@@ -108,13 +118,13 @@ test('cached API response is available while offline', async () => {
   }
 });
 
-test('successful login seeds offline session cache and rewrites secure cookie attributes', async () => {
+test('successful login seeds offline session cache without persisting session cookies', async () => {
   const user = { id: 7, display_name: 'Desktop User' };
   const upstream = http.createServer((req, res) => {
     if (req.url === '/api/auth/login' && req.method === 'POST') {
       req.resume();
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Set-Cookie', 'session=abc; Path=/; Secure; SameSite=None; Domain=example.com');
+      res.setHeader('Set-Cookie', 'social_network_session=SECRET-TOKEN-123; Path=/; Secure; SameSite=None; Domain=example.com');
       res.end(JSON.stringify(user));
       return;
     }
@@ -137,7 +147,78 @@ test('successful login seeds offline session cache and rewrites secure cookie at
     const me = await request(fixture.origin, '/api/auth/me');
     assert.equal(me.status, 200);
     assert.equal(me.headers['x-loop-offline'], '1');
+    assert.equal(me.headers['set-cookie'], undefined);
     assert.deepEqual(JSON.parse(me.body), user);
+
+    const cachePath = path.join(fixture.cacheDir, 'http-cache.json');
+    let rawCache = '';
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      try { rawCache = await fs.readFile(cachePath, 'utf8'); break; } catch (error) {
+        if (!error || error.code !== 'ENOENT') throw error;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
+    assert.ok(rawCache);
+    assert.doesNotMatch(rawCache, /SECRET-TOKEN-123/);
+    assert.doesNotMatch(rawCache, /set-cookie/i);
+  } finally {
+    await fixture.cleanup();
+    await close(upstream);
+  }
+});
+
+test('legacy cache is sanitized and expired session entries are discarded', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'loop-cache-migration-'));
+  try {
+    await fs.writeFile(path.join(root, 'http-cache.json'), JSON.stringify({
+      version: 1,
+      entries: {
+        'GET /api/auth/me': {
+          status: 200,
+          headers: { 'set-cookie': ['social_network_session=OLD-SECRET'], 'content-type': 'application/json' },
+          body: Buffer.from('{"id":1}').toString('base64'),
+          savedAt: '2020-01-01T00:00:00.000Z'
+        }
+      }
+    }), 'utf8');
+    const cache = new PersistentCache(root);
+    await cache.load();
+    assert.equal(cache.get('GET /api/auth/me'), null);
+    const migrated = JSON.parse(await fs.readFile(path.join(root, 'http-cache.json'), 'utf8'));
+    assert.equal(migrated.version, CACHE_VERSION);
+    assert.deepEqual(migrated.entries, {});
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('response header cache sanitization strips authentication material', () => {
+  assert.deepEqual(copyResponseHeaders({
+    'content-type': 'application/json',
+    'set-cookie': ['session=secret'],
+    authorization: 'Bearer secret',
+    'www-authenticate': 'Basic realm=test',
+    'proxy-authenticate': 'Basic realm=proxy'
+  }), { 'content-type': 'application/json' });
+});
+
+test('session cache expires after backend session TTL while chat cache lasts longer', () => {
+  const now = Date.parse('2026-08-13T00:00:00.000Z');
+  const twentyFiveHoursAgo = new Date(now - 25 * 60 * 60 * 1000).toISOString();
+  const entry = { savedAt: twentyFiveHoursAgo };
+  assert.equal(isCacheEntryFresh('GET /api/auth/me', entry, now), false);
+  assert.equal(isCacheEntryFresh('GET /api/chats', entry, now), true);
+});
+
+test('backend health check reports recovery after the upstream becomes available', async () => {
+  const upstream = http.createServer((req, res) => {
+    if (req.url === '/api/health') return res.end('{"ok":true}');
+    res.writeHead(404).end();
+  });
+  const targetOrigin = await listen(upstream);
+  const fixture = await desktopFixture(targetOrigin);
+  try {
+    assert.equal(await fixture.desktop.checkBackend(), true);
   } finally {
     await fixture.cleanup();
     await close(upstream);

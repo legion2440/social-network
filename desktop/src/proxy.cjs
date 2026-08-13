@@ -8,7 +8,16 @@ const path = require('node:path');
 const { URL } = require('node:url');
 
 const CACHE_FILE = 'http-cache.json';
+const CACHE_VERSION = 2;
 const MAX_CACHE_BODY = 5 * 1024 * 1024;
+const SESSION_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const MESSAGE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const SENSITIVE_RESPONSE_HEADERS = new Set([
+  'set-cookie',
+  'authorization',
+  'www-authenticate',
+  'proxy-authenticate'
+]);
 
 function mimeType(filePath) {
   switch (path.extname(filePath).toLowerCase()) {
@@ -56,6 +65,39 @@ function safeStaticPath(distDir, requestURL) {
   return candidate;
 }
 
+function copyResponseHeaders(headers) {
+  const result = {};
+  Object.entries(headers || {}).forEach(([name, value]) => {
+    if (value === undefined) return;
+    const lower = name.toLowerCase();
+    if (lower === 'transfer-encoding' || lower === 'connection' || lower === 'content-length') return;
+    if (SENSITIVE_RESPONSE_HEADERS.has(lower)) return;
+    result[name] = value;
+  });
+  return result;
+}
+
+function cacheTTLForKey(key) {
+  return String(key || '') === 'GET /api/auth/me' ? SESSION_CACHE_TTL_MS : MESSAGE_CACHE_TTL_MS;
+}
+
+function isCacheEntryFresh(key, entry, now = Date.now()) {
+  if (!entry || !entry.savedAt) return false;
+  const savedAt = Date.parse(String(entry.savedAt));
+  if (!Number.isFinite(savedAt)) return false;
+  return now - savedAt <= cacheTTLForKey(key);
+}
+
+function sanitizeCacheEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  return {
+    status: Number(entry.status) || 200,
+    headers: copyResponseHeaders(entry.headers || {}),
+    body: String(entry.body || ''),
+    savedAt: String(entry.savedAt || '')
+  };
+}
+
 class PersistentCache {
   constructor(directory) {
     this.directory = directory;
@@ -71,20 +113,36 @@ class PersistentCache {
     try {
       const raw = await fsp.readFile(this.filePath, 'utf8');
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && parsed.entries && typeof parsed.entries === 'object') {
-        this.entries = parsed.entries;
-      }
+      const next = {};
+      let changed = !parsed || parsed.version !== CACHE_VERSION;
+      const source = parsed && parsed.entries && typeof parsed.entries === 'object' ? parsed.entries : {};
+      Object.entries(source).forEach(([key, value]) => {
+        const sanitized = sanitizeCacheEntry(value);
+        if (!sanitized || !isCacheEntryFresh(key, sanitized)) {
+          changed = true;
+          return;
+        }
+        if (JSON.stringify(value && value.headers || {}) !== JSON.stringify(sanitized.headers)) changed = true;
+        next[key] = sanitized;
+      });
+      this.entries = next;
+      if (changed) await this.persist();
     } catch (error) {
       if (error && error.code !== 'ENOENT') console.warn('desktop cache read failed:', error.message);
     }
   }
 
   get(key) {
-    return this.entries[key] || null;
+    const entry = this.entries[key] || null;
+    if (!entry) return null;
+    if (isCacheEntryFresh(key, entry)) return entry;
+    delete this.entries[key];
+    this.persist().catch(() => {});
+    return null;
   }
 
   async set(key, value) {
-    this.entries[key] = value;
+    this.entries[key] = sanitizeCacheEntry(value);
     await this.persist();
   }
 
@@ -94,7 +152,7 @@ class PersistentCache {
   }
 
   async persist() {
-    const snapshot = JSON.stringify({ version: 1, entries: this.entries });
+    const snapshot = JSON.stringify({ version: CACHE_VERSION, entries: this.entries });
     this.writeChain = this.writeChain.then(async () => {
       await fsp.mkdir(this.directory, { recursive: true });
       const tmp = this.filePath + '.tmp';
@@ -105,17 +163,6 @@ class PersistentCache {
     });
     return this.writeChain;
   }
-}
-
-function copyResponseHeaders(headers) {
-  const result = {};
-  Object.entries(headers || {}).forEach(([name, value]) => {
-    if (value === undefined) return;
-    const lower = name.toLowerCase();
-    if (lower === 'transfer-encoding' || lower === 'connection' || lower === 'content-length') return;
-    result[name] = value;
-  });
-  return result;
 }
 
 function rewriteSetCookie(value) {
@@ -164,7 +211,7 @@ function createDesktopServer(options) {
     const entry = cache.get(cacheKey(req.method, req.url));
     if (entry && String(req.method || 'GET').toUpperCase() === 'GET') {
       const body = Buffer.from(entry.body || '', 'base64');
-      res.writeHead(entry.status || 200, Object.assign({}, entry.headers || {}, {
+      res.writeHead(entry.status || 200, Object.assign({}, rewriteResponseHeaders(entry.headers || {}), {
         'Content-Length': String(body.length),
         'X-Loop-Offline': '1'
       }));
@@ -181,6 +228,15 @@ function createDesktopServer(options) {
     res.end(body);
   };
 
+  const upstreamHeaders = headers => {
+    const next = Object.assign({}, headers || {}, {
+      host: target.host,
+      origin: target.origin
+    });
+    if (next.referer) next.referer = target.origin + '/';
+    return next;
+  };
+
   const proxyHTTP = async (req, res) => {
     await cache.load();
     if (!clientOnline) {
@@ -189,19 +245,13 @@ function createDesktopServer(options) {
     }
 
     const pathname = requestPathname(req.url);
-    const headers = Object.assign({}, req.headers, {
-      host: target.host,
-      origin: target.origin
-    });
-    if (headers.referer) headers.referer = target.origin + '/';
-
     const upstream = transport.request({
       protocol: target.protocol,
       hostname: target.hostname,
       port: target.port || undefined,
       method: req.method,
       path: req.url,
-      headers
+      headers: upstreamHeaders(req.headers)
     }, upstreamRes => {
       reportNetwork(true);
       const status = upstreamRes.statusCode || 502;
@@ -288,17 +338,13 @@ function createDesktopServer(options) {
       socket.destroy();
       return;
     }
-    const headers = Object.assign({}, req.headers, {
-      host: target.host,
-      origin: target.origin
-    });
     const upstream = transport.request({
       protocol: target.protocol,
       hostname: target.hostname,
       port: target.port || undefined,
       method: 'GET',
       path: req.url,
-      headers
+      headers: upstreamHeaders(req.headers)
     });
 
     upstream.on('upgrade', (upstreamRes, upstreamSocket, upstreamHead) => {
@@ -331,6 +377,34 @@ function createDesktopServer(options) {
     });
     upstream.end();
   };
+
+  const checkBackend = () => new Promise(resolve => {
+    if (!clientOnline) {
+      if (typeof options.onNetworkStatus === 'function') options.onNetworkStatus(false);
+      resolve(false);
+      return;
+    }
+    const req = transport.request({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port || undefined,
+      method: 'GET',
+      path: '/api/health',
+      headers: { host: target.host, origin: target.origin },
+      timeout: 2500
+    }, res => {
+      const ok = (res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300;
+      reportNetwork(ok);
+      res.resume();
+      res.on('end', () => resolve(ok));
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => {
+      reportNetwork(false);
+      resolve(false);
+    });
+    req.end();
+  });
 
   return {
     async listen() {
@@ -374,6 +448,7 @@ function createDesktopServer(options) {
     isOnline() {
       return effectiveOnline();
     },
+    checkBackend,
     async close() {
       if (!server) return;
       const active = server;
@@ -384,8 +459,12 @@ function createDesktopServer(options) {
 }
 
 module.exports = {
+  CACHE_VERSION,
+  PersistentCache,
   cacheKey,
+  copyResponseHeaders,
   createDesktopServer,
+  isCacheEntryFresh,
   safeStaticPath,
   shouldCache
 };

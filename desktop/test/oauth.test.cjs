@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   cookieForOrigin,
+  isAllowedOAuthURL,
   isOriginURL,
   mirrorSessionCookies
 } = require('../src/oauth.cjs');
@@ -50,4 +51,11 @@ test('mirrorSessionCookies copies cookies between the configured server and loop
 test('isOriginURL compares normalized URL origins', () => {
   assert.equal(isOriginURL('https://example.com/oauth/complete?flow=1', 'https://example.com'), true);
   assert.equal(isOriginURL('https://github.com/login/oauth', 'https://example.com'), false);
+});
+
+test('OAuth navigation is restricted to GitHub and the configured server', () => {
+  assert.equal(isAllowedOAuthURL('https://github.com/login/oauth/authorize', 'https://social.example'), true);
+  assert.equal(isAllowedOAuthURL('https://social.example/api/auth/oauth/github/callback', 'https://social.example'), true);
+  assert.equal(isAllowedOAuthURL('https://evil.example/phish', 'https://social.example'), false);
+  assert.equal(isAllowedOAuthURL('http://github.com/login', 'https://social.example'), false);
 });

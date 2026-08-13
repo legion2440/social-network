@@ -31,7 +31,7 @@
         <div class="chat-panel ui-048">
           <sc-if value="{{chatHasNoActive}}" hint-placeholder-val="{{false}}"><div class="ui-049">No conversations yet.<br>Open a profile or a group to start one.</div></sc-if>
           <sc-if value="{{chatHasActive}}" hint-placeholder-val="{{true}}">
-          <div class="ui-050">
+          <div class="ui-050" data-loop-chat-header>
             <button class="chat-back-button" onclick="{{backToChats}}" aria-label="Back to conversations" title="Back to conversations">
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
             </button>
@@ -44,27 +44,27 @@
               <div class="ui-053">{{activeSub}} · {{chatStatus}}</div>
             </div>
           </div>
-          <div class="ui-054" ref="{{msgRef}}">
-            <sc-if value="{{historyHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-055" onclick="{{loadMoreHistory}}" disabled="{{historyLoadMoreDisabled}}">Load older messages</button></sc-if>
+          <div class="ui-054" ref="{{msgRef}}" data-loop-message-list>
+            <sc-if value="{{historyHasMore}}" hint-placeholder-val="{{false}}"><button class="ui-055" data-loop-load-older onclick="{{loadMoreHistory}}" disabled="{{historyLoadMoreDisabled}}">Load older messages</button></sc-if>
             <sc-if value="{{historyLoading}}" hint-placeholder-val="{{false}}"><div class="ui-056">Loading messages…</div></sc-if>
             <sc-if value="{{historyHasError}}" hint-placeholder-val="{{false}}"><div class="ui-057" role="alert">{{historyError}} <button class="ui-034" onclick="{{retryHistory}}">Retry</button></div></sc-if>
             <sc-for list="{{messages}}" as="msg" hint-placeholder-count="4">
               <sc-if value="{{msg.mine}}" hint-placeholder-val="{{false}}">
-                <div class="ui-058">
-                  <div class="ui-059">{{msg.text}}</div>
+                <div class="ui-058" data-loop-message-row>
+                  <div class="ui-059" data-loop-message-body>{{msg.text}}</div>
                   <div class="ui-060">{{msg.time}}</div>
                   <sc-if value="{{msg.hasStatus}}" hint-placeholder-val="{{false}}"><div class="ui-061">{{msg.statusLabel}} <sc-if value="{{msg.failed}}" hint-placeholder-val="{{false}}"><button class="ui-062" onclick="{{msg.retry}}">Retry</button></sc-if></div></sc-if>
                 </div>
               </sc-if>
               <sc-if value="{{msg.theirs}}" hint-placeholder-val="{{true}}">
-                <div class="ui-063">
+                <div class="ui-063" data-loop-message-row>
                   <div class="ui-064" style="background:{{msg.user.color}}">
                     <sc-if value="{{msg.user.hasAvatar}}" hint-placeholder-val="{{false}}"><img class="ui-038" src="{{msg.user.avatarUrl}}" alt=""></sc-if>
                     <sc-if value="{{msg.user.noAvatar}}" hint-placeholder-val="{{true}}">{{msg.user.initials}}</sc-if>
                   </div>
                   <div>
                     <sc-if value="{{msg.showName}}" hint-placeholder-val="{{false}}"><div class="ui-065">{{msg.user.name}}</div></sc-if>
-                    <div class="ui-066">{{msg.text}}</div>
+                    <div class="ui-066" data-loop-message-body>{{msg.text}}</div>
                     <div class="ui-067">{{msg.time}}</div>
                   </div>
                 </div>
@@ -93,8 +93,8 @@
             <button class="ui-078" onclick="{{toggleEmoji}}" title="Emoji" style-hover="background:var(--surface2)">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM8.5 14s1.3 1.8 3.5 1.8 3.5-1.8 3.5-1.8M9.2 9.5h.01m5.6 0h.01"></path></svg>
             </button>
-            <input class="ui-079" placeholder="Message…" value="{{chatDraft}}" onchange="{{onChatDraft}}" onkeydown="{{onChatKey}}" onblur="{{onChatBlur}}" disabled="{{chatInputDisabled}}">
-            <button class="ui-080" onclick="{{sendMsg}}" disabled="{{chatSendDisabled}}" style-hover="transform:translateY(-1px)" style-active="transform:scale(.92)">
+            <input class="ui-079" data-loop-chat-input placeholder="Message…" value="{{chatDraft}}" onchange="{{onChatDraft}}" onkeydown="{{onChatKey}}" onblur="{{onChatBlur}}" disabled="{{chatInputDisabled}}">
+            <button class="ui-080" data-loop-chat-send onclick="{{sendMsg}}" disabled="{{chatSendDisabled}}" style-hover="transform:translateY(-1px)" style-active="transform:scale(.92)">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2.5 10.8 13.2m10.7-10.7-6.8 19-3.9-8.3-8.3-3.9Z"></path></svg>
             </button>
             <sc-if value="{{chatHasError}}" hint-placeholder-val="{{false}}"><div class="ui-081" role="alert">{{chatError}}</div></sc-if>
